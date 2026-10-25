@@ -10,7 +10,7 @@ captured first test exchange, not a new physical mini model run.
 
 ## Read tasks on either Mac
 
-Use the current `dist/AABridge-Scope-2026-10-26.zip` on both Macs.
+Use the current `dist/AABridge-Claude-2026-10-26.zip` on both Macs.
 Quit an older AABridge window before opening the newly extracted app.
 
 On the **mini**, choose **Receiver setup → Install receiver** once. This upgrades

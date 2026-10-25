@@ -13,7 +13,7 @@ The instructions below configure the receiving mini.
 ## On the Mac mini
 
 1. Quit any older AABridge setup window. AirDrop
-   `dist/AABridge-Scope-2026-10-26.zip` to the mini and unzip it.
+   `dist/AABridge-Claude-2026-10-26.zip` to the mini and unzip it.
 2. Open `AABridge.app` inside the extracted folder and select **Receiver setup**.
 3. For Codex, choose `/Volumes/SparshT7/Downloads/ChatGPT.app`. Finder may hide
    the `.app` extension. For Claude Code, optionally choose its executable;

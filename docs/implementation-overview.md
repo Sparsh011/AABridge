@@ -1,6 +1,6 @@
 # AABridge: what is implemented and why
 
-Status as of 26 October 2026 · version `0.2.0.dev5`
+Status as of 26 October 2026 · version `0.2.0.dev6`
 
 ## Current outcome
 

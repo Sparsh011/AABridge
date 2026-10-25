@@ -35,7 +35,7 @@ absolute paths, folders, wildcards, symlinks and submodules are unsupported.
 
 ## Configure your backend example
 
-1. Put `dist/AABridge-Scope-2026-10-26.zip` on both Macs, unzip it and quit older
+1. Put `dist/AABridge-Claude-2026-10-26.zip` on both Macs, unzip it and quit older
    app copies. On the mini, open **Receiver setup → Install receiver**, keeping
    Remote Login on and the SSD connected. Existing scopes, history and enrolled
    keys are preserved; setup does not reset projects back to demo-only access.

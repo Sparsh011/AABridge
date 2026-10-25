@@ -5,7 +5,7 @@ activity to the native task chat. See [scope setup](scopes-and-progress.md).
 
 ## Install and use
 
-Use `dist/AABridge-Scope-2026-10-26.zip` on both Macs. Quit older AABridge windows
+Use `dist/AABridge-Claude-2026-10-26.zip` on both Macs. Quit older AABridge windows
 before opening the newly extracted app.
 
 On the **mini**, open **Receiver setup → Install receiver**. Wait for **Receiver

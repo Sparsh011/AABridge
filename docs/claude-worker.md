@@ -7,6 +7,25 @@ the same for both agents. The worker runs on the receiving Mac (for example the
 Mac mini); the sending Mac (for example the MacBook) only needs the updated
 AABridge app or CLI to pick a Claude project.
 
+## Install the update
+
+The release is `dist/AABridge-Claude-2026-10-26.zip` (version `0.2.0.dev6`). It
+is built locally and is not committed (`dist/` is ignored). Install it the same
+way as earlier releases, on **both** Macs:
+
+1. Copy the zip to each Mac (AirDrop works) and unzip it.
+2. Quit any open AABridge window, then replace the old `AABridge.app` with the
+   new one and open it.
+3. On the receiving Mac (the mini), select **Install receiver**. It reinstalls
+   the bundled wheel over the existing install, keeps your pairing, SSH grant
+   and task history, and refuses to run while a task is still active.
+4. On the sending Mac (the MacBook), the new app only needs to be opened. Use
+   **Refresh** in the task chat to reload the receiver's projects.
+
+To rebuild the zip from source, run `python -m build --no-isolation`, then
+`scripts/make_pairing_bundle.py` and `scripts/build_desktop.py` as described in
+[desktop.md](desktop.md).
+
 ## How a turn runs
 
 Each turn starts one fresh `claude -p` process with stream-JSON output inside the
