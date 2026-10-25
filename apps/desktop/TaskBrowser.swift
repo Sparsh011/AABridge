@@ -467,7 +467,7 @@ extension TaskBrowserModel {
         stage("submit", body: ["project_id": project.id, "recipient": project.worker, "base_commit": project.base_commit,
             "objective": newObjective, "scope": selectedScope, "acceptance": [project.verification?.profile == "file-proposal-v1" ? "Return a scoped file proposal for human review; no application tests are run." : "Pass the locally configured verification profile."],
             "context": [], "limits": ["runtime_seconds": project.limits.runtime_seconds, "max_turns": project.limits.max_turns, "max_revisions": project.limits.max_revisions],
-            "permission_profile": "proposal-v1"], taskID: nil)
+            "permission_profile": project.verification?.profile == "repository-v1" ? "coding-v1" : "proposal-v1"], taskID: nil)
     }
     func sendReply() {
         guard canReply, let state = taskState, let text = drafts[state.id], !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.unicodeScalars.count <= 4000 else { return }
@@ -551,16 +551,16 @@ struct TaskBrowserView: View {
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
                             Label(model.senderLabel(message), systemImage: "info.circle")
-                                .font(.headline)
+                                .font(.bridge(.headline))
                             Spacer()
-                            Text(message.kind.replacingOccurrences(of: "_", with: " ")).font(.caption).foregroundStyle(.secondary)
+                            Text(message.kind.replacingOccurrences(of: "_", with: " ")).font(.bridge(.caption)).foregroundStyle(.secondary)
                         }
                         HStack {
                             Text(Date(timeIntervalSince1970: message.time).formatted(date: .abbreviated, time: .shortened))
                             if message.recovered { Text("Recovered · original history incomplete").foregroundStyle(.orange) }
                             if message.parts > 1 { Text("Part \(message.part)/\(message.parts)") }
-                        }.font(.caption).foregroundStyle(.secondary)
-                        Text(message.text).font(.system(context || message.kind == "proposal" || message.kind == "verified_result" ? .callout : .body,
+                        }.font(.bridge(.caption)).foregroundStyle(.secondary)
+                        Text(message.text).font(.bridge(context || message.kind == "proposal" || message.kind == "verified_result" ? .callout : .body,
                                                         design: context || message.kind == "proposal" || message.kind == "verified_result" ? .monospaced : .default))
                             .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                     }.padding(16).background(Color.primary.opacity(0.035)).clipShape(RoundedRectangle(cornerRadius: 12))
@@ -579,7 +579,7 @@ struct TaskBrowserView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Tasks & conversations").font(.title2.bold())
+                Text("Tasks & conversations").font(.bridge(.title2).bold())
                 Spacer()
                 Button { model.showNewTask = true } label: { Label("New task", systemImage: "square.and.pencil") }.disabled(!model.canAct)
                 Picker("Receiver", selection: $model.target) {
@@ -594,7 +594,7 @@ struct TaskBrowserView: View {
                     Image(systemName: "exclamationmark.circle")
                     Text(model.error).textSelection(.enabled)
                     Spacer()
-                }.font(.callout).foregroundStyle(.orange).padding(14).background(Color.orange.opacity(0.08))
+                }.font(.bridge(.callout)).foregroundStyle(.orange).padding(14).background(Color.orange.opacity(0.08))
             }
             if model.pendingAction != nil && model.selection == nil && model.visibleSend == nil { PendingSendView(model: model).padding(.horizontal, 16) }
             HSplitView {
@@ -608,10 +608,10 @@ struct TaskBrowserView: View {
                             ForEach(filtered) { task in
                                 Button { model.selection = task.id } label: {
                                     VStack(alignment: .leading, spacing: 8) {
-                                        Text(task.objective).lineLimit(4).font(.headline).foregroundStyle(.primary)
+                                        Text(task.objective).lineLimit(4).font(.bridge(.headline)).foregroundStyle(.primary)
                                         HStack { Text(task.project_id); Spacer(); Text(task.status.replacingOccurrences(of: "_", with: " ")) }
-                                            .font(.caption).foregroundStyle(.secondary)
-                                        Text(Date(timeIntervalSince1970: task.updated_at), style: .date).font(.caption2).foregroundStyle(.secondary)
+                                            .font(.bridge(.caption)).foregroundStyle(.secondary)
+                                        Text(Date(timeIntervalSince1970: task.updated_at), style: .date).font(.bridge(.caption2)).foregroundStyle(.secondary)
                                     }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
                                         .background(model.selection == task.id ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.025))
                                         .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -620,26 +620,26 @@ struct TaskBrowserView: View {
                         }
                     }.onChange(of: model.selection) { _ in model.selectTask() }
                     if model.showListLoader { ProgressView("Loading tasks…").controlSize(.small) }
-                    Text("\(model.tasks.count) tasks · viewing does not use model inference").font(.caption).foregroundStyle(.secondary)
+                    Text("\(model.tasks.count) tasks · viewing does not use model inference").font(.bridge(.caption)).foregroundStyle(.secondary)
                 }.padding(14).frame(minWidth: 260, idealWidth: 310, maxWidth: 380)
                 VStack(alignment: .leading, spacing: 12) {
                     if model.selectedTask == nil, let pending = model.visibleSend {
-                        Text("New task · \(model.target == "local" ? "this Mac" : model.target)").font(.title3.bold()).padding(20)
+                        Text("New task · \(model.target == "local" ? "this Mac" : model.target)").font(.bridge(.title3).bold()).padding(20)
                         ScrollView { PendingMessageBubble(model: model, pending: pending).padding(20) }
                         PendingSendView(model: model).padding(16)
                     } else if let task = model.tasks.first(where: { $0.id == model.selection }) {
                         VStack(alignment: .leading, spacing: 7) {
-                            Text(task.objective).font(.title3.bold()).textSelection(.enabled)
+                            Text(task.objective).font(.bridge(.title3).bold()).textSelection(.enabled)
                             HStack { Text("\(model.workerName) · \(task.project_id) · \(task.status) · revision \(task.revision)"); Spacer(); Button("Export…") { model.export() }.disabled(model.actionBusy) }
-                            Text(task.id + "\nSession: " + model.session).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
-                            if let scope = model.taskState?.scope { Text("Scope: " + scope.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+                            Text(task.id + "\nSession: " + model.session).font(.bridge(.caption, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
+                            if let scope = model.taskState?.scope { Text("Scope: " + scope.joined(separator: ", ")).font(.bridge(.caption)).foregroundStyle(.secondary).textSelection(.enabled) }
                             WorkerActivityView(model: model)
                             if model.showDetailLoader { ProgressView("Loading saved messages…").controlSize(.small) }
                         }.padding([.horizontal, .top], 20)
                         HStack(spacing: 8) {
                             ForEach(Array(["Conversation", "Supplied context", "Task events"].enumerated()), id: \.offset) { index, label in
                                 Button { selectedTab = index } label: {
-                                    Text(label).font(.callout.weight(.semibold))
+                                    Text(label).font(.bridge(.callout).weight(.semibold))
                                         .foregroundStyle(selectedTab == index ? Color.accentColor : Color.secondary)
                                         .padding(.horizontal, 14).padding(.vertical, 9)
                                         .background(selectedTab == index ? Color.accentColor.opacity(0.12) : Color.clear)
@@ -650,13 +650,13 @@ struct TaskBrowserView: View {
                         }.padding(.horizontal, 18)
                         if selectedTab == 0 { transcript(context: false) }
                         else if selectedTab == 1 { transcript(context: true) }
-                        else { ScrollView { Text(model.events).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(18) } }
+                        else { ScrollView { Text(model.events).font(.bridge(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(18) } }
                         TaskComposer(model: model)
                     } else {
                         Spacer()
                         VStack(spacing: 12) {
-                            Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 38)).foregroundStyle(.secondary)
-                            Text(model.tasks.isEmpty ? "No tasks loaded" : "Select a task").font(.title2)
+                            Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 45.6)).foregroundStyle(.secondary)
+                            Text(model.tasks.isEmpty ? "No tasks loaded" : "Select a task").font(.bridge(.title2))
                             Text("Choose an enrolled receiver to read its saved messages and progress.").foregroundStyle(.secondary)
                         }.frame(maxWidth: .infinity)
                         Spacer()
@@ -668,7 +668,7 @@ struct TaskBrowserView: View {
                 Text("History stays on the receiving Mac. SSH uses its existing project grants.")
                 Spacer()
                 if let date = model.lastUpdated { Text("Updated \(date.formatted(date: .omitted, time: .standard))") }
-            }.font(.caption).foregroundStyle(.secondary).padding(12)
+            }.font(.bridge(.caption)).foregroundStyle(.secondary).padding(12)
         }.onAppear { model.discover() }
             .onReceive(timer) { _ in if active && autoRefresh && !model.loading && !model.loadingDetail && !model.actionBusy { model.refresh(silent: true) } }
             .sheet(isPresented: $model.showNewTask) { NewTaskSheet(model: model) }
@@ -679,6 +679,7 @@ struct DesktopView: View {
     @ObservedObject var setup: SetupModel
     @StateObject private var activity: TaskBrowserModel
     @StateObject private var projects: ProjectSettingsModel
+    @StateObject private var team: TeamRoomModel
     @State private var section = 0
 
     init(setup: SetupModel, resources: URL) {
@@ -686,14 +687,17 @@ struct DesktopView: View {
         let browser = TaskBrowserModel(resources: resources)
         _activity = StateObject(wrappedValue: browser)
         _projects = StateObject(wrappedValue: ProjectSettingsModel(activity: browser))
+        _team = StateObject(wrappedValue: TeamRoomModel(activity: browser))
     }
 
     var body: some View {
         TabView(selection: $section) {
-            TaskBrowserView(model: activity, active: section == 0).tabItem { Label("Tasks & conversations", systemImage: "bubble.left.and.bubble.right") }.tag(0)
-            ScrollView { SetupView(model: setup) }.tabItem { Label("Receiver setup", systemImage: "desktopcomputer") }.tag(1)
-            ProjectSettingsView(model: projects).tabItem { Label("Projects & scope", systemImage: "folder.badge.gearshape") }.tag(2)
-        }.padding(8).frame(minWidth: 1040, minHeight: 740)
+            TeamRoomView(model: team, active: section == 0).tabItem { Label("Team chat", systemImage: "person.3") }.tag(0)
+            DevicesView(model: team).tabItem { Label("Devices", systemImage: "laptopcomputer.and.arrow.down") }.tag(1)
+            ProjectSettingsView(model: projects).tabItem { Label("Projects", systemImage: "folder") }.tag(2)
+            ScrollView { SetupView(model: setup) }.tabItem { Label("Settings", systemImage: "gearshape") }.tag(3)
+            TaskBrowserView(model: activity, active: section == 4).tabItem { Label("Task history", systemImage: "clock") }.tag(4)
+        }.font(.bridge(.body)).padding(8).frame(minWidth: 1100, minHeight: 780)
     }
 }
 
@@ -724,7 +728,7 @@ func renderTaskBrowser(model: TaskBrowserModel, output: String) -> Bool {
 }
 
 func renderOwnView<Content: View>(_ content: Content, output: String) -> Bool {
-    let view = NSHostingView(rootView: content.environment(\.colorScheme, .light))
+    let view = NSHostingView(rootView: content.font(.bridge(.body)).environment(\.colorScheme, .light))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820), styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = view
     view.frame = NSRect(x: 0, y: 0, width: 1200, height: 820)

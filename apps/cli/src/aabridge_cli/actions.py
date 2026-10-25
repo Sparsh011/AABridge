@@ -162,8 +162,10 @@ async def enable_project(state: Path, project_id: str) -> dict:
     project.update(runtime_binding(state, project["adapter"]))
     project["execution_enabled"] = False
     save_config(state, config)
-    evidence = probe_isolation()
-    worker = WORKERS[project["adapter"]](state, {"id": "preflight-" + secrets.token_hex(8)}, project, lambda *args: None, lambda pid: None)
+    from aabridge_adapter_codex.native import NativeWorker
+    coding = project.get("permission_profile") == "coding-v1"
+    evidence = {"mode": "native-cli"} if coding else probe_isolation()
+    worker = (NativeWorker if coding else WORKERS[project["adapter"]])(state, {"id": "preflight-" + secrets.token_hex(8)}, project, lambda *args: None, lambda pid: None)
     try:
         await asyncio.wait_for(worker.start(), 20)
     finally:
@@ -217,7 +219,7 @@ def grant_peer(state: Path, peer_id: str, projects: list[str], public_key: Path)
     require(peer_id != "local", "The local operator identity cannot be enrolled as a peer.")
     config = load_config(state)
     require(peer_id not in config["peers"], "Peer identity already exists; do not silently replace keys.")
-    require(bool(projects) and all(name in config["projects"] for name in projects), "Assign only existing explicit projects.")
+    require(all(name in config["projects"] for name in projects), "Assign only existing explicit projects.")
     require(public_key.stat().st_size <= 4096, "Public key file is too large.")
     parts = public_key.read_text().strip().split()
     require(len(parts) >= 2 and parts[0] == "ssh-ed25519", "Use a dedicated Ed25519 SSH public key.")
@@ -325,3 +327,31 @@ def fetch_result(state: Path, remote_name: str, task_id: str) -> dict:
     diff = git(review, "diff", "--no-ext-diff", "--no-textconv", result["base_commit"], result["result_commit"])
     require(len(diff) <= 65536, "Result diff exceeds the review limit.")
     return {"review_repository": str(review), "base_commit": result["base_commit"], "result_commit": result["result_commit"], "diff": diff}
+
+
+def configure_coding_project(state: Path, project_id: str, repository: Path, peers: list[str], agent: str = 'codex') -> dict:
+    """Local admin enables normal coding tools for a whole repository."""
+    identifier(project_id)
+    require(agent in AGENTS, 'Choose Codex or Claude.')
+    config = load_config(state)
+    require(isinstance(peers, list) and all(p in config['peers'] and p != 'local' and config['peers'][p]['enabled'] for p in peers), 'Choose enrolled Macs.')
+    store = Store(state)
+    try:
+        require(not store.db.execute("SELECT 1 FROM tasks WHERE project=? AND status NOT IN ('completed','failed','cancelled')", (project_id,)).fetchone(),
+                'Finish or stop active project tasks before changing settings.', 'project_busy')
+    finally:
+        store.close()
+    repository = repository.expanduser().resolve(strict=True)
+    require(repository.is_dir() and not repository.is_relative_to(state), 'Choose a project folder outside bridge state.')
+    require(git(repository, 'rev-parse', '--show-toplevel') == str(repository), 'Choose the root of the Git project.')
+    project = {'repository': str(repository), 'adapter': agent, 'worker': agent, 'scope': ['*'],
+               'base_commit': git(repository, 'rev-parse', 'HEAD'), 'verification': {'profile': 'repository-v1'},
+               'permission_profile': 'coding-v1', 'execution_enabled': False,
+               'limits': {'runtime_seconds': 3600, 'max_turns': 100, 'max_revisions': 100}, **runtime_binding(state, agent)}
+    config['projects'][project_id] = project
+    for name, peer in config['peers'].items():
+        if name == 'local' or '*' in peer['projects']:
+            continue
+        peer['projects'] = [p for p in peer['projects'] if p != project_id] + ([project_id] if name in peers else [])
+    save_config(state, config)
+    return {'project_id': project_id, 'base_commit': project['base_commit']}

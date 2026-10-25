@@ -50,7 +50,7 @@
       "items": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 1000
+        "maxLength": 100000
       },
       "minItems": 0,
       "maxItems": 8,
@@ -63,17 +63,17 @@
         "runtime_seconds": {
           "type": "integer",
           "minimum": 10,
-          "maximum": 300
+          "maximum": 86400
         },
         "max_turns": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 6
+          "maximum": 100
         },
         "max_revisions": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 3
+          "maximum": 100
         }
       },
       "required": [
@@ -83,7 +83,11 @@
       ]
     },
     "permission_profile": {
-      "const": "proposal-v1"
+      "type": "string",
+      "enum": [
+        "proposal-v1",
+        "coding-v1"
+      ]
     },
     "version": {
       "const": 1
@@ -107,7 +111,7 @@
     "revision": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 4
+      "maximum": 101
     },
     "status": {
       "enum": [
@@ -124,7 +128,7 @@
     "turns": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 6
+      "maximum": 100
     },
     "session_id": {
       "type": [
@@ -200,7 +204,7 @@
             "text": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 4000
+              "maxLength": 100000
             },
             "question_id": {
               "type": "string",
@@ -313,6 +317,15 @@
         "time"
       ],
       "additionalProperties": false
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "work",
+        "plan",
+        "review"
+      ],
+      "description": "Coding role: planning and review leave the checkout unchanged."
     }
   },
   "required": [
@@ -342,5 +355,52 @@
     "runtime_used",
     "created_at",
     "updated_at"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "permission_profile": {
+            "const": "coding-v1"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "scope": {
+            "const": [
+              "*"
+            ]
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "mode"
+          ]
+        },
+        "properties": {
+          "limits": {
+            "properties": {
+              "runtime_seconds": {
+                "maximum": 300
+              },
+              "max_turns": {
+                "maximum": 6
+              },
+              "max_revisions": {
+                "maximum": 3
+              }
+            }
+          },
+          "context": {
+            "items": {
+              "maxLength": 1000
+            }
+          }
+        }
+      }
+    }
   ]
 }

@@ -2,7 +2,7 @@
 set -eu
 cd -- "${0:A:h}"
 trap 'if [[ -t 0 ]]; then print "\nPress any key to close."; read -k 1; fi' EXIT
-print 'AABridge Mac mini setup'
+print 'AABridge setup · this Mac'
 print 'This installs the bundled bridge, prepares a disposable demo for the chosen worker'
 print '(Codex by default, or --worker claude), checks it without model inference, and'
 print 'adds a restricted demo-project SSH key.'

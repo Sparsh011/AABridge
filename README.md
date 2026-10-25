@@ -1,5 +1,9 @@
 # AABridge
 
+## Team collaboration preview
+
+The 0.3.0.dev1 team build adds bidirectional Mac roles, admin-selected Codex/Claude leaders and followers, a shared team chat, full-project coding branches, and 20% larger text. Start with the [team setup guide](docs/team-collaboration.md). The older proposal-mode documentation below remains available for existing projects.
+
 A Python CLI and local supervisor, with a native macOS task/conversation viewer and receiver setup app, for delegating bounded tasks between
 coding-agent sessions on one Mac or over SSH. Applications and reusable packages
 have separate directories in this monorepo. There is no web dashboard or Node
