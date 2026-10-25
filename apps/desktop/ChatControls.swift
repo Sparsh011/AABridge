@@ -88,7 +88,7 @@ struct NewTaskSheet: View {
                 DisclosureGroup("Receiver-approved files") { Text(project.scope.joined(separator: "\n")).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
                 Text(project.verification?.profile == "file-proposal-v1" ? "File proposal: changes are prepared in a separate task checkout for review. No application tests are run and the original folder is not modified." : "Math demo: this project must pass its fixed addition tests. For other work, create a file-proposal project in Projects & scope on the receiver.").font(.callout).foregroundStyle(.secondary)
                 if !project.available {
-                    Text(project.adapter == "codex" ? "This project's execution gate is disabled on the receiver." : "The \(model.agentName(project.worker)) managed worker adapter is not implemented. Choose an enabled Codex project.").foregroundStyle(.orange).font(.callout)
+                    Text(["codex", "claude"].contains(project.adapter) ? "This project's execution gate is disabled on the receiver." : "The \(model.agentName(project.worker)) managed worker adapter is not implemented. Choose an enabled Codex or Claude project.").foregroundStyle(.orange).font(.callout)
                 }
             }
             Text("Task instructions").font(.headline)

@@ -12,7 +12,8 @@ from aabridge_protocol.messages import BridgeError, require
 
 
 def sandbox_profile(runtime: Path, executable: Path, credential: Path | None = None, *, proxy_port: int | None = None,
-                    probe_python_root: Path | None = None) -> str:
+                    probe_python_root: Path | None = None, preference_domain: str = "com.openai.codex",
+                    extra_roots: tuple[str, ...] = ()) -> str:
     require(sys.platform == "darwin", "Whole-process proposal isolation is implemented only on macOS.", "isolation_unavailable")
     roots = ["/System", "/usr/lib", "/usr/share", "/usr/bin", "/bin", "/sbin", "/opt/homebrew",
              "/Library/Developer/CommandLineTools", "/Library/Apple", "/private/var/db/dyld",
@@ -22,6 +23,10 @@ def sandbox_profile(runtime: Path, executable: Path, credential: Path | None = N
     bundles = [parent for parent in executable.parents if parent.suffix == ".app"]
     bundle = bundles[-1] if bundles else executable.parent
     roots.extend((str(bundle), str(runtime)))
+    # Adapter-specific, non-secret system data (for example the timezone database).
+    for root in extra_roots:
+        require(root.startswith(("/System/", "/usr/", "/private/var/db/")), "Unsafe extra sandbox read root.", "isolation_unavailable")
+        roots.append(root)
     if probe_python_root is not None:
         # Only the local canary interpreter needs its Python installation. The
         # Codex worker never receives this grant. In particular, python.org and
@@ -47,7 +52,7 @@ def sandbox_profile(runtime: Path, executable: Path, credential: Path | None = N
     rules.append('(deny mach-priv-host-port)')
     rules.append('(deny signal (require-not (target self)))')
     rules.append('(deny network-inbound network-bind)')
-    rules.append('(deny user-preference-read user-preference-write (require-not (preference-domain "com.openai.codex")))')
+    rules.append(f'(deny user-preference-read user-preference-write (require-not (preference-domain {json.dumps(preference_domain)})))')
     network = ['(literal "/private/var/run/syslog")']
     if proxy_port is not None:
         # Seatbelt cannot filter public hosts/IPs. Permit only the per-worker

@@ -202,7 +202,7 @@ struct SetupView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     location("Codex · select ChatGPT.app, Codex.app, or its executable", agent: "codex", value: $model.codex)
                     location("Claude Code · optional executable", agent: "claude", value: $model.claude)
-                    Text("Claude location selection is available. Its managed worker adapter is still being built; this receiver test uses Codex.")
+                    Text("Claude Code workers are chosen per project in Projects & scope, which also stores this Mac's claude setup-token subscription token. This receiver test uses Codex.")
                         .font(.callout).foregroundStyle(.secondary)
                 }.padding(10)
             }.disabled(model.busy)

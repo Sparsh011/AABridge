@@ -63,7 +63,7 @@ class RuntimeLocationsTests(unittest.TestCase):
             claude = runtime_report("claude", command_roots=(self.local_bin,))
         self.assertEqual(codex["status"], "unavailable")
         self.assertEqual(claude["status"], "found")
-        self.assertFalse(claude["adapter_available"])
+        self.assertTrue(claude["adapter_available"])
         self.assertEqual(claude["authentication"], "not_checked")
 
     def test_settings_preserve_per_agent_paths_and_existing_project_approval(self):

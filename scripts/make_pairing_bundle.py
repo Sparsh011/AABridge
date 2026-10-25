@@ -60,7 +60,7 @@ def main():
             "Codex can live on an external SSD; Claude is discovered independently locally.\n"
             "Edit a path if needed, keeping it absolute (macOS mounted drives use /Volumes).\n"
             "Keep the selected SSD connected; an unavailable selected path never falls back.\n"
-            "Finding Claude does not enable its not-yet-implemented managed worker adapter.\n"
+            "Claude Code workers are enabled per project later (see docs/claude-worker.md).\n"
             "This installs a private Python environment and the bundled bridge, creates a disposable\n"
             "demo repository, checks Codex without inference, starts the local supervisor and\n"
             "appends a restricted SSH entry for only that demo project. Existing key lines remain.\n"

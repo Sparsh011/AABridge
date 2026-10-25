@@ -7,7 +7,7 @@ Status as of 26 October 2026 · version `0.2.0.dev5`
 AABridge now has a working communication and task-management foundation, with a
 real local Codex worker demonstration and an implemented SSH transport. Its
 execution profiles handle a tested arithmetic demo and locally approved text-file
-proposals requiring human review. General shell/build execution, managed Claude/Gemini workers, and a
+proposals requiring human review. A managed Claude Code worker is implemented ([guide](claude-worker.md)); its live subscription test is pending. General shell/build execution, a managed Gemini worker, and a
 successful physical MacBook–Mac mini delegation remain unfinished.
 
 The real local demonstration completed this sequence: submit a task, receive a
@@ -207,8 +207,8 @@ Per-agent local selections now support an app/executable outside the automatic
 search roots. Codex can point to the selected external app while Claude Code
 uses its independent local CLI installation. Missing selected drives produce an
 availability error without falling back to another Codex. Path discovery and
-configuration are implemented for both agents; a managed Claude worker adapter
-is still pending. See [runtime locations](runtime-locations.md).
+configuration are implemented for both agents, and both have managed worker
+adapters. See [runtime locations](runtime-locations.md).
 
 The current adapter expects existing ChatGPT account authentication available
 through a private local `auth.json`, and checks the account inside the restricted
@@ -288,8 +288,7 @@ on the mini. Its actual completed installation steps have not been inspected.
 2. Run the physical remote question/answer/result/revision task and fetch/review
    its exact commits on the MacBook.
 3. Demonstrate the active coordinator workflow through installed MCP tools.
-4. Implement and independently test managed Claude and Gemini adapters. Claude
-   subscription testing will be announced before it begins.
+4. Run a bounded live Claude Code subscription task; implement and test a Gemini adapter.
 5. Expand supported development/verification profiles with an enforceable
    execution boundary and appropriate tests.
 6. Complete the required reverse-direction/provider demonstrations and fuller

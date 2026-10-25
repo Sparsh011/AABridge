@@ -11,7 +11,8 @@ The full project is not complete; distinguish each category below.
 | Real OpenSSH on localhost | RPC, replay, Git transfer, host mismatch, generic command denial and revocation passed with a non-model result fixture |
 | Physical MacBook–Mac mini | Pinned SSH and first real Codex question passed; answer delivery passed; result/resumption blocked on receiver cleanup fix deployment |
 | Live coordinator through installed MCP configuration | Not demonstrated; MCP subprocess/IPC evidence is separate |
-| Claude/Gemini managed workers | Not implemented or tested |
+| Claude Code managed worker | `tests/unit/test_claude.py` and `scripts/verify_claude.py` (real CLI 2.1.308 in the sandbox, local fake provider, question + exact resume) pass; live subscription task pending |
+| Gemini managed worker | Not implemented or tested |
 | General arbitrary-code safety / complete IPC isolation | Not claimed; only documented proposal-v1 controls tested |
 
 ## Automated and packaging checks

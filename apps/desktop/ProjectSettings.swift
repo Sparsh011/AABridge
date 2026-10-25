@@ -4,6 +4,7 @@ import SwiftUI
 struct LocalProject: Decodable, Identifiable {
     let id: String
     let repository: String
+    let adapter: String
     let scope: [String]
     let verification: ProjectVerification
     let execution_enabled: Bool
@@ -18,17 +19,22 @@ final class ProjectSettingsModel: ObservableObject {
     @Published var repository = ""
     @Published var scopeText = ""
     @Published var selectedPeers: Set<String> = []
+    @Published var agent = "codex"
+    @Published var claudeToken = ""
+    @Published var claudeTokenStored = false
     @Published var busy = false
     @Published var notice = ""
     private let activity: TaskBrowserModel
     init(activity: TaskBrowserModel) { self.activity = activity }
     var scope: [String] { scopeText.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
-    var canSave: Bool { !busy && !projectID.isEmpty && !repository.isEmpty && !scope.isEmpty && scope.count <= 16 && scope.count == Set(scope).count }
+    var canSave: Bool { !busy && !projectID.isEmpty && !repository.isEmpty && !scope.isEmpty && scope.count <= 16 && scope.count == Set(scope).count
+        && (agent != "claude" || claudeTokenStored || !claudeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+    var agentName: String { agent == "claude" ? "Claude Code" : "Codex" }
     func chooseProject() {
         guard let project = projects.first(where: { $0.id == selected }) else {
-            projectID = ""; repository = ""; scopeText = ""; selectedPeers = []; return
+            projectID = ""; repository = ""; scopeText = ""; selectedPeers = []; agent = "codex"; return
         }
-        projectID = project.id; repository = project.repository; scopeText = project.scope.joined(separator: "\n"); selectedPeers = Set(project.peers)
+        projectID = project.id; repository = project.repository; scopeText = project.scope.joined(separator: "\n"); selectedPeers = Set(project.peers); agent = project.adapter
     }
     func chooseRepository() {
         let panel = NSOpenPanel()
@@ -57,21 +63,25 @@ final class ProjectSettingsModel: ObservableObject {
     func save() {
         guard canSave else { return }
         do {
-            let data = try JSONSerialization.data(withJSONObject: ["id": projectID, "repository": repository, "scope": scope, "peers": selectedPeers.sorted()])
+            var body: [String: Any] = ["id": projectID, "repository": repository, "scope": scope, "peers": selectedPeers.sorted(), "agent": agent]
+            let token = claudeToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            if agent == "claude" && !token.isEmpty { body["claude_token"] = token }
+            let data = try JSONSerialization.data(withJSONObject: body)
             perform("project-save", body: data)
         } catch { notice = error.localizedDescription }
     }
     private func perform(_ action: String, body: Data?) {
         guard !busy else { return }
         busy = true
-        notice = action == "project-save" ? "Saving scope and checking the Codex account and isolation. No model inference is started…" : "Loading projects on this Mac…"
+        notice = action == "project-save" ? "Saving scope and checking the \(agentName) runtime and isolation. No model inference is started…" : "Loading projects on this Mac…"
         let wanted = projectID
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                struct Reply: Decodable { let projects: [LocalProject]; let peers: [String] }
+                struct Reply: Decodable { let projects: [LocalProject]; let peers: [String]; let claude_token_stored: Bool }
                 let reply = try JSONDecoder().decode(Reply.self, from: self.activity.call(action, target: "local", input: body))
                 DispatchQueue.main.async {
                     self.projects = reply.projects; self.peers = reply.peers; self.busy = false
+                    self.claudeTokenStored = reply.claude_token_stored; self.claudeToken = ""
                     if action == "project-save" { self.selected = wanted; self.notice = "Project saved and enabled. On the sending Mac, refresh the receiver and choose this project in New task." }
                     else { self.notice = "Project permissions below belong to this Mac." }
                 }
@@ -91,11 +101,19 @@ struct ProjectSettingsView: View {
             HStack {
                 Picker("Edit project", selection: $model.selected) {
                     Text("Create a new file-proposal project").tag("")
-                    ForEach(model.projects.filter { $0.verification.profile == "file-proposal-v1" }) { project in Text(project.id + (project.execution_enabled ? "" : " · disabled")).tag(project.id) }
+                    ForEach(model.projects.filter { $0.verification.profile == "file-proposal-v1" }) { project in Text(project.id + (project.adapter == "claude" ? " · Claude" : " · Codex") + (project.execution_enabled ? "" : " · disabled")).tag(project.id) }
                 }.onChange(of: model.selected) { _ in model.chooseProject() }
                 Button("Refresh") { model.refresh() }
             }
             TextField("Project ID, for example backend", text: $model.projectID).disabled(!model.selected.isEmpty)
+            Picker("Worker agent", selection: $model.agent) {
+                Text("Codex · ChatGPT subscription").tag("codex")
+                Text("Claude Code · Claude subscription").tag("claude")
+            }.pickerStyle(.segmented).disabled(!model.selected.isEmpty)
+            if model.agent == "claude" {
+                SecureField(model.claudeTokenStored ? "Subscription token stored on this Mac · paste a new one to replace it" : "Paste the token printed by claude setup-token", text: $model.claudeToken)
+                Text("Run claude setup-token in Terminal on this Mac and paste its sk-ant-oat01-… token. It is saved privately in AABridge's state folder and is never sent to the other Mac. API keys are refused.").font(.caption).foregroundStyle(.secondary)
+            }
             HStack { TextField("Repository folder on this Mac", text: $model.repository); Button("Choose folder…") { model.chooseRepository() } }
             Text("Use a Git repository with at least one commit. Tasks start from its current committed HEAD, without uncommitted changes. The original project folder is not modified.").font(.caption).foregroundStyle(.secondary)
             HStack { Text("Allowed files · one relative path per line").font(.headline); Spacer(); Button("Add existing files…") { model.chooseFiles() } }
@@ -114,7 +132,7 @@ struct ProjectSettingsView: View {
                 Spacer()
                 Button("Save scope & enable") { model.save() }.buttonStyle(.borderedProminent).disabled(!model.canSave)
             }
-            Text("Saving checks the existing Codex login and isolation without a model turn. If that preflight fails, the saved project stays disabled until you fix the prerequisite and retry. Finish/cancel active tasks before changing an existing project's policy. The math demo remains a separate test project.").font(.caption).foregroundStyle(.secondary)
+            Text("Saving checks the selected worker's runtime and isolation without a model turn. If that preflight fails, the saved project stays disabled until you fix the prerequisite and retry. Finish/cancel active tasks before changing an existing project's policy. The math demo remains a separate test project.").font(.caption).foregroundStyle(.secondary)
         }.padding(28).frame(maxWidth: 1000, alignment: .leading).disabled(model.busy) }
             .onAppear { if model.projects.isEmpty && !model.busy { model.refresh() } }
     }

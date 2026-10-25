@@ -23,6 +23,8 @@ from aabridge_transport_ssh.client import call as remote_call
 from aabridge_workspace.git import git, relative_file, safe_source, scoped_source, validate_verifier
 from aabridge_preflight.runtimes import AGENTS, local_path, runtime_report
 
+CLAUDE_TOKEN = "claude-oauth-token"
+
 
 def configure_runtimes(state: Path, paths: dict) -> dict:
     """Local operator selections only; existing project approvals stay pinned."""
@@ -56,8 +58,9 @@ def send(state: Path, value: Request, remote: str | None = None) -> dict:
     return local_call(state, value)
 
 
-def register_project(state: Path, project_id: str, repository: Path, verification: dict) -> dict:
+def register_project(state: Path, project_id: str, repository: Path, verification: dict, agent: str = "codex") -> dict:
     identifier(project_id)
+    require(agent in AGENTS, "Unknown worker runtime.")
     config = load_config(state)
     require(project_id not in config["projects"], "Project is already registered; existing policy was not overwritten.")
     repository = repository.expanduser().resolve(strict=True)
@@ -67,20 +70,41 @@ def register_project(state: Path, project_id: str, repository: Path, verificatio
     scope = verification["files"] if verification["profile"] == "file-proposal-v1" else [verification["file"]]
     for path in scope:
         scoped_source(repository, path, allow_new=verification["profile"] == "file-proposal-v1")
-    discovered = runtime_inventory(state)["codex"]
-    require(discovered["status"] == "found", discovered.get("message", "Codex is unavailable."), "adapter_unavailable")
-    executable = Path(discovered["executable"])
-    auth = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "auth.json"
-    project = {"repository": str(repository), "adapter": "codex", "worker": "codex", "scope": scope,
+    project = {"repository": str(repository), "adapter": agent, "worker": agent, "scope": scope,
                "base_commit": base, "verification": verification, "execution_enabled": False,
-               "codex_executable": str(executable), "codex_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
-               "codex_auth_file": str(auth), "limits": {"runtime_seconds": 180, "max_turns": 4, "max_revisions": 1}}
+               "limits": {"runtime_seconds": 180, "max_turns": 4, "max_revisions": 1}}
+    project.update(runtime_binding(state, agent))
     config["projects"][project_id] = project
     save_config(state, config)
-    return {"project_id": project_id, "base_commit": base, "execution_enabled": False}
+    return {"project_id": project_id, "worker": agent, "base_commit": base, "execution_enabled": False}
 
 
-def configure_file_project(state: Path, project_id: str, repository: Path, scope: list[str], peers: list[str]) -> dict:
+def runtime_binding(state: Path, agent: str) -> dict:
+    """Pin the locally discovered executable and its credential location."""
+    discovered = runtime_inventory(state)[agent]
+    require(discovered["status"] == "found", discovered.get("message", f"{agent} is unavailable."), "adapter_unavailable")
+    executable = Path(discovered["executable"])
+    digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    if agent == "claude":
+        return {"claude_executable": str(executable), "claude_sha256": digest, "claude_token_file": str(state / CLAUDE_TOKEN)}
+    auth = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "auth.json"
+    return {"codex_executable": str(executable), "codex_sha256": digest, "codex_auth_file": str(auth)}
+
+
+def store_claude_token(state: Path, token: str | None) -> dict:
+    """Local operator credential storage; never accepted through bridge RPC/MCP."""
+    from aabridge_adapter_claude.worker import validate_token
+    path = state / CLAUDE_TOKEN
+    if token is None:
+        if path.exists() or path.is_symlink():
+            read_private(path, 1024)  # Only remove a verified private regular file.
+            path.unlink()
+        return {"claude_token": "removed"}
+    write_private(path, validate_token(token).encode())
+    return {"claude_token": "stored", "path": str(path), "note": "The token was not printed. Run project enable for each Claude project to revalidate."}
+
+
+def configure_file_project(state: Path, project_id: str, repository: Path, scope: list[str], peers: list[str], agent: str = "codex") -> dict:
     """Local operator configuration only; never exposed through bridge RPC/MCP."""
     identifier(project_id)
     profile = validate_verifier({"profile": "file-proposal-v1", "files": scope})
@@ -110,10 +134,10 @@ def configure_file_project(state: Path, project_id: str, repository: Path, scope
         require(not any(name.startswith(path + "/") for name in tracked), "A scoped path is a directory in the approved baseline.")
     existing = config["projects"].get(project_id)
     if existing is None:
-        register_project(state, project_id, repository, profile)
+        register_project(state, project_id, repository, profile, agent)
         config = load_config(state)
     else:
-        require(existing["adapter"] == "codex", "Only Codex project configuration is supported.")
+        require(existing["adapter"] == agent, "This project uses a different worker. Create a new project ID to use another agent.")
         require(existing["verification"]["profile"] == "file-proposal-v1", "Keep the demo intact; create a new file-proposal project ID.")
     project = config["projects"][project_id]
     project.update(repository=str(repository), base_commit=base, scope=scope, verification=profile, execution_enabled=False)
@@ -129,12 +153,17 @@ def configure_file_project(state: Path, project_id: str, repository: Path, scope
 
 async def enable_project(state: Path, project_id: str) -> dict:
     from aabridge_adapter_codex.isolation import probe_isolation
-    from aabridge_adapter_codex.worker import CodexWorker
+    from aabridge_daemon.server import WORKERS
     config = load_config(state)
     require(project_id in config["projects"], "Project is not registered.")
     project = config["projects"][project_id]
+    require(project["adapter"] in WORKERS, "No managed worker adapter exists for this project's runtime.", "adapter_unavailable")
+    # Enabling is the local revalidation step: pin the currently selected binary.
+    project.update(runtime_binding(state, project["adapter"]))
+    project["execution_enabled"] = False
+    save_config(state, config)
     evidence = probe_isolation()
-    worker = CodexWorker(state, {"id": "preflight-" + secrets.token_hex(8)}, project, lambda *args: None, lambda pid: None)
+    worker = WORKERS[project["adapter"]](state, {"id": "preflight-" + secrets.token_hex(8)}, project, lambda *args: None, lambda pid: None)
     try:
         await asyncio.wait_for(worker.start(), 20)
     finally:
@@ -146,9 +175,10 @@ async def enable_project(state: Path, project_id: str) -> dict:
     return {"project_id": project_id, "execution_enabled": True, "isolation": evidence}
 
 
-def demo_init(state: Path, directory: Path, project_id: str) -> dict:
-    runtime = runtime_inventory(state)["codex"]
-    require(runtime["status"] == "found", runtime.get("message", "Codex is unavailable."), "adapter_unavailable")
+def demo_init(state: Path, directory: Path, project_id: str, agent: str = "codex") -> dict:
+    require(agent in AGENTS, "Unknown worker runtime.")
+    runtime = runtime_inventory(state)[agent]
+    require(runtime["status"] == "found", runtime.get("message", f"{agent} is unavailable."), "adapter_unavailable")
     directory = directory.expanduser().absolute()
     require(not directory.exists() and not directory.is_symlink(), "Demo directory must not already exist.")
     directory.mkdir(mode=0o700, parents=False)
@@ -159,7 +189,7 @@ def demo_init(state: Path, directory: Path, project_id: str) -> dict:
     git(directory, "commit", "-m", "Disposable AABridge arithmetic demo")
     profile = {"profile": "integer-function-v1", "file": "math_ops.py", "function": "add",
                "cases": [{"args": [2, 3], "expected": 5}, {"args": [-2, 3], "expected": 1}, {"args": [0, 0], "expected": 0}]}
-    return {**register_project(state, project_id, directory, profile), "demo_repository": str(directory)}
+    return {**register_project(state, project_id, directory, profile, agent), "demo_repository": str(directory)}
 
 
 def start_daemon(state: Path) -> dict:

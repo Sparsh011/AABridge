@@ -12,7 +12,8 @@ record, not a claim that the full original brief is finished.
 | Private supervisor IPC, stdio MCP, questions, exact resume, revisions | Implemented; IPC/MCP subprocess tests and real local Codex round trip pass |
 | Restricted SSH enrollment, pinning, revocation, RPC and result Git fetch | Implemented; real localhost OpenSSH transport checks pass |
 | Real physical MacBook–Mac mini task with question/answer/result | Pending mini connection setup, Codex account/preflight and enrollment |
-| Managed Claude and Gemini adapters | Not implemented; require separate capability/isolation work and real tests |
+| Managed Claude Code adapter | Implemented; deterministic and real-binary fixture checks pass; live subscription task pending |
+| Managed Gemini adapter | Not implemented; requires separate capability/isolation work and real tests |
 | General-purpose development execution and broader verification profiles | Unavailable; current AST profile deliberately narrow |
 | Live coordinator using installed MCP, reverse-provider/remote demonstrations | Pending dedicated evidence |
 

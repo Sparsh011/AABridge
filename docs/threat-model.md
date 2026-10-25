@@ -91,8 +91,12 @@ tested macOS/CLI version, not a formal or comprehensive sandbox proof.
   files and Git metadata can consume disk. No automatic deletion is provided.
 - Cancellation cannot reverse a completed commit. Replayed acknowledgement does
   not imply exactly-once arbitrary side effects. Restart reconciliation is local.
-- SSH is not discovery or NAT traversal. Physical two-device execution and
-  Claude/Gemini worker behavior remain unverified.
+- SSH is not discovery or NAT traversal. Physical two-device execution, a live
+  subscription-backed Claude Code task and Gemini worker behavior remain unverified.
+- The Claude Code worker receives its subscription token in its environment. The
+  token is stored 0600 in bridge state, never sent over RPC/MCP, and the relay
+  only reaches api.anthropic.com. A compromised Claude Code binary could misuse it,
+  as a compromised Codex binary could misuse its auth file.
 
 There are no push, merge, deploy, bulk cleanup, recursive delegation or automatic
 policy expansion operations. Expanding capabilities requires an implemented and

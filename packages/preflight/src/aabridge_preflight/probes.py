@@ -100,7 +100,7 @@ def check_agent_interface(name: str, executable: str) -> Check:
     if name == "codex":
         args, required = ("app-server", "--help"), ("--listen", "stdio://")
     elif name == "claude":
-        args, required = ("--help",), ("--print", "--resume", "--output-format")
+        args, required = ("--help",), ("--print", "--resume", "--output-format", "--session-id", "--json-schema", "--tools")
     else:
         raise ValueError("Only locally defined agent interfaces may be probed")
     outcome = _run_probe(executable, args)

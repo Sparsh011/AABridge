@@ -31,10 +31,9 @@ claude mcp add --transport stdio --scope user aabridge -- \
 ```
 
 The example follows [Claude's MCP documentation](https://code.claude.com/docs/en/mcp).
-It has not been executed here because Claude Code is unavailable. Connecting
-Claude as an active MCP coordinator to a Codex worker does not require a Claude
-worker adapter; actually running managed Claude workers does. We will announce
-that testing checkpoint before consuming Claude usage.
+It has not been executed as a live coordinator yet. Connecting Claude as an
+active MCP coordinator is independent of the [managed Claude Code
+worker](claude-worker.md); either agent can coordinate either worker.
 
 ## Tools and suggested coordinator instruction
 

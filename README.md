@@ -5,13 +5,16 @@ coding-agent sessions on one Mac or over SSH. Applications and reusable packages
 have separate directories in this monorepo. There is no web dashboard or Node
 server, and no database server to install; Python's SQLite stores local state.
 
-**Current slice:** a working Codex proposal worker, durable tasks, question/answer
+**Current slice:** working Codex and Claude Code proposal workers, durable tasks, question/answer
 checkpoints, exact-session resumption, revision requests, cancellation, MCP
 stdio tools, protected local IPC, and restricted pinned-key SSH RPC/Git transfer.
 A real local Codex question → answer → commit → revision test passed. Real
 OpenSSH transport tests passed on localhost. Physical MacBook–Mac mini SSH and a
 real Codex question passed; a full result test awaits the receiver cleanup update.
-Claude and Gemini worker adapters remain unimplemented.
+A [Claude Code worker](docs/claude-worker.md) runs the same proposal flow in the same
+sandbox, using a Claude subscription token. Its real-binary sandbox and exact-resume
+checks pass against a local fixture; a live subscription task is still pending.
+The Gemini worker adapter remains unimplemented.
 
 Workers propose complete contents for approved text files; the supervisor checks
 scope without executing repository code. The native **Projects & scope** editor
@@ -31,8 +34,8 @@ also provides agent file pickers, diagnostics and installation progress. Viewing
 does not start model inference.
 
 Requires macOS, Python 3.11+, Git, OpenSSH, and an installed Codex CLI signed in
-with a ChatGPT account on the worker machine. No Claude subscription is needed
-for Codex testing. Python's virtual environment is dependency isolation, not the
+with a ChatGPT account on the worker machine, or Claude Code with a Claude
+subscription for [Claude projects](docs/claude-worker.md). Neither needs the other. Python's virtual environment is dependency isolation, not the
 worker security boundary.
 
 From the repository root:
@@ -109,6 +112,7 @@ selection, local Claude discovery and disconnected-drive behavior.
 ```sh
 .venv/bin/python scripts/check.py
 .venv/bin/python scripts/verify_ssh.py
+.venv/bin/python scripts/verify_claude.py
 .venv/bin/python -m build --no-isolation
 .venv/bin/python scripts/verify_wheel.py
 .venv/bin/python -m pip check
@@ -140,6 +144,7 @@ packages/
   transport-local/     Private authenticated Unix socket client
   transport-ssh/       Pinned SSH transport
   adapter-codex/       Codex app-server worker and macOS restrictions
+  adapter-claude/      Claude Code print-mode worker (same restrictions)
   preflight/           Read-only prerequisite diagnostics
 scripts/               Test and packaging helpers
 examples/              Non-secret configuration examples

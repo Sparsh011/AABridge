@@ -23,7 +23,7 @@ def main() -> int:
         names = archive.namelist()
         for expected in ("aabridge_cli/main.py", "aabridge_preflight/doctor.py", "aabridge_daemon/server.py",
                          "aabridge_preflight/runtimes.py",
-                         "aabridge_mcp/server.py", "aabridge_adapter_codex/worker.py", "aabridge_transport_ssh/client.py",
+                         "aabridge_mcp/server.py", "aabridge_adapter_codex/worker.py", "aabridge_adapter_claude/worker.py", "aabridge_transport_ssh/client.py",
                          "aabridge_protocol/schemas/v1/request.schema.json"):
             if expected not in names:
                 raise SystemExit(f"Wheel is missing {expected}")

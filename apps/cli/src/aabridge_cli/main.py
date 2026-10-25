@@ -39,6 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     demo.add_argument("--state-dir", type=Path, default=default_state_directory())
     demo.add_argument("--directory", type=Path, required=True)
     demo.add_argument("--project", default="demo")
+    demo.add_argument("--agent", choices=("codex", "claude"), default="codex", help="Managed worker runtime for this project.")
     project = commands.add_parser("project")
     project.add_argument("action", choices=("list", "register", "enable", "disable", "reconcile"))
     project.add_argument("--state-dir", type=Path, default=default_state_directory())
@@ -46,6 +47,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     project.add_argument("--repository", type=Path)
     project.add_argument("--verification", type=Path)
     project.add_argument("--remote")
+    project.add_argument("--agent", choices=("codex", "claude"), default="codex", help="Managed worker runtime for register.")
     runtime = commands.add_parser("runtime", help="Local per-agent app/executable locations; no login or model call.")
     runtime.add_argument("action", choices=("list", "set"))
     runtime.add_argument("--state-dir", type=Path, default=default_state_directory())
@@ -53,6 +55,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     selection = runtime.add_mutually_exclusive_group()
     selection.add_argument("--path")
     selection.add_argument("--auto", action="store_true")
+    token = commands.add_parser("claude-token", help="Store or remove this Mac's Claude subscription token from claude setup-token.")
+    token.add_argument("action", choices=("set", "remove"))
+    token.add_argument("--state-dir", type=Path, default=default_state_directory())
     peer = commands.add_parser("peer")
     peer.add_argument("action", choices=("grant", "revoke"))
     peer.add_argument("--state-dir", type=Path, default=default_state_directory())
@@ -141,7 +146,15 @@ def dispatch(args):
         run(state)
         return None
     if args.command == "demo-init":
-        return actions.demo_init(state, args.directory, args.project)
+        return actions.demo_init(state, args.directory, args.project, args.agent)
+    if args.command == "claude-token":
+        if args.action == "remove":
+            return actions.store_claude_token(state, None)
+        import getpass
+        import sys
+        # Read from a hidden prompt or stdin, never from argv or the environment.
+        value = getpass.getpass("Paste the token printed by claude setup-token: ") if sys.stdin.isatty() else sys.stdin.readline(1024)
+        return actions.store_claude_token(state, value)
     if args.command == "remote-add":
         return actions.enroll_remote(state, args.name, args.host, args.user, args.port, args.identity_file, args.known_hosts, args.fingerprint)
     if args.command == "peer":
@@ -161,7 +174,7 @@ def dispatch(args):
         if args.action == "register":
             require(args.repository is not None and args.verification is not None, "--repository and --verification are required.")
             require(args.verification.stat().st_size <= 16384, "Verification profile is too large.")
-            return actions.register_project(state, args.id, args.repository, json.loads(args.verification.read_text()))
+            return actions.register_project(state, args.id, args.repository, json.loads(args.verification.read_text()), args.agent)
         if args.action == "enable":
             return asyncio.run(actions.enable_project(state, args.id))
         config = load_config(state)

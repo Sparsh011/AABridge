@@ -5,9 +5,10 @@ An application on an external SSD and another agent on internal storage can be
 discovered independently. AABridge does not require copying either installation
 into its repository, installation environment or working directory.
 
-This feature handles discovery and local registration. Codex has a working
-managed worker adapter. Claude Code can be located and inventoried, but its
-managed worker adapter is still unimplemented. Discovery does not establish
+This feature handles discovery and local registration. Codex and Claude Code
+both have managed worker adapters ([Claude guide](claude-worker.md)). The Claude
+CLI bundled with the Claude desktop app is also found under
+`~/Library/Application Support/Claude/claude-code/<version>/<build>/claude.app`. Discovery does not establish
 login, subscription access or safe unattended execution.
 
 ## Local commands
@@ -92,5 +93,6 @@ An OS permission or execution restriction still has to pass the real preflight;
 this feature does not bypass macOS security controls.
 
 Each adapter continues to need its own execution, authentication and session
-tests. Finding a local Claude CLI does not make it a working managed Claude
-worker and does not initiate Claude usage.
+tests. Finding a local Claude CLI does not initiate Claude usage. A Claude project also
+needs a stored subscription token and its enable step; see
+[the Claude Code worker guide](claude-worker.md).

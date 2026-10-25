@@ -10,8 +10,8 @@ an executable path or permission to download one.
 | Active Codex coordinator → managed Codex | Working proposal-v1 adapter; real local question/answer/exact resume/result/revision passed through CLI operations |
 | MCP coordinator → managed Codex | stdio handshake, complete tool schemas and protected IPC tested; installed live MCP coordinator workflow still pending |
 | Codex MacBook → Codex Mac mini | Restricted SSH path implemented; real localhost transport passed, physical mini pending setup |
-| Claude active coordinator → Codex worker | MCP setup documented; Claude unavailable here, live coordinator not tested |
-| Managed Claude Code worker | Not implemented or tested; user will be notified before subscription tests |
+| Claude active coordinator → Codex worker | MCP setup documented; live coordinator not tested |
+| Any coordinator → managed Claude Code worker | Implemented ([guide](claude-worker.md)); deterministic tests and a real-binary sandbox/question/exact-resume check against a local fake provider pass; live subscription task pending |
 | Managed Gemini CLI worker | Not implemented or tested; must validate headless sessions, authentication, permissions and isolation independently |
 
 The adapter uses Codex app-server JSON-RPC and the user's local ChatGPT account.

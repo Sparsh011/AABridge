@@ -27,8 +27,25 @@ def bundled_codex(application: Path) -> Path | None:
     return None
 
 
+def bundled_claude(application: Path) -> Path | None:
+    candidate = application / "Contents/MacOS/claude"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return candidate.resolve(strict=True)
+    return None
+
+
+def desktop_claude_roots() -> tuple[Path, ...]:
+    # The Claude desktop app keeps its own Claude Code CLI per version.
+    return (Path.home() / "Library/Application Support/Claude/claude-code",)
+
+
 def executable_at(agent: str, value: str | Path) -> Path:
     path = local_path(value)
+    if agent == "claude" and path.suffix == ".app" and path.is_dir():
+        native = bundled_claude(path)
+        if native:
+            return native
+        raise ValueError(f"No Claude Code executable found inside the selected app: {path}")
     # Finder hides .app in many views; accept the selected app without its suffix.
     if agent == "codex" and not path.exists() and path.suffix != ".app" and path.with_name(path.name + ".app").is_dir():
         path = path.with_name(path.name + ".app")
@@ -52,7 +69,8 @@ def executable_at(agent: str, value: str | Path) -> Path:
 
 def locate_runtime(agent: str, configured_path: str | Path | None = None, *,
                    application_roots: tuple[Path, ...] | None = None,
-                   command_roots: tuple[Path, ...] | None = None) -> Path:
+                   command_roots: tuple[Path, ...] | None = None,
+                   desktop_roots: tuple[Path, ...] | None = None) -> Path:
     if agent not in AGENTS:
         raise ValueError("Unsupported runtime name.")
     if configured_path is not None:
@@ -77,6 +95,13 @@ def locate_runtime(agent: str, configured_path: str | Path | None = None, *,
             path = root / agent
             if path.is_file() and os.access(path, os.X_OK):
                 candidates.add(path.resolve(strict=True))
+        if not candidates:
+            # Fixed two-level layout only: <version>/<build>/claude.app. No disk search.
+            for root in desktop_roots if desktop_roots is not None else desktop_claude_roots():
+                for application in root.glob("*/*/claude.app") if root.is_dir() else ():
+                    native = bundled_claude(application)
+                    if native:
+                        candidates.add(native)
     if not candidates:
         raise ValueError(f"Could not locate {agent}. Select its existing app or executable using local runtime configuration; it may be on an external drive.")
     if len(candidates) != 1:
@@ -86,7 +111,7 @@ def locate_runtime(agent: str, configured_path: str | Path | None = None, *,
 
 def runtime_report(agent: str, configured_path: str | Path | None = None, **search) -> dict:
     result = {"agent": agent, "configured_path": str(configured_path) if configured_path is not None else None,
-              "authentication": "not_checked", "adapter_available": agent == "codex"}
+              "authentication": "not_checked", "adapter_available": agent in AGENTS}
     try:
         executable = locate_runtime(agent, configured_path, **search)
         result.update(status="found", executable=str(executable),

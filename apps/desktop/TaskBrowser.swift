@@ -24,7 +24,7 @@ struct BridgeProject: Decodable, Identifiable {
     let limits: ProjectLimits
     let execution_enabled: Bool
     let verification: ProjectVerification?
-    var available: Bool { execution_enabled && adapter == "codex" }
+    var available: Bool { execution_enabled && ["codex", "claude"].contains(adapter) }
 }
 
 struct ProjectVerification: Decodable { let profile: String }
@@ -451,7 +451,7 @@ extension TaskBrowserModel {
     }
     func startTask(projectID: String, scope: [String]? = nil) {
         guard let project = projects.first(where: { $0.id == projectID }), project.available else {
-            error = "Choose an enabled Codex project. Claude and Gemini managed workers are not implemented yet."
+            error = "Choose an enabled Codex or Claude project. Gemini managed workers are not implemented yet."
             return
         }
         guard !newObjective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && newObjective.unicodeScalars.count <= 4000 else {

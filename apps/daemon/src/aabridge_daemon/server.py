@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from aabridge_adapter_codex.isolation import probe_isolation
+from aabridge_adapter_claude.worker import ClaudeWorker
 from aabridge_adapter_codex.worker import CodexWorker
 from aabridge_core.config import authenticate, authorize, load_config, private_directory, read_private, write_private
 from aabridge_core.store import Store, new_id
@@ -17,10 +18,14 @@ from aabridge_protocol.messages import BridgeError, MAX_MESSAGE, canonical, deco
 from aabridge_workspace.git import Workspace
 
 
+WORKERS = {"codex": CodexWorker, "claude": ClaudeWorker}
+
+
 class Supervisor:
-    def __init__(self, state: Path, *, worker_factory=CodexWorker):
+    def __init__(self, state: Path, *, worker_factory=None):
         self.state = private_directory(state)
         self.store = Store(self.state)
+        # None selects each project's locally registered adapter. Tests inject fixtures.
         self.worker_factory = worker_factory
         self.stopping = asyncio.Event()
         self.active = None
@@ -67,7 +72,7 @@ class Supervisor:
         try:
             config = load_config(self.state)
             project = authorize(config, task["sender"], task["project_id"])
-            require(project["adapter"] == "codex", "No enabled adapter exists for this runtime.", "adapter_unavailable")
+            require(project["adapter"] in WORKERS, "No enabled adapter exists for this runtime.", "adapter_unavailable")
             require(set(task["scope"]) <= set(project["scope"]), "Task scope no longer authorized.", "permission_denied")
             require(task["base_commit"] == project["base_commit"], "Project baseline changed. Start a new task using its current scope and baseline.", "permission_denied")
             require(project.get("execution_enabled") is True, "Local execution gate is disabled. Run the local project-enable preflight.", "execution_disabled")
@@ -96,7 +101,7 @@ class Supervisor:
                 self.store.update(task["id"], "session_checkpoint", thread_id=thread_id, session_id=session_id)
             def on_pid(pid):
                 self.store.update(task["id"], "worker_process", worker_pid=pid)
-            worker = self.worker_factory(self.state, task, project, on_session, on_pid)
+            worker = (self.worker_factory or WORKERS[project["adapter"]])(self.state, task, project, on_session, on_pid)
             last_phase = [None]
             def on_progress(phase, message):
                 if phase != last_phase[0]:

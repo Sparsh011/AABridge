@@ -1,7 +1,8 @@
 """Authenticated, per-worker CONNECT relay. TLS stays end-to-end with Codex.
 
 This is not a bridge RPC listener or an unrestricted forward proxy. It accepts
-only chatgpt.com:443, resolves outside the worker, rejects non-public addresses,
+only its one provider host on port 443 (chatgpt.com for Codex,
+api.anthropic.com for Claude), resolves outside the worker, rejects non-public addresses,
 and never records tunnel content or credentials.
 """
 from __future__ import annotations
@@ -14,7 +15,8 @@ import socket
 
 
 class ProviderProxy:
-    def __init__(self):
+    def __init__(self, host: str = "chatgpt.com"):
+        self.host = host
         self.secret = secrets.token_urlsafe(32)
         self.expected = "Basic " + base64.b64encode(("aabridge:" + self.secret).encode()).decode()
         self.server = None
@@ -37,7 +39,7 @@ class ProviderProxy:
             if len(headers) > 8192:
                 return
             lines = headers.decode("ascii").split("\r\n")
-            if lines[0] not in {"CONNECT chatgpt.com:443 HTTP/1.1", "CONNECT chatgpt.com:443 HTTP/1.0"}:
+            if lines[0] not in {f"CONNECT {self.host}:443 HTTP/1.1", f"CONNECT {self.host}:443 HTTP/1.0"}:
                 self.stats["destination_denied"] += 1
                 writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
                 await writer.drain()
@@ -58,7 +60,7 @@ class ProviderProxy:
                 return
             self.active += 1
             counted = True
-            addresses = await asyncio.get_running_loop().getaddrinfo("chatgpt.com", 443, family=socket.AF_INET, type=socket.SOCK_STREAM)
+            addresses = await asyncio.get_running_loop().getaddrinfo(self.host, 443, family=socket.AF_INET, type=socket.SOCK_STREAM)
             public = sorted({entry[4][0] for entry in addresses})
             if not public or not all(ipaddress.ip_address(address).is_global for address in public):
                 return

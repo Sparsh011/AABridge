@@ -81,14 +81,13 @@ When unsure, inspect the task list first. Retries are explicit, not automatic.
 
 ## Claude
 
-The UI understands agent names, including Claude, and the protocol can carry
-named agent-coordinator messages. The current executable worker adapter is
-**Codex only**. Claude runtime discovery in Receiver setup does not implement a
-Claude worker. Unsupported/disabled projects cannot be started from the GUI.
-Claude-as-worker execution and its authentication/inference tests have not been
-implemented or performed here. An active Claude coordinator's existing MCP
-integration is a separate route to the supported Codex worker, not a Claude
-worker adapter or a connection to an arbitrary existing desktop chat.
+Projects whose worker is Claude Code are listed as `project · Claude` and use
+the same start, answer, revise and cancel controls as Codex. Choose the worker
+and store the `claude setup-token` token in **Projects & scope** on the
+receiving Mac. See the [Claude Code worker guide](claude-worker.md). Disabled
+projects, and agents without an adapter (Gemini), cannot be started from the
+GUI. An active Claude coordinator's MCP integration is a separate route and is
+not a connection to an arbitrary existing desktop chat.
 
 ## Verification
 
