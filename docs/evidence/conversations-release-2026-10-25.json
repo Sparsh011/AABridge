@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0.dev3",
+  "artifact": "AABridge-Conversations-2026-10-25.zip",
+  "sha256": "e6333ccb88a26e4ec3dfef289cb2414822155e2750b5898d998e6f4349042ec2",
+  "unit_service_tests": 126,
+  "targeted_legacy_recovery_recheck": "7 history tests passed after verified-result provenance fix",
+  "protected_local_ipc_history": "passed",
+  "real_localhost_ssh_task_and_conversation_reads": "passed",
+  "offline_wheel_smoke": "passed",
+  "architectures": [
+    "arm64",
+    "x86_64"
+  ],
+  "native_viewer": "bundled backend and real IPC verified with labelled captured-message fixture; offscreen render inspected",
+  "interactive_gui": "not verified; Computer Use permissions unavailable",
+  "physical_mini": "current receiver upgrade required; full model result/revision still not verified",
+  "new_model_inference_started": false,
+  "private_key_in_bundle": false,
+  "history_schema": 2,
+  "legacy_history": "partial recovery explicitly labelled"
+}

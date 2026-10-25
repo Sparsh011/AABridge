@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "event.schema.json",
+  "title": "AABridge retrieved event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "kind": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4
+    },
+    "status": {
+      "enum": [
+        "queued",
+        "running",
+        "waiting_question",
+        "completed",
+        "cancelling",
+        "cancelled",
+        "failed",
+        "interrupted"
+      ]
+    },
+    "time": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "version",
+    "cursor",
+    "kind",
+    "task_id",
+    "attempt_id",
+    "revision",
+    "status",
+    "time"
+  ]
+}

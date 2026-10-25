@@ -1,0 +1,149 @@
+{
+  "scope": "Physical MacBook Pro to Mac mini through pinned restricted SSH",
+  "ping": "passed",
+  "remote_demo_execution_gate": true,
+  "model_question_received": true,
+  "question": "Should add(a, b) perform integer addition and return the sum of the two integers?",
+  "answer_delivered": true,
+  "same_session_id_preserved": true,
+  "result_received": false,
+  "outcome": "First model turn succeeded; answer stayed queued during provider proxy cleanup. Task cancelled before update.",
+  "fix": "Close owned proxy connection handlers before awaiting server shutdown; receiver update requires idle supervisor restart.",
+  "mini_update": "pending local operator installation of 0.2.0.dev2",
+  "local_regression_tests_passed": 117,
+  "task": {
+    "acceptance": [
+      "Pass the locally configured verification profile."
+    ],
+    "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+    "base_commit": "95a855381a9a1f0dfb4a3af845fdcdc3007d9f21",
+    "context": [],
+    "created_at": 1792947389.7777421,
+    "id": "task-5d0ab300953755a398455b77",
+    "limits": {
+      "max_revisions": 1,
+      "max_turns": 4,
+      "runtime_seconds": 180
+    },
+    "objective": "Fix add so it returns the sum of two integers. Before proposing any edits, first ask a clarification question confirming whether add must perform integer addition. After receiving the answer, propose the corrected complete math_ops.py file.",
+    "pending": {
+      "kind": "answer",
+      "question_id": "question-12697b3f1f09efb3256d1ee7",
+      "text": "Yes. add(a, b) must perform integer addition and return a + b. Propose the corrected complete math_ops.py file."
+    },
+    "permission_profile": "proposal-v1",
+    "project_id": "demo",
+    "question": null,
+    "recipient": "codex",
+    "recipient_node": "node-4491ad0a9ae6a601",
+    "result": null,
+    "revision": 1,
+    "runtime_used": 301.7164460840004,
+    "scope": [
+      "math_ops.py"
+    ],
+    "sender": "macbook",
+    "session_id": "01a173fe-0974-79e1-a279-009cb6867aa7",
+    "status": "cancelled",
+    "thread_id": "01a173fe-0974-79e1-a279-009cb6867aa7",
+    "turns": 1,
+    "updated_at": 1792947691.573738,
+    "version": 1,
+    "worker_pid": null
+  },
+  "events": {
+    "cursor": 9,
+    "events": [
+      {
+        "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+        "cursor": 1,
+        "kind": "submitted",
+        "revision": 1,
+        "status": "queued",
+        "task_id": "task-5d0ab300953755a398455b77",
+        "time": 1792947389.777746,
+        "version": 1
+      },
+      {
+        "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+        "cursor": 2,
+        "kind": "worker_started",
+        "revision": 1,
+        "status": "running",
+        "task_id": "task-5d0ab300953755a398455b77",
+        "time": 1792947389.9246778,
+        "version": 1
+      },
+      {
+        "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+        "cursor": 3,
+        "kind": "worker_process",
+        "revision": 1,
+        "status": "running",
+        "task_id": "task-5d0ab300953755a398455b77",
+        "time": 1792947390.143456,
+        "version": 1
+      },
+      {
+        "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+        "cursor": 4,
+        "kind": "session_checkpoint",
+        "revision": 1,
+        "status": "running",
+        "task_id": "task-5d0ab300953755a398455b77",
+        "time": 1792947391.410732,
+        "version": 1
+      },
+      {
+        "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+        "cursor": 5,
+        "kind": "question",
+        "revision": 1,
+        "status": "waiting_question",
+        "task_id": "task-5d0ab300953755a398455b77",
+        "time": 1792947397.721032,
+        "version": 1
+      },
+      {
+        "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+        "cursor": 6,
+        "kind": "answer_received",
+        "revision": 1,
+        "status": "queued",
+        "task_id": "task-5d0ab300953755a398455b77",
+        "time": 1792947412.127838,
+        "version": 1
+      },
+      {
+        "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+        "cursor": 7,
+        "kind": "cancellation_requested",
+        "revision": 1,
+        "status": "cancelled",
+        "task_id": "task-5d0ab300953755a398455b77",
+        "time": 1792947549.132587,
+        "version": 1
+      },
+      {
+        "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+        "cursor": 8,
+        "kind": "worker_process",
+        "revision": 1,
+        "status": "cancelled",
+        "task_id": "task-5d0ab300953755a398455b77",
+        "time": 1792947691.572476,
+        "version": 1
+      },
+      {
+        "attempt_id": "attempt-9ba4f491853f45532c2183a3",
+        "cursor": 9,
+        "kind": "attempt_closed",
+        "revision": 1,
+        "status": "cancelled",
+        "task_id": "task-5d0ab300953755a398455b77",
+        "time": 1792947691.573738,
+        "version": 1
+      }
+    ]
+  }
+}

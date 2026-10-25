@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "aabridge": {
+      "type": "stdio",
+      "command": "/absolute/path/to/aabridge",
+      "args": ["mcp", "--state-dir", "/absolute/private/state"]
+    }
+  }
+}

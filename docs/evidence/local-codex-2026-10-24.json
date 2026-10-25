@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "category": "real_local_codex",
+  "date": "2026-10-24",
+  "codex_version": "0.163.0-alpha.11.2",
+  "task_id": "task-547d13489db4db9eb082d422",
+  "thread_id": "01a16b0b-5f82-7372-8242-b4e90ced774d",
+  "session_id": "01a16b0b-5f82-7372-8242-b4e90ced774d",
+  "question_id": "question-a4dfd602e57fa27ba3853a33",
+  "question": "Should add perform integer addition?",
+  "base_commit": "2f0cb15c27585755657848013c36218ce2e9b20b",
+  "first_result_commit": "a58e00449855c7d39a87f898458f1f61d87bbbc2",
+  "revision_result_commit": "3f0a31cd6db22dc98ee7d8f16875cb13a18ecaba",
+  "revision": 2,
+  "turns": 3,
+  "runtime_seconds": 13.460839999999735,
+  "verification": [
+    {
+      "cases": [
+        {
+          "actual": 5,
+          "args": [
+            2,
+            3
+          ],
+          "exit_code": 0,
+          "expected": 5
+        },
+        {
+          "actual": 1,
+          "args": [
+            -2,
+            3
+          ],
+          "exit_code": 0,
+          "expected": 1
+        },
+        {
+          "actual": 0,
+          "args": [
+            0,
+            0
+          ],
+          "exit_code": 0,
+          "expected": 0
+        }
+      ],
+      "exit_code": 0,
+      "file": "math_ops.py",
+      "method": "restricted AST interpretation; no shell/exec/import",
+      "profile": "integer-function-v1"
+    }
+  ],
+  "changed_paths": [
+    "math_ops.py"
+  ],
+  "original_checkout_unchanged": true,
+  "model_tools_used": false,
+  "provider_auth": "existing local ChatGPT account; no API billing fallback",
+  "physical_two_device": "not_verified",
+  "limitations": [
+    "Proposal-only worker; no arbitrary shell or repository test scripts executed.",
+    "Not pushed or merged."
+  ]
+}

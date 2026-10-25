@@ -1,0 +1,18 @@
+{
+  "artifact": "AABridge-Mac-Preview-2026-10-25.zip",
+  "sha256": "fa1172c52cd5b1cda1cc5d114399df3c5f10b5ba1665bf3b076485997073064d",
+  "tests_passed": 114,
+  "architectures": [
+    "arm64",
+    "x86_64"
+  ],
+  "minimum_macos": "13.0",
+  "signature": "development ad-hoc; verified",
+  "actual_local_isolation_canaries": "six passed",
+  "relocated_python": "old policy failed; revised probe passed",
+  "native_diagnostic_process_streaming": "verified; missing SSD fails visibly",
+  "interactive_gui": "not verified; Computer Use permissions unavailable",
+  "physical_mini": "pending updated GUI diagnostic run",
+  "model_inference_started": false,
+  "contains_private_key": false
+}

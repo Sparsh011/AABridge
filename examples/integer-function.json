@@ -1,0 +1,10 @@
+{
+  "profile": "integer-function-v1",
+  "file": "math_ops.py",
+  "function": "add",
+  "cases": [
+    {"args": [2, 3], "expected": 5},
+    {"args": [-2, 3], "expected": 1},
+    {"args": [0, 0], "expected": 0}
+  ]
+}

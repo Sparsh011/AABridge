@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-25",
+  "version": "0.2.0.dev4",
+  "release": "dist/AABridge-Chat-2026-10-25.zip",
+  "release_sha256": "2b8612b028118276c2bcd568769631e42ae712fc3ffbb4e61199d6a0b45075b9",
+  "wheel_sha256": "560c8635150885a2607f50b3c5e2df6759b2c413ab1e41f4f40a2fc17999e57b",
+  "automated_tests": {
+    "passed": 131,
+    "log": "/private/tmp/aabridge-chat-final-tests.log"
+  },
+  "packaged_native_controls": {
+    "passed": true,
+    "log": "/private/tmp/aabridge-chat-release-verification.log",
+    "checks": [
+      "human actor persisted",
+      "new task",
+      "answer",
+      "revision",
+      "cancel",
+      "silent refresh",
+      "draft preservation",
+      "private outbox restored including draft",
+      "lost acknowledgement same-key retry creates one task"
+    ]
+  },
+  "offline_wheel_smoke": true,
+  "bundle_signature_verified": true,
+  "bundle_build": "4",
+  "architectures": [
+    "arm64",
+    "x86_64"
+  ],
+  "minimum_macos": "13.0",
+  "payload_matches_current_source": true,
+  "payload_contains_private_ssh_key": false,
+  "model_inference_started": false,
+  "native_verification_worker_scheduler_started": false,
+  "preview": {
+    "path": "docs/evidence/chat-ui-preview-2026-10-25.png",
+    "kind": "own view rendered from explicitly labelled no-model IPC control fixture"
+  },
+  "limitations": [
+    "Interactive desktop automation unavailable",
+    "Updated physical mini deployment and complete result/revision test pending",
+    "Managed Claude and Gemini worker adapters unimplemented",
+    "Only approved integer-function task profile enabled"
+  ]
+}

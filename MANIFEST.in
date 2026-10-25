@@ -1,0 +1,13 @@
+include .python-version
+include requirements-dev.txt
+recursive-include apps *.md *.py
+recursive-include apps *.command
+recursive-include apps *.swift
+recursive-include packages *.md *.py
+recursive-include packages *.json
+recursive-include tests *.py
+recursive-include scripts *.py
+recursive-include docs *.md
+recursive-include docs *.json
+recursive-include docs *.png
+recursive-include examples *.json

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "date": "2026-10-24",
+  "last_updated": "2026-10-25",
+  "category": "physical_mini_pairing",
+  "ssh_reachable": true,
+  "host_identity_independently_verified": true,
+  "host_key_pinned": true,
+  "dedicated_key_authenticated": false,
+  "remote_installer_executed": true,
+  "remote_setup_ready": false,
+  "remote_setup_outcome": "User reported an installation/sign-in message; exact discovery/authentication failure not yet diagnosed.",
+  "remote_reported_app": "ChatGPT app with Codex bundled inside",
+  "authentication_rechecked_after_installer_attempt": false,
+  "physical_agent_round_trip": "not_verified",
+  "local_installer_smoke": {
+    "offline_wheel_install": true,
+    "missing_provider_login_stops_setup": true,
+    "no_ssh_grant_before_preflight": true
+  },
+  "tests_passed": 109,
+  "bundle": "dist/AABridge-Mini-Setup-SSD-2026-10-25.zip",
+  "worker_runtime_location_preferences": {
+    "codex": "User-selected external SSD app; exact executable resolved on worker",
+    "claude": "Independent local CLI discovery; managed adapter not implemented"
+  },
+  "installer_discovery_fix": "Reproduced native-plus-launcher ambiguity locally; updated installer selects the known native image and provides a local login hint when required.",
+  "next": "Run the updated bundle on the mini, complete local authentication/preflight and enrollment, then perform the physical remote task test."
+}

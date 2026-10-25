@@ -1,0 +1,13 @@
+{
+  "artifact": "AABridge-Mac-Resume-Fix-2026-10-25.zip",
+  "sha256": "ce77b03e2582ad37d26aefda05ccfd817f24f82b89fb6480b443ac4cf027016a",
+  "version": "0.2.0.dev2",
+  "tests_passed": 117,
+  "offline_wheel_smoke": "passed",
+  "native_resources_and_signature": "verified",
+  "native_diagnostic_streaming": "passed",
+  "mini_prior_task": "cancelled; owned worker PID cleared after cleanup",
+  "mini_update": "requires local operator Install receiver in new app",
+  "full_physical_result_test": "pending update",
+  "permissions": "existing restricted demo grant preserved; no broader SSH command capability added"
+}

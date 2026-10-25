@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "date": "2026-10-24",
+  "category": "real_loopback_openssh_with_non_model_fixture",
+  "passed": true,
+  "script": "scripts/verify_ssh.py",
+  "checks": [
+    "pinned dedicated-key RPC",
+    "remote submission and exact replay",
+    "changed-content replay rejection",
+    "authorized Git SHA and diff transfer",
+    "generic command rejection",
+    "actual host key mismatch rejection",
+    "revoked peer rejection"
+  ],
+  "system_ssh_modified": false,
+  "model_inference": false,
+  "physical_two_device": "not_verified"
+}

@@ -1,0 +1,80 @@
+{
+  "date": "2026-10-26",
+  "version": "0.2.0.dev5",
+  "release": "dist/AABridge-Scope-2026-10-26.zip",
+  "release_sha256": "1aa61e03bbc614d53f2897f27ca13278f63692fe2e00fa699c56a9234d541721",
+  "wheel_sha256": "60a3fb7f1ec86b0d5403ffff13d3a1aeb4462071c2069170813c9bf12db9b117",
+  "source_modules_and_schemas_checked": 33,
+  "architectures": [
+    "arm64",
+    "x86_64"
+  ],
+  "minimum_macos": "13.0",
+  "bundle_build": "5",
+  "signature_verified": true,
+  "payload_audit_passed": true,
+  "contains_private_ssh_key": false,
+  "tests": {
+    "unit_service_installer": {
+      "passed": 140,
+      "log": "/private/tmp/aabridge-scope-tests.log"
+    },
+    "offline_wheel_smoke": {
+      "passed": true,
+      "log": "/private/tmp/aabridge-scope-wheel-check.log"
+    },
+    "actual_localhost_ssh": {
+      "passed": true,
+      "log": "/private/tmp/aabridge-scope-ssh-check.log"
+    },
+    "packaged_native_gui": {
+      "passed": true,
+      "status": "passed",
+      "log": "/private/tmp/aabridge-scope-delivery-check.log",
+      "checks": [
+        "human sender persisted",
+        "answer",
+        "revision",
+        "cancel",
+        "new task",
+        "editable scope subset",
+        "immediate pending bubble",
+        "activity display",
+        "local project GUI model",
+        "dropped acknowledgement",
+        "restored private outbox",
+        "same-key retry without duplicate",
+        "silent refresh and draft preservation"
+      ],
+      "fixture_state": "/private/tmp/aab-chat-clttt7n_/state",
+      "worker_scheduler_started": false
+    }
+  },
+  "model_inference_started": false,
+  "mini_read_only_diagnosis": {
+    "task_id": "task-6abbc18d8cdd079407b16bad",
+    "requested": "Create a text file in the backend repository",
+    "selected_project": "demo",
+    "scope": [
+      "math_ops.py"
+    ],
+    "worker_edits": [],
+    "worker_issue": "Scope did not permit the requested file",
+    "error_cause": "Unchanged subtraction demo source failed fixed addition acceptance cases"
+  },
+  "limitations": [
+    "General file proposals validate boundaries and require review; application tests are not run",
+    "Original project folder is not modified",
+    "Physical mini upgrade and live file proposal test pending",
+    "Interactive desktop automation unavailable",
+    "Managed Claude/Gemini adapters unimplemented"
+  ],
+  "previews": {
+    "kind": "own native views rendered from explicit no-model IPC fixtures",
+    "files": {
+      "scope": "docs/evidence/scope-settings-preview-2026-10-26.png",
+      "active": "docs/evidence/task-activity-preview-2026-10-26.png",
+      "pending": "docs/evidence/pending-message-preview-2026-10-26.png"
+    }
+  }
+}

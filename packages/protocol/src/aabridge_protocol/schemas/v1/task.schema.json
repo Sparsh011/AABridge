@@ -1,0 +1,346 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "task.schema.json",
+  "title": "AABridge durable task v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "recipient": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "base_commit": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "scope": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "Normalized relative non-hidden file; runtime applies additional path checks."
+      },
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true
+    },
+    "context": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "minItems": 0,
+      "maxItems": 8,
+      "uniqueItems": true
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtime_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 300
+        },
+        "max_turns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "max_revisions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        }
+      },
+      "required": [
+        "runtime_seconds",
+        "max_turns",
+        "max_revisions"
+      ]
+    },
+    "permission_profile": {
+      "const": "proposal-v1"
+    },
+    "version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "sender": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "recipient_node": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4
+    },
+    "status": {
+      "enum": [
+        "queued",
+        "running",
+        "waiting_question",
+        "completed",
+        "cancelling",
+        "cancelled",
+        "failed",
+        "interrupted"
+      ]
+    },
+    "turns": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "thread_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "question": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            },
+            "attempt_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            }
+          },
+          "required": [
+            "id",
+            "text",
+            "revision",
+            "attempt_id"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "result.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pending": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "answer",
+                "revision"
+              ]
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "question_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "worker_pid": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "runtime_used": {
+      "type": "number",
+      "minimum": 0
+    },
+    "created_at": {
+      "type": "number"
+    },
+    "updated_at": {
+      "type": "number"
+    },
+    "error": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "error_code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "human",
+            "agent",
+            "coordinator"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    },
+    "last_actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "human",
+            "agent",
+            "coordinator"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    },
+    "last_sender_identity": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+    },
+    "verification_profile": {
+      "type": "object"
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "time": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "phase",
+        "message",
+        "time"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "project_id",
+    "recipient",
+    "base_commit",
+    "objective",
+    "scope",
+    "acceptance",
+    "context",
+    "limits",
+    "permission_profile",
+    "version",
+    "id",
+    "attempt_id",
+    "sender",
+    "recipient_node",
+    "revision",
+    "status",
+    "turns",
+    "session_id",
+    "thread_id",
+    "question",
+    "result",
+    "pending",
+    "worker_pid",
+    "runtime_used",
+    "created_at",
+    "updated_at"
+  ]
+}

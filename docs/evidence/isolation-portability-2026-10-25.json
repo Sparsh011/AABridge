@@ -1,0 +1,47 @@
+{
+  "relocated_python": "/private/tmp/aabridge-python-portability-_j39pc6h/Python.framework/Versions/3.11",
+  "before": {
+    "profile": "macos-proposal-v1",
+    "passed": false,
+    "checks": {},
+    "failed_checks": [
+      "child_exec_denied",
+      "network_denied",
+      "outside_delete_denied",
+      "outside_read_denied",
+      "outside_write_denied",
+      "runtime_write_allowed"
+    ],
+    "diagnostic": "macOS could not load a required probe interpreter library.",
+    "probe_exit_code": -6,
+    "python_version": "3.11.17",
+    "python_prefix": "/private/tmp/aabridge-python-portability-_j39pc6h/Python.framework/Versions/3.11",
+    "limits": [
+      "Trusted Codex harness must read its local provider credential.",
+      "Live provider connectivity and tool configuration are checked separately."
+    ]
+  },
+  "after": {
+    "profile": "macos-proposal-v1",
+    "passed": true,
+    "checks": {
+      "outside_read_denied": true,
+      "outside_write_denied": true,
+      "outside_delete_denied": true,
+      "network_denied": true,
+      "runtime_write_allowed": true,
+      "child_exec_denied": true
+    },
+    "failed_checks": [],
+    "diagnostic": "",
+    "probe_exit_code": 0,
+    "python_version": "3.11.17",
+    "python_prefix": "/private/tmp/aabridge-python-portability-_j39pc6h/Python.framework/Versions/3.11",
+    "limits": [
+      "Trusted Codex harness must read its local provider credential.",
+      "Live provider connectivity and tool configuration are checked separately."
+    ]
+  },
+  "scope": "Real local disposable relocated Python framework; not the physical Mac mini.",
+  "model_inference_started": false
+}
