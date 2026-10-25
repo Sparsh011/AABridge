@@ -7,6 +7,10 @@ import SwiftUI
 final class SetupModel: ObservableObject {
     @Published var codex: String
     @Published var claude: String
+    // Worker agents with managed adapters, in display order.
+    static let workers = [("codex", "Codex"), ("claude", "Claude Code")]
+    @Published var worker: String
+    @Published var claudeToken = ""
     @Published var busy = false
     @Published var headline = "Choose your agent locations, then check this Mac."
     @Published var detail = "No model calls are made during setup or diagnostics."
@@ -23,6 +27,14 @@ final class SetupModel: ObservableObject {
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
         codex = preferences.string(forKey: "codexPath") ?? seed["codex"] as? String ?? ""
         claude = preferences.string(forKey: "claudePath") ?? seed["claude"] as? String ?? ""
+        let saved = preferences.string(forKey: "receiverWorker") ?? "codex"
+        worker = SetupModel.workers.contains { $0.0 == saved } ? saved : "codex"
+    }
+
+    var workerName: String { SetupModel.workers.first { $0.0 == worker }?.1 ?? "Codex" }
+    var claudeTokenStored: Bool {
+        FileManager.default.fileExists(atPath: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AABridge/claude-oauth-token").path)
     }
 
     func choose(_ agent: String) {
@@ -61,6 +73,7 @@ final class SetupModel: ObservableObject {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
         preferences.set(codex, forKey: "codexPath")
         preferences.set(claude, forKey: "claudePath")
+        preferences.set(worker, forKey: "receiverWorker")
         return target
     }
 
@@ -68,9 +81,15 @@ final class SetupModel: ObservableObject {
         guard !busy else { return }
         do {
             let folder = try prepare()
+            // The token travels only over the installer's stdin, never argv or files.
+            let token = claudeToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            let sendToken = !diagnose && worker == "claude" && !token.isEmpty
             launch(executable: URL(fileURLWithPath: "/bin/zsh"),
-                   arguments: [folder.appendingPathComponent("Setup.command").path] + (diagnose ? ["--diagnose"] : []),
-                   directory: folder, kind: diagnose ? "diagnostics" : "setup")
+                   arguments: [folder.appendingPathComponent("Setup.command").path, "--worker", worker]
+                       + (diagnose ? ["--diagnose"] : []) + (sendToken ? ["--claude-token-stdin"] : []),
+                   directory: folder, kind: diagnose ? "diagnostics" : "setup",
+                   input: sendToken ? Data((token + "\n").utf8) : nil)
+            if sendToken { claudeToken = "" }
         } catch {
             headline = "Could not prepare setup."
             detail = error.localizedDescription
@@ -102,7 +121,7 @@ final class SetupModel: ObservableObject {
         if line == "AABRIDGE MINI READY" { ready = true }
     }
 
-    private func launch(executable: URL, arguments: [String], directory: URL, kind: String) {
+    private func launch(executable: URL, arguments: [String], directory: URL, kind: String, input: Data? = nil) {
         busy = true
         ready = false
         logs = ""
@@ -117,13 +136,18 @@ final class SetupModel: ObservableObject {
             environment["PATH"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
             environment["PYTHONUNBUFFERED"] = "1"
             process.environment = environment
-            process.standardInput = FileHandle.nullDevice
+            let stdin = input.map { _ in Pipe() }
+            process.standardInput = stdin ?? FileHandle.nullDevice
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = pipe
             do {
                 try process.run()
                 pipe.fileHandleForWriting.closeFile()
+                if let stdin, let input {
+                    stdin.fileHandleForWriting.write(input)
+                    stdin.fileHandleForWriting.closeFile()
+                }
                 var pending = Data()
                 while true {
                     let chunk = pipe.fileHandleForReading.availableData
@@ -152,7 +176,7 @@ final class SetupModel: ObservableObject {
                         self.headline = kind == "setup" && self.ready ? "Receiver ready on this Mac" : (kind == "status" ? "Bridge supervisor is responding" : "Isolation checks passed")
                         self.detail = kind == "setup" ? "Return to your MacBook chat for the first two-device test. Remote Login must remain on while receiving SSH connections."
                             : (kind == "status" ? "See Details for the supervisor response. This does not verify a remote agent session."
-                               : "Codex was found and all six sandbox canaries passed. Account and SSH access have not been checked.")
+                               : "\(self.workerName) was found and all six sandbox canaries passed. Account and SSH access have not been checked.")
                     } else {
                         self.headline = kind == "status" ? "The supervisor is not responding" : "\(kind.capitalized) needs attention"
                         if !self.detail.contains("INCOMPLETE:") {
@@ -197,12 +221,28 @@ struct SetupView: View {
                 Spacer()
                 Text("DEVELOPMENT PREVIEW").font(.caption).foregroundStyle(.secondary)
             }
-            Text("Choose where each agent lives on this Mac. ChatGPT can stay on your SSD; Claude Code can live on the internal drive.")
+            Text("Choose the worker agent for this receiver, and where each agent lives on this Mac. ChatGPT can stay on your SSD; Claude Code can live on the internal drive.")
             GroupBox {
                 VStack(alignment: .leading, spacing: 18) {
+                    Picker("Worker agent", selection: $model.worker) {
+                        ForEach(SetupModel.workers, id: \.0) { Text($0.1).tag($0.0) }
+                    }.frame(maxWidth: 360)
+                    Text(model.worker == "claude"
+                         ? "Install receiver prepares a separate claude-demo project that runs on Claude Code with your Claude subscription."
+                         : "Install receiver prepares the demo project that runs on Codex with your ChatGPT login.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if model.worker == "claude" {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Claude subscription token").font(.headline)
+                            SecureField(model.claudeTokenStored ? "Stored on this Mac · paste a new token to replace it" : "Paste the sk-ant-oat01-… token from claude setup-token", text: $model.claudeToken)
+                                .textFieldStyle(.roundedBorder)
+                            Text("In Terminal on this Mac, run claude setup-token and sign in. Claude Code keeps its normal login in the Keychain, which the worker sandbox cannot open, so the worker uses this inference-only token instead. It is stored privately on this Mac and is never sent to the other Mac. API keys are refused.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                     location("Codex · select ChatGPT.app, Codex.app, or its executable", agent: "codex", value: $model.codex)
                     location("Claude Code · optional executable", agent: "claude", value: $model.claude)
-                    Text("Claude Code workers are chosen per project in Projects & scope, which also stores this Mac's claude setup-token subscription token. This receiver test uses Codex.")
+                    Text("You can add more Codex or Claude Code projects later in Projects & scope.")
                         .font(.callout).foregroundStyle(.secondary)
                 }.padding(10)
             }.disabled(model.busy)
@@ -217,10 +257,11 @@ struct SetupView: View {
             HStack {
                 Button("Check prerequisites") { model.run(diagnose: true) }
                 Button("Install receiver") { model.run(diagnose: false) }.buttonStyle(.borderedProminent)
+                    .disabled(model.worker == "claude" && !model.claudeTokenStored && model.claudeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Spacer()
                 Button("Refresh status") { model.refreshStatus() }
             }.disabled(model.busy)
-            Text("Install receiver installs the bundled bridge, prepares a disposable demo, checks Codex without a model call, and adds restricted SSH access for that demo. Existing repositories, keys, and provider credentials are preserved.")
+            Text("Install receiver installs the bundled bridge, prepares a disposable demo, checks \(model.workerName) without a model call, and adds restricted SSH access for that demo. Existing repositories, keys, and provider credentials are preserved.")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             HStack(alignment: .top) {

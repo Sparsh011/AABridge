@@ -146,12 +146,19 @@ def stop_idle_receiver(state: Path) -> None:
         os.close(descriptor)
 
 
-def configure(bundle: Path, install: Path, public: Path, manifest: dict):
+# Each worker gets its own disposable demo, so Codex and Claude can coexist.
+DEMOS = {"codex": "demo", "claude": "claude-demo"}
+
+
+def configure(bundle: Path, install: Path, public: Path, manifest: dict, worker: str = "codex", claude_token: str | None = None):
     import asyncio
-    from aabridge_cli.actions import configure_runtimes, demo_init, enable_project, grant_peer, request, runtime_inventory, send, start_daemon
-    from aabridge_core.config import initialize, load_config, read_private
+    from aabridge_cli.actions import CLAUDE_TOKEN, configure_runtimes, demo_init, enable_project, grant_peer, request, runtime_inventory, send, start_daemon, store_claude_token
+    from aabridge_core.config import initialize, load_config, read_private, save_config
     from aabridge_preflight.paths import default_state_directory
     from aabridge_protocol.messages import identifier, require
+    require(worker in DEMOS, "Choose Codex or Claude Code as the receiver worker.")
+    name = "Claude Code" if worker == "claude" else "Codex"
+    project_id = DEMOS[worker]
     state = default_state_directory()
     print("STEP: Checking selected agent locations", flush=True)
     if not (state / "config.json").exists():
@@ -162,47 +169,61 @@ def configure(bundle: Path, install: Path, public: Path, manifest: dict):
     runtimes = runtime_inventory(state)
     for agent, runtime in runtimes.items():
         print(f"{agent}: {runtime['status']}; {runtime.get('executable') or runtime.get('message')}", flush=True)
-        if runtime["status"] == "found" and not runtime["adapter_available"]:
-            print(f"{agent}: location found; managed worker adapter is not implemented. No login or inference started.", flush=True)
-    require(runtimes["codex"]["status"] == "found", runtimes["codex"].get("message", "Codex is unavailable."))
-    codex = Path(runtimes["codex"]["executable"])
-    print(f"Using Codex executable: {codex}", flush=True)
-    os.environ["PATH"] = str(codex.parent) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin")
+    require(runtimes[worker]["status"] == "found", runtimes[worker].get("message", f"{name} is unavailable."))
+    executable = Path(runtimes[worker]["executable"])
+    print(f"Receiver worker: {name}", flush=True)
+    print(f"Using {name} executable: {executable}", flush=True)
+    os.environ["PATH"] = str(executable.parent) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin")
     config = load_config(state)
-    source = install / "demo-source"
-    if "demo" not in config["projects"]:
-        demo_init(state, source, "demo")
+    source = install / ("demo-source" if worker == "codex" else "claude-demo-source")
+    if project_id not in config["projects"]:
+        demo_init(state, source, project_id, worker)
     else:
-        require(config["projects"]["demo"]["repository"] == str(source),
-                "An existing demo project belongs to another repository; it was preserved.")
-        require(config["projects"]["demo"]["codex_executable"] == str(codex),
-                "Existing demo approval is pinned to another Codex executable. It was preserved; register a new project for an intentionally changed runtime.")
+        existing = config["projects"][project_id]
+        require(existing["repository"] == str(source) and existing["adapter"] == worker,
+                f"An existing {project_id} project belongs to another repository or worker; it was preserved.")
+        if worker == "codex":
+            require(existing["codex_executable"] == str(executable),
+                    "Existing demo approval is pinned to another Codex executable. It was preserved; register a new project for an intentionally changed runtime.")
     config = load_config(state)
-    login = shlex.join([str(codex), "-c", 'cli_auth_credentials_store="file"', "login"])
-    require(Path(config["projects"]["demo"]["codex_auth_file"]).is_file(),
-            f"Codex needs a local file-based login for this worker. Run this command on the mini, choose Sign in with ChatGPT, then rerun Setup.command: {login}")
+    if worker == "codex":
+        login = shlex.join([str(executable), "-c", 'cli_auth_credentials_store="file"', "login"])
+        require(Path(config["projects"][project_id]["codex_auth_file"]).is_file(),
+                f"Codex needs a local file-based login for this worker. Run this command on the mini, choose Sign in with ChatGPT, then rerun Setup.command: {login}")
+    else:
+        if claude_token:
+            store_claude_token(state, claude_token)
+            print("Stored the Claude subscription token privately on this Mac (not printed).", flush=True)
+        require((state / CLAUDE_TOKEN).is_file(),
+                f"Claude Code needs a subscription token for this worker. In Terminal on this Mac run: {shlex.quote(str(executable))} setup-token — then paste the printed sk-ant-oat01-… token into Receiver setup and select Install receiver again.")
     # Checks authentication/isolation only: no model inference in setup.
-    print("STEP: Checking whole-process isolation and Codex account (no model inference)", flush=True)
-    asyncio.run(enable_project(state, "demo"))
-    print("STEP: Installing restricted demo-project SSH access", flush=True)
+    print(f"STEP: Checking whole-process isolation and the {name} runtime (no model inference)", flush=True)
+    asyncio.run(enable_project(state, project_id))
+    print(f"STEP: Installing restricted {project_id}-project SSH access", flush=True)
     peer_id = identifier(manifest["peer_id"])
     config = load_config(state)
     if peer_id not in config["peers"]:
-        grant_peer(state, peer_id, ["demo"], public)
-    peer = load_config(state)["peers"][peer_id]
-    require(peer["enabled"] and "demo" in peer["projects"] and all(name in config["projects"] for name in peer["projects"]),
-            "Existing peer is revoked or has different policy; no permissions were overwritten.")
+        grant_peer(state, peer_id, [project_id], public)
+    config = load_config(state)
+    peer = config["peers"][peer_id]
+    require(peer["enabled"], "Existing peer is revoked; no permissions were overwritten.")
     entry = read_private(state / f"authorized-key-{peer_id}.txt", 16384).decode()
     key_fields = public.read_text().strip().split()
     require(len(key_fields) >= 2 and f" {key_fields[0]} {key_fields[1]} " in entry,
             "Existing peer uses a different public key; nothing was replaced.")
+    if project_id not in peer["projects"] and "*" not in peer["projects"]:
+        # Same enrolled key: running this installer authorizes its demo grant.
+        peer["projects"].append(project_id)
+        save_config(state, config)
+    require(all(name in config["projects"] for name in peer["projects"]),
+            "Existing peer has a different policy; no permissions were overwritten.")
     append_authorized_key(Path.home().resolve(), entry)
     print("STEP: Starting the bridge supervisor", flush=True)
     start_daemon(state)
     ping = send(state, request("ping", {}))
     print("\nAABRIDGE MINI READY")
-    print(json.dumps({"node_id": ping["node_id"], "project": "demo", "peer": peer_id,
-                      "worker": "codex", "model_inference_started": False}, indent=2))
+    print(json.dumps({"node_id": ping["node_id"], "project": project_id, "peer": peer_id,
+                      "worker": worker, "model_inference_started": False}, indent=2))
 
 
 def main() -> int:
@@ -210,7 +231,11 @@ def main() -> int:
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--configure", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--diagnose", action="store_true", help="Check paths and isolation without installing, granting SSH access or running a model.")
+    parser.add_argument("--worker", choices=tuple(DEMOS), default="codex", help="Managed worker agent for this receiver's demo project.")
+    parser.add_argument("--claude-token-stdin", action="store_true", help="Read a claude setup-token token from standard input.")
     args = parser.parse_args()
+    # Read before anything else; the token is never placed in argv, files or logs.
+    claude_token = (sys.stdin.readline(1024).strip() or None) if args.claude_token_stdin else None
     wheel, public, manifest = checked_bundle(args.bundle)
     # Load the bundled pure-Python validation primitives before offline install.
     # Configuration itself is rerun under the installed environment below.
@@ -227,19 +252,20 @@ def main() -> int:
             print(f"{agent}: {report['status']}; {report.get('executable') or report.get('message')}", flush=True)
         report = isolation_report()
         print(json.dumps(report, indent=2), flush=True)
-        if report["passed"] and runtimes["codex"]["status"] == "found":
-            print("DIAGNOSTICS PASSED: Codex found and all isolation canaries passed. Account and remote connection are not checked.", flush=True)
+        name = "Claude Code" if args.worker == "claude" else "Codex"
+        if report["passed"] and runtimes[args.worker]["status"] == "found":
+            print(f"DIAGNOSTICS PASSED: {name} found and all isolation canaries passed. Account and remote connection are not checked.", flush=True)
             return 0
-        reason = (report["diagnostic"] or "Failed checks: " + ", ".join(report["failed_checks"])) if not report["passed"] else runtimes["codex"]["message"]
+        reason = (report["diagnostic"] or "Failed checks: " + ", ".join(report["failed_checks"])) if not report["passed"] else runtimes[args.worker]["message"]
         print("DIAGNOSTICS INCOMPLETE: " + reason, flush=True)
         return 1
     from aabridge_core.config import private_directory, read_private, write_private
     install = private_directory(Path.home().resolve() / "Library/Application Support/AABridgeInstall", create=True)
     if args.configure:
-        configure(args.bundle.resolve(), install, public, manifest)
+        configure(args.bundle.resolve(), install, public, manifest, args.worker, claude_token)
         return 0
     print("STEP: Installing the bundled bridge in its private Python environment", flush=True)
-    print("Installing AABridge locally and granting only demo-project bridge access.")
+    print(f"Installing AABridge locally and granting only {DEMOS[args.worker]}-project bridge access.")
     print("Existing repositories, SSH keys and provider credentials are preserved.")
     environment = install / "venv"
     marker = install / "installer.json"
@@ -257,7 +283,9 @@ def main() -> int:
     python = environment / "bin/python"
     subprocess.run([str(python), "-m", "pip", "--disable-pip-version-check", "--no-cache-dir", "install",
                     "--no-index", "--no-deps", "--force-reinstall", str(wheel)], check=True)
-    configured = subprocess.run([str(python), str(Path(__file__).resolve()), "--bundle", str(args.bundle.resolve()), "--configure"])
+    configured = subprocess.run([str(python), str(Path(__file__).resolve()), "--bundle", str(args.bundle.resolve()), "--configure",
+                                 "--worker", args.worker, *(["--claude-token-stdin"] if claude_token else [])],
+                                input=(claude_token + "\n").encode() if claude_token else None)
     return configured.returncode
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import contextlib
@@ -50,6 +51,72 @@ class InstallerTests(unittest.TestCase):
                 self.assertIn("DIAGNOSTICS PASSED:" if found else "DIAGNOSTICS INCOMPLETE:", output.getvalue())
                 forbidden.assert_not_called()
                 run.assert_not_called()
+
+    def test_diagnostics_checks_the_selected_claude_worker(self):
+        from aabridge_adapter_codex.isolation import PROBE_CHECKS
+        evidence = {"passed": True, "checks": dict.fromkeys(PROBE_CHECKS, True), "failed_checks": [], "diagnostic": ""}
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(sys, "argv", ["setup_worker.py", "--bundle", str(self.root), "--diagnose", "--worker", "claude"]))
+            stack.enter_context(patch.object(sys, "path", sys.path.copy()))
+            stack.enter_context(patch.object(installer, "checked_bundle", return_value=(self.root / "fixture.whl", self.root / "key.pub", {})))
+            stack.enter_context(patch.object(installer, "runtime_settings", return_value={}))
+            stack.enter_context(patch("aabridge_adapter_codex.isolation.isolation_report", return_value=evidence))
+            stack.enter_context(patch("aabridge_preflight.runtimes.runtime_report", side_effect=lambda agent, _: {
+                "status": "found" if agent == "claude" else "unavailable",
+                "executable": "/fixture/claude" if agent == "claude" else None, "message": "Choose an existing local executable."}))
+            output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            self.assertEqual(installer.main(), 0)
+            self.assertIn("DIAGNOSTICS PASSED: Claude Code found", output.getvalue())
+
+    def configure_claude(self, state, token):
+        from aabridge_core.config import initialize
+        if not (state / "config.json").exists():
+            initialize(state)
+        executable = self.root / "bin/claude"
+        if not executable.exists():
+            executable.parent.mkdir()
+            executable.write_text("fixture only; must never execute")
+            executable.chmod(0o755)
+        public = self.root / "key.pub"
+        blob = base64.b64encode(b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20" + bytes(range(32))).decode()
+        public.write_text(f"ssh-ed25519 {blob} fixture-test-key\n")
+        install = self.root / "install"
+        install.mkdir(mode=0o700, exist_ok=True)
+        enabled = []
+        async def enable(state_dir, project_id):
+            enabled.append(project_id)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch("aabridge_preflight.paths.default_state_directory", return_value=state))
+            stack.enter_context(patch.object(installer, "runtime_settings", return_value={"claude": str(executable)}))
+            stack.enter_context(patch("aabridge_cli.actions.enable_project", side_effect=enable))
+            stack.enter_context(patch("aabridge_cli.actions.start_daemon", return_value={}))
+            stack.enter_context(patch("aabridge_cli.actions.send", return_value={"node_id": "node-test"}))
+            appended = stack.enter_context(patch.object(installer, "append_authorized_key"))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            installer.configure(self.root, install, public, {"peer_id": "macbook"}, "claude", token)
+        return enabled, appended
+
+    def test_claude_receiver_prepares_separate_demo_and_extends_existing_grant(self):
+        from aabridge_core.config import load_config, save_config
+        state = self.root / "state"
+        with self.assertRaises(BridgeError) as raised:
+            self.configure_claude(state, None)
+        self.assertIn("setup-token", raised.exception.message)
+        token = "sk-ant-oat01-" + "a" * 40
+        enabled, appended = self.configure_claude(state, token)
+        config = load_config(state)
+        self.assertEqual(enabled, ["claude-demo"])
+        self.assertEqual(config["projects"]["claude-demo"]["adapter"], "claude")
+        self.assertEqual(config["peers"]["macbook"]["projects"], ["claude-demo"])
+        self.assertEqual((state / "claude-oauth-token").read_text(), token)
+        appended.assert_called_once()
+        # An existing Codex-demo grant for the same key gains only the Claude demo.
+        config["peers"]["macbook"]["projects"] = ["claude-demo"]
+        config["projects"]["demo"] = dict(config["projects"]["claude-demo"])
+        config["peers"]["macbook"]["projects"] = ["demo"]
+        save_config(state, config)
+        self.configure_claude(state, None)
+        self.assertEqual(load_config(state)["peers"]["macbook"]["projects"], ["demo", "claude-demo"])
 
     def test_upgrade_refuses_active_or_closing_task_before_stopping_receiver(self):
         from aabridge_core.config import initialize

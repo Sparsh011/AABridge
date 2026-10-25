@@ -9,22 +9,37 @@ AABridge app or CLI to pick a Claude project.
 
 ## Install the update
 
-The release is `dist/AABridge-Claude-2026-10-26.zip` (version `0.2.0.dev6`). It
+The release is `dist/AABridge-Claude-2026-10-26.zip` (version `0.2.0.dev7`). It
 is built locally and is not committed (`dist/` is ignored). Install it the same
 way as earlier releases, on **both** Macs:
 
 1. Copy the zip to each Mac (AirDrop works) and unzip it.
 2. Quit any open AABridge window, then replace the old `AABridge.app` with the
    new one and open it.
-3. On the receiving Mac (the mini), select **Install receiver**. It reinstalls
-   the bundled wheel over the existing install, keeps your pairing, SSH grant
-   and task history, and refuses to run while a task is still active.
+3. On the receiving Mac (the mini), choose the **Worker agent** in Receiver
+   setup (Codex or Claude Code), then select **Install receiver**. For Claude
+   Code, first run `claude setup-token` in Terminal and paste its token into the
+   token field (not needed again once stored). Install receiver reinstalls the
+   bundled wheel over the existing install and keeps your pairing, SSH grant
+   and task history. It refuses to run while a task is still active. Codex
+   uses the `demo` project. Claude Code gets a separate `claude-demo` project,
+   and the existing MacBook grant is extended to it. Run it once per worker to
+   set up both.
 4. On the sending Mac (the MacBook), the new app only needs to be opened. Use
    **Refresh** in the task chat to reload the receiver's projects.
 
 To rebuild the zip from source, run `python -m build --no-isolation`, then
 `scripts/make_pairing_bundle.py` and `scripts/build_desktop.py` as described in
 [desktop.md](desktop.md).
+
+### Why Claude needs a token and Codex does not
+
+Codex keeps its ChatGPT login in a file (`~/.codex/auth.json`), and the sandbox
+can grant read access to exactly that file. Claude Code keeps its login in the
+macOS Keychain. The sandbox deliberately cannot open the Keychain, which also
+holds unrelated secrets, and that login is short-lived and refreshed back into
+the Keychain. `claude setup-token` creates a long-lived, inference-only token
+for headless use, which the worker receives as an environment variable.
 
 ## How a turn runs
 
