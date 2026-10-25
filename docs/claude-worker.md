@@ -9,7 +9,7 @@ AABridge app or CLI to pick a Claude project.
 
 ## Install the update
 
-The release is `dist/AABridge-Claude-2026-10-26.zip` (version `0.2.0.dev7`). It
+The release is `dist/AABridge-Claude-2026-10-26.zip` (version `0.2.0.dev8`). It
 is built locally and is not committed (`dist/` is ignored). Install it the same
 way as earlier releases, on **both** Macs:
 
@@ -78,8 +78,12 @@ same whole-process macOS sandbox as Codex:
 
 1. Install Claude Code and sign in with your Claude subscription. The CLI that
    ships with the Claude desktop app is also discovered under
-   `~/Library/Application Support/Claude/claude-code/`. If several versions are
-   there, pick one explicitly:
+   `~/Library/Application Support/Claude/claude-code/`. Selecting `Claude.app`
+   itself means that bundled CLI (the newest version present). Bundles are
+   identified by their `CFBundleIdentifier`, not their file name, because the
+   desktop app's own `Claude` binary also matches `claude` on case-insensitive
+   volumes. If several versions are there, automatic discovery asks you to pick
+   one explicitly:
 
    ```sh
    .venv/bin/aabridge runtime list

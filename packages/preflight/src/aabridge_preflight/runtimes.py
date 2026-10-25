@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import os
+import plistlib
 import shutil
 from pathlib import Path
 
 AGENTS = ("codex", "claude")
+CLAUDE_CODE_BUNDLE = "com.anthropic.claude-code"
+CLAUDE_DESKTOP_BUNDLE = "com.anthropic.claudefordesktop"
 
 
 def local_path(value: str | Path) -> Path:
@@ -27,7 +30,20 @@ def bundled_codex(application: Path) -> Path | None:
     return None
 
 
+def bundle_identifier(application: Path) -> str | None:
+    try:
+        with (application / "Contents/Info.plist").open("rb") as stream:
+            value = plistlib.load(stream).get("CFBundleIdentifier")
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None
+    return value if isinstance(value, str) else None
+
+
 def bundled_claude(application: Path) -> Path | None:
+    # Identify the bundle, not the file name: on case-insensitive volumes the
+    # Claude desktop app's own "Claude" binary also matches Contents/MacOS/claude.
+    if bundle_identifier(application) != CLAUDE_CODE_BUNDLE:
+        return None
     candidate = application / "Contents/MacOS/claude"
     if candidate.is_file() and os.access(candidate, os.X_OK):
         return candidate.resolve(strict=True)
@@ -39,13 +55,41 @@ def desktop_claude_roots() -> tuple[Path, ...]:
     return (Path.home() / "Library/Application Support/Claude/claude-code",)
 
 
+def _version(name: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(part) for part in name.split("."))
+    except ValueError:
+        return ()
+
+
+def desktop_managed_claude(roots: tuple[Path, ...] | None = None) -> list[Path]:
+    """Claude Code CLIs managed by the desktop app, newest version first."""
+    found = []
+    for root in roots if roots is not None else desktop_claude_roots():
+        for application in root.glob("*/*/claude.app") if root.is_dir() else ():
+            native = bundled_claude(application)
+            if native:
+                found.append((_version(application.parent.parent.name), native))
+    return [native for _, native in sorted(found, key=lambda item: item[0], reverse=True)]
+
+
+def claude_from_application(application: Path, desktop_roots: tuple[Path, ...] | None = None) -> Path:
+    native = bundled_claude(application)
+    if native:
+        return native
+    if bundle_identifier(application) == CLAUDE_DESKTOP_BUNDLE:
+        # Selecting Claude.app means the Claude Code CLI that this app manages.
+        managed = desktop_managed_claude(desktop_roots)
+        if managed:
+            return managed[0]
+        raise ValueError("The Claude desktop app is selected, but its bundled Claude Code CLI was not found. Open a Claude Code session in the desktop app once, or choose the standalone claude executable (for example ~/.local/bin/claude).")
+    raise ValueError(f"The selected app is not Claude Code: {application}. Choose the Claude desktop app or the standalone claude executable.")
+
+
 def executable_at(agent: str, value: str | Path) -> Path:
     path = local_path(value)
     if agent == "claude" and path.suffix == ".app" and path.is_dir():
-        native = bundled_claude(path)
-        if native:
-            return native
-        raise ValueError(f"No Claude Code executable found inside the selected app: {path}")
+        return claude_from_application(path)
     # Finder hides .app in many views; accept the selected app without its suffix.
     if agent == "codex" and not path.exists() and path.suffix != ".app" and path.with_name(path.name + ".app").is_dir():
         path = path.with_name(path.name + ".app")
@@ -64,6 +108,11 @@ def executable_at(agent: str, value: str | Path) -> Path:
                 native = bundled_codex(application)
                 if native:
                     return native
+    if agent == "claude":
+        # An executable chosen inside an app bundle must belong to Claude Code.
+        for application in reversed(executable.parents):
+            if application.suffix == ".app":
+                return claude_from_application(application)
     return executable
 
 
@@ -97,11 +146,7 @@ def locate_runtime(agent: str, configured_path: str | Path | None = None, *,
                 candidates.add(path.resolve(strict=True))
         if not candidates:
             # Fixed two-level layout only: <version>/<build>/claude.app. No disk search.
-            for root in desktop_roots if desktop_roots is not None else desktop_claude_roots():
-                for application in root.glob("*/*/claude.app") if root.is_dir() else ():
-                    native = bundled_claude(application)
-                    if native:
-                        candidates.add(native)
+            candidates.update(desktop_managed_claude(desktop_roots))
     if not candidates:
         raise ValueError(f"Could not locate {agent}. Select its existing app or executable using local runtime configuration; it may be on an external drive.")
     if len(candidates) != 1:

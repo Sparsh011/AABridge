@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import plistlib
 import stat
 import subprocess
 import tempfile
@@ -201,25 +202,51 @@ class ClaudeTokenTests(unittest.TestCase):
                 sandbox_profile(runtime, executable, extra_roots=("/Users",))
 
 
+def fixture_app(application: Path, identifier: str, executable: str) -> Path:
+    contents = application / "Contents"
+    (contents / "MacOS").mkdir(parents=True)
+    (contents / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": identifier, "CFBundleExecutable": executable}))
+    binary = contents / "MacOS" / executable
+    binary.write_text("fixture only; must never execute")
+    binary.chmod(0o755)
+    return binary
+
+
 class ClaudeDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp", prefix="aab-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.managed = self.root / "claude-code"
+        self.executable = fixture_app(self.managed / "2.1.0/abc123/claude.app", "com.anthropic.claude-code", "claude")
+
     def test_desktop_bundled_claude_found_and_selectable_as_app(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp", prefix="aab-") as name:
-            root = Path(name).resolve()
-            application = root / "claude-code/2.1.0/abc123/claude.app"
-            executable = application / "Contents/MacOS/claude"
-            executable.parent.mkdir(parents=True)
-            executable.write_text("fixture only; must never execute")
-            executable.chmod(0o755)
-            with patch("aabridge_preflight.runtimes.shutil.which", return_value=None):
-                found = locate_runtime("claude", command_roots=(), desktop_roots=(root / "claude-code",))
-            self.assertEqual(found, executable)
-            self.assertEqual(locate_runtime("claude", str(application)), executable)
-            second = root / "claude-code/2.2.0/def456/claude.app/Contents/MacOS/claude"
-            second.parent.mkdir(parents=True)
-            second.write_text("fixture only; must never execute")
-            second.chmod(0o755)
-            with patch("aabridge_preflight.runtimes.shutil.which", return_value=None), self.assertRaises(ValueError):
-                locate_runtime("claude", command_roots=(), desktop_roots=(root / "claude-code",))
+        with patch("aabridge_preflight.runtimes.shutil.which", return_value=None):
+            found = locate_runtime("claude", command_roots=(), desktop_roots=(self.managed,))
+        self.assertEqual(found, self.executable)
+        self.assertEqual(locate_runtime("claude", str(self.executable.parents[2])), self.executable)
+        fixture_app(self.managed / "2.2.0/def456/claude.app", "com.anthropic.claude-code", "claude")
+        with patch("aabridge_preflight.runtimes.shutil.which", return_value=None), self.assertRaises(ValueError):
+            locate_runtime("claude", command_roots=(), desktop_roots=(self.managed,))
+
+    def test_selecting_claude_desktop_app_uses_its_managed_cli_not_the_desktop_binary(self):
+        # Mirrors a case-insensitive volume: the desktop app's binary also
+        # answers to Contents/MacOS/claude, but it is not Claude Code.
+        desktop = self.root / "Applications/Claude.app"
+        fixture_app(desktop, "com.anthropic.claudefordesktop", "claude")
+        newest = fixture_app(self.managed / "2.10.0/fff000/claude.app", "com.anthropic.claude-code", "claude")
+        with patch("aabridge_preflight.runtimes.desktop_claude_roots", return_value=(self.managed,)):
+            self.assertEqual(locate_runtime("claude", str(desktop)), newest)
+            self.assertEqual(locate_runtime("claude", str(desktop / "Contents/MacOS/claude")), newest)
+        with patch("aabridge_preflight.runtimes.desktop_claude_roots", return_value=(self.root / "empty",)), \
+                self.assertRaisesRegex(ValueError, "bundled Claude Code CLI was not found"):
+            locate_runtime("claude", str(desktop))
+
+    def test_unrelated_app_is_not_accepted_as_claude_code(self):
+        other = self.root / "Other.app"
+        fixture_app(other, "com.example.other", "claude")
+        with self.assertRaisesRegex(ValueError, "not Claude Code"):
+            locate_runtime("claude", str(other))
 
 
 class ClaudeRoutingTests(unittest.IsolatedAsyncioTestCase):

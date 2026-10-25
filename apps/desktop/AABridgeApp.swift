@@ -39,7 +39,7 @@ final class SetupModel: ObservableObject {
 
     func choose(_ agent: String) {
         let picker = NSOpenPanel()
-        picker.title = agent == "codex" ? "Choose ChatGPT.app, Codex.app, or the Codex executable" : "Choose the Claude Code executable"
+        picker.title = agent == "codex" ? "Choose ChatGPT.app, Codex.app, or the Codex executable" : "Choose the Claude desktop app (Claude.app) or the claude executable"
         picker.message = "You can choose a location on this Mac or a connected external drive. Press ⌘⇧G to enter a path."
         picker.canChooseFiles = true
         picker.canChooseDirectories = true
