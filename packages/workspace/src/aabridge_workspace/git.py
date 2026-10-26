@@ -31,6 +31,8 @@ def git(repository: Path, *arguments: str) -> str:
 
 
 def validate_verifier(value: object) -> dict:
+    if isinstance(value, dict) and value.get("profile") == "repository-v1":
+        return fields(value, {"profile"})
     if isinstance(value, dict) and value.get("profile") == "file-proposal-v1":
         profile = fields(value, {"profile", "files"})
         require(isinstance(profile["files"], list) and 1 <= len(profile["files"]) <= 16, "Choose 1–16 explicit file paths.")
@@ -142,15 +144,21 @@ class Workspace:
             # No local hardlinks, templates, user filters, hooks, or submodules.
             git(self.path.parent, "clone", "--no-local", "--no-hardlinks", "--no-checkout", "--template=", "--", str(source), str(self.path))
             entries = git(self.path, "ls-tree", "-r", "--full-tree", self.task["base_commit"]).splitlines()
-            require(len(entries) <= 5000 and all(entry.split(" ", 1)[0] in {"100644", "100755"} for entry in entries), "Symlinks, submodules, and oversized repositories are unsupported.", "unsafe_workspace")
-            git(self.path, "checkout", "--detach", self.task["base_commit"])
+            require(self.project["verification"]["profile"] == "repository-v1" or (len(entries) <= 5000 and all(entry.split(" ", 1)[0] in {"100644", "100755"} for entry in entries)), "Symlinks, submodules, and oversized repositories are unsupported.", "unsafe_workspace")
+            git(self.path, "checkout", "-b", "codex/" + self.task["id"], self.task["base_commit"])
+            # A task may never accidentally push back into the source checkout.
+            git(self.path, "remote", "remove", "origin")
         require(not self.path.is_symlink(), "Task workspace was replaced by a symlink.", "unsafe_workspace")
         private_directory(self.path.parent)
+        if self.project["verification"]["profile"] == "repository-v1":
+            return {}  # Native CLIs read the checkout directly, without a context-size cap.
         sources = {path: scoped_source(self.path, path, allow_new=self.project["verification"]["profile"] == "file-proposal-v1")[1] for path in self.task["scope"]}
         require(sum(len((source or "").encode()) for source in sources.values()) <= 65536, "Selected source context exceeds 64 KiB; choose fewer files.")
         return sources
 
     def result(self, proposal: dict) -> dict:
+        if self.project["verification"]["profile"] == "repository-v1":
+            return self.coding_result(proposal)
         edits = proposal["edits"]
         require(len(edits) <= len(self.task["scope"]), "Proposal exceeds file scope.", "permission_denied")
         proposed = {}
@@ -203,3 +211,27 @@ class Workspace:
                 "branch": "detached HEAD", "worktree": str(self.path), "changed_paths": changed,
                 "summary": proposal["summary"], "verification": [evidence], "issues": proposal["issues"],
                 "limitations": ["Proposal-only worker; no arbitrary shell or repository test scripts executed.", "Not pushed or merged."] + (["Review required: scope validation does not prove correctness. New files exist in the task checkout, not the original project folder."] if file_proposal else [])}
+
+
+    def coding_result(self, proposal: dict) -> dict:
+        branch = "codex/" + self.task["id"]
+        require(git(self.path, "branch", "--show-current") == branch,
+                "The agent changed its assigned task branch; checkout preserved for review.", "verification_failed")
+        # Native agents can add/delete files and execute project checks. Keep all
+        # accepted changes in this isolated clone, with no push remote configured.
+        if self.task.get("mode", "work") != "work":
+            require(not git(self.path, "status", "--porcelain") and
+                    git(self.path, "rev-parse", "HEAD") == self.task["base_commit"],
+                    "Planning/review must leave the checkout unchanged.", "permission_denied")
+        else:
+            git(self.path, "add", "--all")
+            if git(self.path, "diff", "--cached", "--name-only"):
+                git(self.path, "commit", "-m", f"AABridge {self.task['id']} revision {self.task['revision']}")
+        commit = git(self.path, "rev-parse", "HEAD")
+        return {"base_commit": self.task["base_commit"], "result_commit": commit,
+                "branch": branch, "worktree": str(self.path),
+                "changed_paths": git(self.path, "diff", "--name-only", self.task["base_commit"], commit).splitlines(),
+                "summary": proposal["summary"], "issues": proposal.get("issues", []),
+                "verification": [{"profile": "repository-v1", "review_required": True,
+                                  "method": "Isolated Git branch captured. Agent-reported checks require review."}],
+                "limitations": ["Not pushed or merged.", "Native CLI commands use the permissions of this Mac's signed-in user."]}

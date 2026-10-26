@@ -14,12 +14,14 @@ struct LocalProject: Decodable, Identifiable {
 final class ProjectSettingsModel: ObservableObject {
     @Published var projects: [LocalProject] = []
     @Published var peers: [String] = []
+    @Published var peerLabels: [String: String] = [:]
     @Published var selected = ""
     @Published var projectID = ""
     @Published var repository = ""
     @Published var scopeText = ""
     @Published var selectedPeers: Set<String> = []
     @Published var agent = "codex"
+    @Published var coding = true
     @Published var claudeToken = ""
     @Published var claudeTokenStored = false
     @Published var busy = false
@@ -27,20 +29,26 @@ final class ProjectSettingsModel: ObservableObject {
     private let activity: TaskBrowserModel
     init(activity: TaskBrowserModel) { self.activity = activity }
     var scope: [String] { scopeText.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
-    var canSave: Bool { !busy && !projectID.isEmpty && !repository.isEmpty && !scope.isEmpty && scope.count <= 16 && scope.count == Set(scope).count
-        && (agent != "claude" || claudeTokenStored || !claudeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+    var canSave: Bool { !busy && !projectID.isEmpty && !repository.isEmpty && (coding || (!scope.isEmpty && scope.count <= 16 && scope.count == Set(scope).count))
+        && (coding || agent != "claude" || claudeTokenStored || !claudeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
     var agentName: String { agent == "claude" ? "Claude Code" : "Codex" }
     func chooseProject() {
         guard let project = projects.first(where: { $0.id == selected }) else {
-            projectID = ""; repository = ""; scopeText = ""; selectedPeers = []; agent = "codex"; return
+            projectID = ""; repository = ""; scopeText = ""; selectedPeers = []; agent = "codex"; coding = true; selectedPeers = Set(peers); return
         }
-        projectID = project.id; repository = project.repository; scopeText = project.scope.joined(separator: "\n"); selectedPeers = Set(project.peers); agent = project.adapter
+        projectID = project.id; repository = project.repository; scopeText = project.scope.joined(separator: "\n"); selectedPeers = Set(project.peers); agent = project.adapter; coding = project.verification.profile == "repository-v1"
     }
     func chooseRepository() {
         let panel = NSOpenPanel()
         panel.title = "Choose a committed Git repository on this receiving Mac"
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url { repository = url.path }
+        if panel.runModal() == .OK, let url = panel.url {
+            repository = url.path
+            if projectID.isEmpty {
+                let slug = url.lastPathComponent.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : Character("-") }
+                projectID = "project-" + String(slug.prefix(45)) + "-" + agent
+            }
+        }
     }
     func chooseFiles() {
         guard !repository.isEmpty else { notice = "Choose the repository first."; return }
@@ -63,7 +71,7 @@ final class ProjectSettingsModel: ObservableObject {
     func save() {
         guard canSave else { return }
         do {
-            var body: [String: Any] = ["id": projectID, "repository": repository, "scope": scope, "peers": selectedPeers.sorted(), "agent": agent]
+            var body: [String: Any] = ["id": projectID, "repository": repository, "scope": coding ? ["*"] : scope, "peers": selectedPeers.sorted(), "agent": agent, "coding": coding]
             let token = claudeToken.trimmingCharacters(in: .whitespacesAndNewlines)
             if agent == "claude" && !token.isEmpty { body["claude_token"] = token }
             let data = try JSONSerialization.data(withJSONObject: body)
@@ -73,16 +81,18 @@ final class ProjectSettingsModel: ObservableObject {
     private func perform(_ action: String, body: Data?) {
         guard !busy else { return }
         busy = true
-        notice = action == "project-save" ? "Saving scope and checking the \(agentName) runtime and isolation. No model inference is started…" : "Loading projects on this Mac…"
+        notice = action == "project-save" ? "Saving your project and checking \(agentName)…" : "Loading projects on this Mac…"
         let wanted = projectID
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                struct Reply: Decodable { let projects: [LocalProject]; let peers: [String]; let claude_token_stored: Bool }
+                struct Reply: Decodable { let projects: [LocalProject]; let peers: [String]; let claude_token_stored: Bool; let peer_labels: [String: String]? }
                 let reply = try JSONDecoder().decode(Reply.self, from: self.activity.call(action, target: "local", input: body))
                 DispatchQueue.main.async {
                     self.projects = reply.projects; self.peers = reply.peers; self.busy = false
+                    if self.selected.isEmpty { self.selectedPeers = Set(reply.peers) }
+                    self.peerLabels = reply.peer_labels ?? [:]
                     self.claudeTokenStored = reply.claude_token_stored; self.claudeToken = ""
-                    if action == "project-save" { self.selected = wanted; self.notice = "Project saved and enabled. On the sending Mac, refresh the receiver and choose this project in New task." }
+                    if action == "project-save" { self.selected = wanted; self.notice = "Project ready. Open Team chat and refresh your team to select it." }
                     else { self.notice = "Project permissions below belong to this Mac." }
                 }
             } catch {
@@ -94,46 +104,53 @@ final class ProjectSettingsModel: ObservableObject {
 
 struct ProjectSettingsView: View {
     @ObservedObject var model: ProjectSettingsModel
+    @State private var advanced = false
     var body: some View {
-        ScrollView { VStack(alignment: .leading, spacing: 18) {
-            Text("Projects & scope · this Mac").font(.title.bold())
-            Text("Configure this on the receiving Mac, where the project files live. Remote callers can narrow an approved scope; they cannot grant themselves access to other files.").foregroundStyle(.secondary)
+        ScrollView { VStack(alignment: .leading, spacing: 22) {
+            Text("Add your project").font(.bridge(.title).bold())
+            Text("Choose the folder this Mac will work on and the agent it will use. Add the same project on your other Mac, using the same committed version.").foregroundStyle(.secondary)
             HStack {
-                Picker("Edit project", selection: $model.selected) {
-                    Text("Create a new file-proposal project").tag("")
-                    ForEach(model.projects.filter { $0.verification.profile == "file-proposal-v1" }) { project in Text(project.id + (project.adapter == "claude" ? " · Claude" : " · Codex") + (project.execution_enabled ? "" : " · disabled")).tag(project.id) }
+                Picker("Project", selection: $model.selected) {
+                    Text("Add a new project").tag("")
+                    ForEach(model.projects) { Text($0.id + ($0.adapter == "claude" ? " · Claude" : " · Codex")).tag($0.id) }
                 }.onChange(of: model.selected) { _ in model.chooseProject() }
                 Button("Refresh") { model.refresh() }
             }
-            TextField("Project ID, for example backend", text: $model.projectID).disabled(!model.selected.isEmpty)
-            Picker("Worker agent", selection: $model.agent) {
-                Text("Codex · ChatGPT subscription").tag("codex")
-                Text("Claude Code · Claude subscription").tag("claude")
-            }.pickerStyle(.segmented).disabled(!model.selected.isEmpty)
-            if model.agent == "claude" {
-                SecureField(model.claudeTokenStored ? "Subscription token stored on this Mac · paste a new one to replace it" : "Paste the token printed by claude setup-token", text: $model.claudeToken)
-                Text("Run claude setup-token in Terminal on this Mac and paste its sk-ant-oat01-… token. It is saved privately in AABridge's state folder and is never sent to the other Mac. API keys are refused.").font(.caption).foregroundStyle(.secondary)
+            GroupBox { VStack(alignment: .leading, spacing: 18) {
+                Text("1. Choose a folder").font(.bridge(.headline))
+                HStack { Text(model.repository.isEmpty ? "No project selected" : model.repository).foregroundStyle(.secondary).textSelection(.enabled); Spacer(); Button("Choose folder…") { model.chooseRepository() } }
+                Text("Use a Git project with at least one commit. Your team works in separate copies, so your current files stay safe.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                Text("2. Choose this Mac’s agent").font(.bridge(.headline))
+                Picker("Agent", selection: $model.agent) { Text("Codex").tag("codex"); Text("Claude").tag("claude") }.pickerStyle(.segmented)
+                Text("Full coding lets the agent edit the project and run commands with its normal CLI permissions and login. Sign in to the selected agent on this Mac first.").font(.bridge(.callout)).foregroundStyle(.secondary)
+                Text("3. Share with your other Mac").font(.bridge(.headline))
+                if model.peers.isEmpty { Text("Connect the other Mac in Devices first. You can still save a project for local work.").foregroundStyle(.secondary) }
+                ForEach(model.peers, id: \.self) { peer in
+                    Toggle(model.peerLabels[peer] ?? peer, isOn: Binding(get: { model.selectedPeers.contains(peer) }, set: { if $0 { model.selectedPeers.insert(peer) } else { model.selectedPeers.remove(peer) } }))
+                }
+            }.padding(18) }
+            DisclosureGroup("Advanced settings", isExpanded: $advanced) {
+                VStack(alignment: .leading, spacing: 14) {
+                    TextField("Project name", text: $model.projectID).disabled(!model.selected.isEmpty)
+                    Toggle("Full project coding", isOn: $model.coding)
+                    if !model.coding {
+                        Text("Small file proposals · agent tools and test commands are disabled.").foregroundStyle(.secondary)
+                        HStack { Text("Allowed files"); Spacer(); Button("Choose files…") { model.chooseFiles() } }
+                        TextEditor(text: $model.scopeText).font(.bridge(.body, design: .monospaced)).frame(height: 130)
+                    }
+                    if model.agent == "claude" {
+                        SecureField("Optional Claude subscription token", text: $model.claudeToken)
+                        Text("Full coding uses your normal Claude login. The small-proposal sandbox requires a token from claude setup-token.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                    }
+                }.padding(.top, 12)
             }
-            HStack { TextField("Repository folder on this Mac", text: $model.repository); Button("Choose folder…") { model.chooseRepository() } }
-            Text("Use a Git repository with at least one commit. Tasks start from its current committed HEAD, without uncommitted changes. The original project folder is not modified.").font(.caption).foregroundStyle(.secondary)
-            HStack { Text("Allowed files · one relative path per line").font(.headline); Spacer(); Button("Add existing files…") { model.chooseFiles() } }
-            TextEditor(text: $model.scopeText).font(.system(.body, design: .monospaced)).frame(height: 150).padding(8)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.2)))
-            Text("Example: src/server.py or hello.txt. You may type a new file path that does not exist yet. Allow 1–16 files; no folders, wildcards, absolute paths, hidden files, symlinks or submodules. Each file is limited to 16 KiB, with 64 KiB total per proposal.").font(.caption).foregroundStyle(.secondary)
-            Text("Allow enrolled senders").font(.headline)
-            if model.peers.isEmpty { Text("No remote senders are enrolled. Local tasks remain available; finish pairing to add a remote sender.").font(.callout).foregroundStyle(.secondary) }
-            ForEach(model.peers, id: \.self) { peer in
-                Toggle(peer, isOn: Binding(get: { model.selectedPeers.contains(peer) }, set: { if $0 { model.selectedPeers.insert(peer) } else { model.selectedPeers.remove(peer) } }))
-            }
-            Text("File proposals require your review. AABridge checks the file boundaries and Git diff, but does not execute your app, tests, build scripts or shell commands. Changes, including new files, are saved in a separate task checkout and are not automatically copied into this folder, pushed or merged.").font(.callout)
             HStack {
                 if model.busy { ProgressView().controlSize(.small) }
-                Text(model.notice).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(model.notice).foregroundStyle(.secondary).textSelection(.enabled)
                 Spacer()
-                Button("Save scope & enable") { model.save() }.buttonStyle(.borderedProminent).disabled(!model.canSave)
+                Button("Save project") { model.save() }.buttonStyle(.borderedProminent).disabled(!model.canSave)
             }
-            Text("Saving checks the selected worker's runtime and isolation without a model turn. If that preflight fails, the saved project stays disabled until you fix the prerequisite and retry. Finish/cancel active tasks before changing an existing project's policy. The math demo remains a separate test project.").font(.caption).foregroundStyle(.secondary)
-        }.padding(28).frame(maxWidth: 1000, alignment: .leading).disabled(model.busy) }
+        }.padding(32).frame(maxWidth: 950, alignment: .leading).disabled(model.busy) }
             .onAppear { if model.projects.isEmpty && !model.busy { model.refresh() } }
     }
 }

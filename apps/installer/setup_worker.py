@@ -150,7 +150,7 @@ def stop_idle_receiver(state: Path) -> None:
 DEMOS = {"codex": "demo", "claude": "claude-demo"}
 
 
-def configure(bundle: Path, install: Path, public: Path, manifest: dict, worker: str = "codex", claude_token: str | None = None):
+def configure(bundle: Path, install: Path, public: Path, manifest: dict, worker: str = "codex", claude_token: str | None = None, coding: bool = False):
     import asyncio
     from aabridge_cli.actions import CLAUDE_TOKEN, configure_runtimes, demo_init, enable_project, grant_peer, request, runtime_inventory, send, start_daemon, store_claude_token
     from aabridge_core.config import initialize, load_config, read_private, save_config
@@ -166,6 +166,16 @@ def configure(bundle: Path, install: Path, public: Path, manifest: dict, worker:
     settings = runtime_settings(bundle)
     if settings:
         configure_runtimes(state, settings)
+    if coding:
+        # Install the symmetric bridge without requiring a demo, sandbox token,
+        # or a preselected remote. Pairing is an explicit Devices action later.
+        if claude_token:
+            store_claude_token(state, claude_token)
+        require(runtime_inventory(state)[worker]["status"] == "found", "Choose an installed agent, then retry setup.")
+        start_daemon(state)
+        print("AABRIDGE MINI READY")  # Compatibility with older desktop wrappers.
+        print("This Mac is ready. Connect the other Mac in Devices, then add a project.")
+        return
     runtimes = runtime_inventory(state)
     for agent, runtime in runtimes.items():
         print(f"{agent}: {runtime['status']}; {runtime.get('executable') or runtime.get('message')}", flush=True)
@@ -233,6 +243,7 @@ def main() -> int:
     parser.add_argument("--diagnose", action="store_true", help="Check paths and isolation without installing, granting SSH access or running a model.")
     parser.add_argument("--worker", choices=tuple(DEMOS), default="codex", help="Managed worker agent for this receiver's demo project.")
     parser.add_argument("--claude-token-stdin", action="store_true", help="Read a claude setup-token token from standard input.")
+    parser.add_argument("--coding", action="store_true", help="Install a symmetric bridge; pair devices and choose projects in the app.")
     args = parser.parse_args()
     # Read before anything else; the token is never placed in argv, files or logs.
     claude_token = (sys.stdin.readline(1024).strip() or None) if args.claude_token_stdin else None
@@ -262,7 +273,7 @@ def main() -> int:
     from aabridge_core.config import private_directory, read_private, write_private
     install = private_directory(Path.home().resolve() / "Library/Application Support/AABridgeInstall", create=True)
     if args.configure:
-        configure(args.bundle.resolve(), install, public, manifest, args.worker, claude_token)
+        configure(args.bundle.resolve(), install, public, manifest, args.worker, claude_token, args.coding)
         return 0
     print("STEP: Installing the bundled bridge in its private Python environment", flush=True)
     print(f"Installing AABridge locally and granting only {DEMOS[args.worker]}-project bridge access.")
@@ -284,7 +295,7 @@ def main() -> int:
     subprocess.run([str(python), "-m", "pip", "--disable-pip-version-check", "--no-cache-dir", "install",
                     "--no-index", "--no-deps", "--force-reinstall", str(wheel)], check=True)
     configured = subprocess.run([str(python), str(Path(__file__).resolve()), "--bundle", str(args.bundle.resolve()), "--configure",
-                                 "--worker", args.worker, *(["--claude-token-stdin"] if claude_token else [])],
+                                 "--worker", args.worker, *(["--coding"] if args.coding else []), *(["--claude-token-stdin"] if claude_token else [])],
                                 input=(claude_token + "\n").encode() if claude_token else None)
     return configured.returncode
 

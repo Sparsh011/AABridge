@@ -9,6 +9,8 @@ from aabridge_protocol.messages import BridgeError, MUTATIONS, decode, identifie
 
 TOOL_OPS = {"bridge_projects": "projects", "bridge_submit": "submit", "bridge_status": "status",
             "bridge_tasks": "tasks", "bridge_conversation": "conversation",
+            "bridge_teams": "teams", "bridge_team_start": "team_start", "bridge_team_status": "team_status",
+            "bridge_team_reply": "team_reply", "bridge_team_cancel": "team_cancel", "bridge_team_retry": "team_retry",
             "bridge_events": "events", "bridge_answer": "answer", "bridge_revise": "revise", "bridge_cancel": "cancel"}
 
 
@@ -17,7 +19,7 @@ def tools() -> list[dict]:
     bodies = {variant["properties"]["op"]["const"]: variant["properties"]["body"] for variant in contract["oneOf"]}
     descriptions = {
         "projects": "List only projects assigned to this coordinator identity, with approved baseline, scope and limits.",
-        "submit": "Submit a bounded proposal-v1 task; returns its durable task ID promptly. Supply a stable unique key for safe retries.",
+        "submit": "Submit a proposal-v1 or locally enabled coding-v1 task; returns its durable task ID promptly. Supply a stable unique key for safe retries.",
         "status": "Read task status, exact session IDs, pending question or independently checked result.",
         "events": "Retrieve ordered events after body.cursor (initially 0); use returned cursor to resume.",
         "tasks": "Browse authorized tasks, newest first, with pagination cursor initially 0. This does not start inference.",
@@ -26,6 +28,14 @@ def tools() -> list[dict]:
         "revise": "Request a revision of a completed task at its current revision, subject to local limits.",
         "cancel": "Cancel only the identified task; preserve its partial workspace. Closing MCP does not cancel tasks.",
     }
+    descriptions.update({
+        "teams": "List team chats owned by the local admin. Device roles are chosen per room.",
+        "team_start": "Create a team assignment explicitly authorized by the human admin. Leader plans and reviews; follower implements. Requires a local admin connection and full coding projects on both participants.",
+        "team_status": "Read the saved team conversation, stage, errors, and implementation branch.",
+        "team_reply": "Send the admin's next task to a completed/stopped team. This starts model work.",
+        "team_cancel": "Stop a team and its active task; preserve the checkout.",
+        "team_retry": "Retry a blocked stage using its existing durable request key.",
+    })
     result = []
     for name, op in TOOL_OPS.items():
         result.append({"name": name, "description": descriptions[op], "inputSchema": {

@@ -53,7 +53,7 @@
           "items": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 1000
+            "maxLength": 100000
           },
           "minItems": 0,
           "maxItems": 8,
@@ -66,17 +66,17 @@
             "runtime_seconds": {
               "type": "integer",
               "minimum": 10,
-              "maximum": 300
+              "maximum": 86400
             },
             "max_turns": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 6
+              "maximum": 100
             },
             "max_revisions": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 3
+              "maximum": 100
             }
           },
           "required": [
@@ -86,7 +86,20 @@
           ]
         },
         "permission_profile": {
-          "const": "proposal-v1"
+          "type": "string",
+          "enum": [
+            "proposal-v1",
+            "coding-v1"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "work",
+            "plan",
+            "review"
+          ],
+          "description": "Coding role: planning and review leave the checkout unchanged."
         }
       },
       "required": [
@@ -99,6 +112,53 @@
         "context",
         "limits",
         "permission_profile"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "permission_profile": {
+                "const": "coding-v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "const": [
+                  "*"
+                ]
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "mode"
+              ]
+            },
+            "properties": {
+              "limits": {
+                "properties": {
+                  "runtime_seconds": {
+                    "maximum": 300
+                  },
+                  "max_turns": {
+                    "maximum": 6
+                  },
+                  "max_revisions": {
+                    "maximum": 3
+                  }
+                }
+              },
+              "context": {
+                "items": {
+                  "maxLength": 1000
+                }
+              }
+            }
+          }
+        }
       ]
     }
   },
@@ -166,7 +226,7 @@
               "items": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 1000
+                "maxLength": 100000
               },
               "minItems": 0,
               "maxItems": 8,
@@ -179,17 +239,17 @@
                 "runtime_seconds": {
                   "type": "integer",
                   "minimum": 10,
-                  "maximum": 300
+                  "maximum": 86400
                 },
                 "max_turns": {
                   "type": "integer",
                   "minimum": 1,
-                  "maximum": 6
+                  "maximum": 100
                 },
                 "max_revisions": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 3
+                  "maximum": 100
                 }
               },
               "required": [
@@ -199,29 +259,20 @@
               ]
             },
             "permission_profile": {
-              "const": "proposal-v1"
+              "type": "string",
+              "enum": [
+                "proposal-v1",
+                "coding-v1"
+              ]
             },
-            "origin": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "kind": {
-                  "enum": [
-                    "human",
-                    "agent"
-                  ]
-                },
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 80
-                }
-              },
-              "required": [
-                "kind",
-                "name"
+            "mode": {
+              "type": "string",
+              "enum": [
+                "work",
+                "plan",
+                "review"
               ],
-              "description": "Optional display provenance, never permission or human approval. Agent coordinators should include kind=agent and their actual agent name, preserving the same body on retries."
+              "description": "Coding role: planning and review leave the checkout unchanged."
             }
           },
           "required": [
@@ -234,6 +285,53 @@
             "context",
             "limits",
             "permission_profile"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "permission_profile": {
+                    "const": "coding-v1"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "scope": {
+                    "const": [
+                      "*"
+                    ]
+                  }
+                }
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "mode"
+                  ]
+                },
+                "properties": {
+                  "limits": {
+                    "properties": {
+                      "runtime_seconds": {
+                        "maximum": 300
+                      },
+                      "max_turns": {
+                        "maximum": 6
+                      },
+                      "max_revisions": {
+                        "maximum": 3
+                      }
+                    }
+                  },
+                  "context": {
+                    "items": {
+                      "maxLength": 1000
+                    }
+                  }
+                }
+              }
+            }
           ]
         }
       },
@@ -345,12 +443,12 @@
             "revision": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 4
+              "maximum": 101
             },
             "text": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 4000
+              "maxLength": 100000
             },
             "question_id": {
               "type": "string",
@@ -419,12 +517,12 @@
             "revision": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 4
+              "maximum": 101
             },
             "text": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 4000
+              "maxLength": 100000
             },
             "origin": {
               "type": "object",
@@ -649,6 +747,268 @@
           },
           "required": [
             "cursor"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "teams"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {},
+          "required": []
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_start"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "objective": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 3000
+            },
+            "leader": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "target",
+                "project",
+                "agent"
+              ],
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+                },
+                "project": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+                },
+                "agent": {
+                  "enum": [
+                    "codex",
+                    "claude"
+                  ]
+                }
+              }
+            },
+            "follower": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "target",
+                "project",
+                "agent"
+              ],
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+                },
+                "project": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+                },
+                "agent": {
+                  "enum": [
+                    "codex",
+                    "claude"
+                  ]
+                }
+              }
+            }
+          },
+          "required": [
+            "objective",
+            "leader",
+            "follower"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_status"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "team_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            }
+          },
+          "required": [
+            "team_id"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_reply"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "team_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 3000
+            }
+          },
+          "required": [
+            "team_id",
+            "text"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_cancel"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "team_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            }
+          },
+          "required": [
+            "team_id"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_retry"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "team_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            }
+          },
+          "required": [
+            "team_id"
           ]
         }
       },

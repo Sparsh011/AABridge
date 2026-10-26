@@ -79,7 +79,8 @@ class Supervisor:
             require(task["turns"] < task["limits"]["max_turns"], "Task turn limit reached.", "limit_exceeded")
             remaining = task["limits"]["runtime_seconds"] - task["runtime_used"]
             require(remaining > 1, "Task runtime budget exhausted.", "limit_exceeded")
-            if not self.isolation_checked:
+            coding = project.get("permission_profile") == "coding-v1"
+            if not coding and not self.isolation_checked:
                 probe_isolation()
                 self.isolation_checked = True
             task = self.store.update(task["id"], "worker_started", status="running", turns=task["turns"] + 1,
@@ -88,7 +89,7 @@ class Supervisor:
             sources = workspace.prepare()
             from aabridge_adapter_codex.worker import INSTRUCTIONS, model_input
             self.store.record_message(task["id"], "context", "prepared_model_input",
-                                      json.dumps({"developer_instructions": INSTRUCTIONS, "input": model_input(task, sources)}, indent=2))
+                                      json.dumps({"developer_instructions": "Native coding CLI; local project permissions apply." if coding else INSTRUCTIONS, "input": model_input(task, sources)}, indent=2))
             def on_session(thread_id, session_id):
                 require(isinstance(thread_id, str) and isinstance(session_id, str) and 1 <= len(thread_id) <= 128 and 1 <= len(session_id) <= 128,
                         "Invalid provider session identifiers.")
@@ -101,7 +102,8 @@ class Supervisor:
                 self.store.update(task["id"], "session_checkpoint", thread_id=thread_id, session_id=session_id)
             def on_pid(pid):
                 self.store.update(task["id"], "worker_process", worker_pid=pid)
-            worker = (self.worker_factory or WORKERS[project["adapter"]])(self.state, task, project, on_session, on_pid)
+            from aabridge_adapter_codex.native import NativeWorker
+            worker = (self.worker_factory or (NativeWorker if coding else WORKERS[project["adapter"]]))(self.state, task, project, on_session, on_pid)
             last_phase = [None]
             def on_progress(phase, message):
                 if phase != last_phase[0]:
@@ -139,6 +141,8 @@ class Supervisor:
             self.store.update(task["id"], "attempt_closed", runtime_used=current["runtime_used"] + time.monotonic() - started)
 
     async def schedule(self):
+        from aabridge_core.teams import TeamRunner
+        self.team_runner = asyncio.create_task(TeamRunner(self.state, self.store).run(self.stopping))
         self.store.recover()
         while not self.stopping.is_set():
             if self.active and self.active.done():
@@ -157,6 +161,7 @@ class Supervisor:
                         self.active = asyncio.create_task(self.run_task(task))
                         break
             await asyncio.sleep(0.1)
+        await self.team_runner
         if self.active:
             self.active.cancel()
             await asyncio.gather(self.active, return_exceptions=True)

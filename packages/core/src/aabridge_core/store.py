@@ -42,6 +42,8 @@ class Store:
                 digest TEXT NOT NULL, response TEXT NOT NULL, PRIMARY KEY(owner,key));
         """)
         self._migrate_history()
+        from .teams import setup
+        setup(self.db)
 
     def _migrate_history(self):
         self.db.execute("BEGIN IMMEDIATE")
@@ -161,6 +163,9 @@ class Store:
             raise
 
     def handle(self, request: Request, identity: str, config: dict) -> dict:
+        if request.op.startswith("team"):
+            from .teams import handle
+            return handle(self, request, identity)
         if request.op == "ping":
             return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1"}
         if request.op == "projects":
@@ -213,7 +218,7 @@ class Store:
         body, op = request.body, request.op
         if op == "submit":
             require(body["base_commit"] == project["base_commit"], "Base commit is not the locally approved project baseline.", "permission_denied")
-            require(self.db.execute("SELECT count(*) FROM tasks").fetchone()[0] < 256, "Initial-version retained task quota reached.", "limit_exceeded")
+            require(body["permission_profile"] == project.get("permission_profile", "proposal-v1"), "Task execution mode differs from the locally enabled project.", "permission_denied")
             require(body["recipient"] == project["worker"], "Worker is not assigned to this project.", "permission_denied")
             require(set(body["scope"]) <= set(project["scope"]), "Task scope exceeds local policy.", "permission_denied")
             for key, value in body["limits"].items():

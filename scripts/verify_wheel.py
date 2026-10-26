@@ -72,7 +72,7 @@ def main() -> int:
                             capture_output=True, text=True, check=True, timeout=5)
         responses = [json.loads(line) for line in mcp.stdout.splitlines()]
         advertised = responses[-1]["result"]["tools"]
-        if len(advertised) != 9 or not any(tool["name"] == "bridge_conversation" for tool in advertised):
+        if len(advertised) != 15 or not {"bridge_conversation", "bridge_team_start", "bridge_team_status"} <= {tool["name"] for tool in advertised}:
             raise SystemExit("Installed MCP facade did not load its packaged schemas/tools.")
         # Verify this Python actually imports the installed wheel, not source paths.
         imported = subprocess.run(

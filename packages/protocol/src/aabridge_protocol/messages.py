@@ -10,7 +10,9 @@ MAX_MESSAGE = 131_072
 ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,79}\Z")
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown"})
-MUTATIONS = frozenset({"submit", "answer", "revise", "cancel"})
+TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry"})
+OPERATIONS = OPERATIONS | TEAM_OPS
+MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry"})
 
 
 class BridgeError(Exception):
@@ -95,24 +97,41 @@ def validate_request(value: object) -> Request:
     require(isinstance(op, str) and op in OPERATIONS, "Unsupported operation.")
     key = identifier(envelope["key"])
     body = envelope["body"]
-    if op == "submit":
-        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin"})
+    if op == "team_start":
+        fields(body, {"objective", "leader", "follower"})
+        text(body["objective"], 3000)
+        for role in ("leader", "follower"):
+            member = fields(body[role], {"target", "project", "agent"})
+            identifier(member["target"])
+            identifier(member["project"])
+            require(member["agent"] in {"codex", "claude"}, "Choose Codex or Claude.")
+        require(body["leader"] != body["follower"], "Choose different leader and follower participants.")
+    elif op in {"team_status", "team_cancel", "team_retry", "team_reply"}:
+        fields(body, {"team_id"} | ({"text"} if op == "team_reply" else set()))
+        identifier(body["team_id"])
+        if op == "team_reply":
+            text(body["text"], 3000)
+    elif op == "submit":
+        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin", "mode"})
         identifier(body["project_id"])
         identifier(body["recipient"])
         require(isinstance(body["base_commit"], str) and SHA.fullmatch(body["base_commit"]) is not None, "An exact base commit is required.")
         text(body["objective"])
+        coding = body["permission_profile"] == "coding-v1"
+        require(body.get("mode", "work") in {"work", "plan", "review"}, "Invalid coding role.")
+        require(coding or "mode" not in body, "Roles require coding mode.")
         for name, cap, item_cap in (("scope", 16, 200), ("acceptance", 8, 1000), ("context", 8, 1000)):
             items = body[name]
             require(isinstance(items, list) and len(items) <= cap, "List exceeds bounds.")
             require(name == "context" or len(items) > 0, "Scope and acceptance must not be empty.")
             for item in items:
-                relative_file(item) if name == "scope" else text(item, item_cap)
+                (require(item == "*", "Coding tasks use the whole project.") if coding else relative_file(item)) if name == "scope" else text(item, 100000 if coding and name == "context" else item_cap)
             require(len(items) == len(set(items)), "Duplicate list items.")
         limits = fields(body["limits"], {"runtime_seconds", "max_turns", "max_revisions"})
-        integer(limits["runtime_seconds"], 10, 300)
-        integer(limits["max_turns"], 1, 6)
-        integer(limits["max_revisions"], 0, 3)
-        require(body["permission_profile"] == "proposal-v1", "Only the proposal-v1 permission profile is supported.", "permission_denied")
+        integer(limits["runtime_seconds"], 10, 86400 if coding else 300)
+        integer(limits["max_turns"], 1, 100 if coding else 6)
+        integer(limits["max_revisions"], 0, 100 if coding else 3)
+        require(body["permission_profile"] in {"proposal-v1", "coding-v1"}, "Unknown permission profile.", "permission_denied")
     elif op in {"status", "cancel"}:
         fields(body, {"task_id"})
         identifier(body["task_id"])
@@ -124,10 +143,10 @@ def validate_request(value: object) -> Request:
         fields(body, {"cursor"})
         integer(body["cursor"], 0, 2**63 - 1)
     elif op in {"answer", "revise"}:
-        fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin"})
+        fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin", "mode"})
         identifier(body["task_id"])
-        integer(body["revision"], 1, 4)
-        text(body["text"])
+        integer(body["revision"], 1, 101)
+        text(body["text"], 100000)
         if op == "answer":
             identifier(body["question_id"])
     else:

@@ -85,7 +85,7 @@ final class SetupModel: ObservableObject {
             let token = claudeToken.trimmingCharacters(in: .whitespacesAndNewlines)
             let sendToken = !diagnose && worker == "claude" && !token.isEmpty
             launch(executable: URL(fileURLWithPath: "/bin/zsh"),
-                   arguments: [folder.appendingPathComponent("Setup.command").path, "--worker", worker]
+                   arguments: [folder.appendingPathComponent("Setup.command").path, "--worker", worker, "--coding"]
                        + (diagnose ? ["--diagnose"] : []) + (sendToken ? ["--claude-token-stdin"] : []),
                    directory: folder, kind: diagnose ? "diagnostics" : "setup",
                    input: sendToken ? Data((token + "\n").utf8) : nil)
@@ -102,7 +102,7 @@ final class SetupModel: ObservableObject {
             .appendingPathComponent("Library/Application Support/AABridgeInstall/venv/bin/python")
         guard FileManager.default.isExecutableFile(atPath: python.path) else {
             headline = "The bridge has not been installed on this Mac."
-            detail = "Check prerequisites, then select Install receiver."
+            detail = "Check prerequisites, then select Set up this Mac."
             return
         }
         launch(executable: python, arguments: ["-m", "aabridge_cli", "ping"], directory: payload, kind: "status")
@@ -125,7 +125,7 @@ final class SetupModel: ObservableObject {
         busy = true
         ready = false
         logs = ""
-        headline = kind == "setup" ? "Preparing this Mac as a receiver…" : "Checking \(kind)…"
+        headline = kind == "setup" ? "Preparing this Mac…" : "Checking \(kind)…"
         detail = "Keep selected drives connected. No model inference is started. You can expand Details below."
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
@@ -173,14 +173,14 @@ final class SetupModel: ObservableObject {
                 DispatchQueue.main.async {
                     self.busy = false
                     if code == 0 {
-                        self.headline = kind == "setup" && self.ready ? "Receiver ready on this Mac" : (kind == "status" ? "Bridge supervisor is responding" : "Isolation checks passed")
-                        self.detail = kind == "setup" ? "Return to your MacBook chat for the first two-device test. Remote Login must remain on while receiving SSH connections."
+                        self.headline = kind == "setup" && self.ready ? "This Mac is ready" : (kind == "status" ? "Bridge supervisor is responding" : "Isolation checks passed")
+                        self.detail = kind == "setup" ? "Open Devices to connect your other Mac, then add a project. Either Mac can lead or receive work."
                             : (kind == "status" ? "See Details for the supervisor response. This does not verify a remote agent session."
                                : "\(self.workerName) was found and all six sandbox canaries passed. Account and SSH access have not been checked.")
                     } else {
                         self.headline = kind == "status" ? "The supervisor is not responding" : "\(kind.capitalized) needs attention"
                         if !self.detail.contains("INCOMPLETE:") {
-                            self.detail = "The check exited with code \(code). Expand Details and share the final diagnostic with your MacBook chat."
+                            self.detail = "The check exited with code \(code). Expand Details and copy the final diagnostic."
                         }
                     }
                 }
@@ -201,7 +201,7 @@ struct SetupView: View {
 
     private func location(_ title: String, agent: String, value: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.headline)
+            Text(title).font(.bridge(.headline))
             HStack {
                 TextField("Automatic discovery", text: value).textFieldStyle(.roundedBorder)
                 Button("Choose…") { model.choose(agent) }
@@ -213,62 +213,64 @@ struct SetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 14) {
-                Image(systemName: "desktopcomputer.and.arrow.down").font(.system(size: 36)).foregroundStyle(.tint)
+                Image(systemName: "desktopcomputer.and.arrow.down").font(.system(size: 43.2)).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("AABridge").font(.largeTitle.bold())
-                    Text("Receiver setup · this Mac").foregroundStyle(.secondary)
+                    Text("AABridge").font(.bridge(.largeTitle).bold())
+                    Text("Set up this Mac").foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("DEVELOPMENT PREVIEW").font(.caption).foregroundStyle(.secondary)
+                Text("DEVELOPMENT PREVIEW").font(.bridge(.caption)).foregroundStyle(.secondary)
             }
-            Text("Choose the worker agent for this receiver, and where each agent lives on this Mac. ChatGPT can stay on your SSD; Claude Code can live on the internal drive.")
+            Text("Install the bridge on this Mac. Agents are found automatically; choose a location below if needed. Add your real projects in Projects after setup.")
             GroupBox {
                 VStack(alignment: .leading, spacing: 18) {
                     Picker("Worker agent", selection: $model.worker) {
                         ForEach(SetupModel.workers, id: \.0) { Text($0.1).tag($0.0) }
                     }.frame(maxWidth: 360)
                     Text(model.worker == "claude"
-                         ? "Install receiver prepares a separate claude-demo project that runs on Claude Code with your Claude subscription."
-                         : "Install receiver prepares the demo project that runs on Codex with your ChatGPT login.")
-                        .font(.callout).foregroundStyle(.secondary)
+                         ? "Use your existing Claude login on this Mac."
+                         : "Use your existing Codex login on this Mac.")
+                        .font(.bridge(.callout)).foregroundStyle(.secondary)
                     if model.worker == "claude" {
+                        DisclosureGroup("Advanced: subscription token for proposal mode") {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Claude subscription token").font(.headline)
+                            Text("Claude subscription token").font(.bridge(.headline))
                             SecureField(model.claudeTokenStored ? "Stored on this Mac · paste a new token to replace it" : "Paste the sk-ant-oat01-… token from claude setup-token", text: $model.claudeToken)
                                 .textFieldStyle(.roundedBorder)
-                            Text("In Terminal on this Mac, run claude setup-token and sign in. Claude Code keeps its normal login in the Keychain, which the worker sandbox cannot open, so the worker uses this inference-only token instead. It is stored privately on this Mac and is never sent to the other Mac. API keys are refused.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            Text("Full coding uses your normal Claude login. Small proposal mode uses a token from claude setup-token.")
+                                .font(.bridge(.caption)).foregroundStyle(.secondary)
+                        }
                         }
                     }
                     location("Codex · select ChatGPT.app, Codex.app, or its executable", agent: "codex", value: $model.codex)
                     location("Claude Code · optional executable", agent: "claude", value: $model.claude)
                     Text("You can add more Codex or Claude Code projects later in Projects & scope.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.bridge(.callout)).foregroundStyle(.secondary)
                 }.padding(10)
             }.disabled(model.busy)
             HStack(alignment: .top, spacing: 12) {
                 if model.busy { ProgressView().controlSize(.small) }
                 else { Image(systemName: model.ready ? "checkmark.circle.fill" : "info.circle").foregroundStyle(model.ready ? .green : .secondary) }
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(model.headline).font(.headline)
-                    Text(model.detail).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(model.headline).font(.bridge(.headline))
+                    Text(model.detail).font(.bridge(.callout)).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
             HStack {
                 Button("Check prerequisites") { model.run(diagnose: true) }
-                Button("Install receiver") { model.run(diagnose: false) }.buttonStyle(.borderedProminent)
+                Button("Set up this Mac") { model.run(diagnose: false) }.buttonStyle(.borderedProminent)
                     .disabled(model.worker == "claude" && !model.claudeTokenStored && model.claudeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Spacer()
                 Button("Refresh status") { model.refreshStatus() }
             }.disabled(model.busy)
-            Text("Install receiver installs the bundled bridge, prepares a disposable demo, checks \(model.workerName) without a model call, and adds restricted SSH access for that demo. Existing repositories, keys, and provider credentials are preserved.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text("Set up this Mac installs the bundled bridge, prepares a disposable demo, checks \(model.workerName) without a model call, and adds restricted SSH access for that demo. Existing repositories, keys, and provider credentials are preserved.")
+                .font(.bridge(.caption)).foregroundStyle(.secondary)
             Divider()
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Remote Login is the connection route").font(.headline)
+                    Text("Remote Login is the connection route").font(.bridge(.headline))
                     Text("On this receiving Mac: System Settings → General → Sharing → Remote Login, allowed for your account. The app location tells AABridge what to launch; Remote Login lets the other Mac reach it.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.bridge(.callout)).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("System Settings") {
@@ -278,7 +280,7 @@ struct SetupView: View {
             DisclosureGroup("Details", isExpanded: $expanded) {
                 ScrollView {
                     Text(model.logs.isEmpty ? "Check results and setup progress will appear here." : model.logs)
-                        .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        .font(.bridge(.caption, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                 }.frame(minHeight: 100, maxHeight: 180).background(Color.primary.opacity(0.04))
                 HStack {
@@ -290,7 +292,7 @@ struct SetupView: View {
                 }
             }
             Text("Use Tasks & conversations to browse saved messages, supplied context and task events. Viewing does not start a model turn.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.bridge(.caption)).foregroundStyle(.secondary)
         }.padding(28).frame(minWidth: 820, idealWidth: 880, minHeight: 700)
     }
 }
@@ -301,6 +303,16 @@ struct AABridgeDesktop: App {
 
     init() {
         let payload = Bundle.main.resourceURL!.appendingPathComponent("SetupPayload")
+        if let index = CommandLine.arguments.firstIndex(of: "--preview-team"), CommandLine.arguments.count > index + 1 {
+            let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
+            let team = TeamRoomModel(activity: activity)
+            team.showAssignment = true
+            team.choices = [TeamChoice(id: "local/app", label: "Codex · MacBook · My business", member: TeamMember(target: "local", project: "app", agent: "codex")),
+                            TeamChoice(id: "mini/app", label: "Claude · Mac mini · My business", member: TeamMember(target: "mini", project: "app", agent: "claude"))]
+            team.leader = "local/app"; team.follower = "mini/app"
+            team.draft = "Build a simple booking page for my business. Make it easy to use on a phone."
+            exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--verify-chat"), CommandLine.arguments.count > index + 2 {
             exit(verifyChatControls(resources: Bundle.main.resourceURL!, stateDirectory: CommandLine.arguments[index + 1], output: CommandLine.arguments[index + 2]) ? 0 : 1)
         }

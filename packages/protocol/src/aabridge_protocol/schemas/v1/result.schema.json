@@ -31,13 +31,12 @@
         "maxLength": 200
       },
       "minItems": 0,
-      "maxItems": 16,
       "uniqueItems": true
     },
     "summary": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 2000
+      "maxLength": 60000
     },
     "verification": {
       "type": "array",
@@ -138,6 +137,26 @@
               "exit_code",
               "review_required"
             ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "profile",
+              "review_required",
+              "method"
+            ],
+            "properties": {
+              "profile": {
+                "const": "repository-v1"
+              },
+              "review_required": {
+                "const": true
+              },
+              "method": {
+                "type": "string"
+              }
+            }
           }
         ]
       }

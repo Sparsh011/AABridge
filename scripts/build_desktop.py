@@ -51,17 +51,23 @@ def main():
         build = release.rsplit("dev", 1)[-1] if "dev" in release else "1"
         plist = {"CFBundleExecutable": "AABridge", "CFBundleIdentifier": "local.aabridge.desktop",
                  "CFBundleName": "AABridge", "CFBundleDisplayName": "AABridge",
-                 "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.2.0",
+                 "CFBundlePackageType": "APPL", "CFBundleShortVersionString": release.split(".dev")[0],
                  "CFBundleVersion": build, "LSMinimumSystemVersion": "13.0",
                  "NSHighResolutionCapable": True}
         (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
+        # Compile one source snapshot so concurrent agent edits cannot change a
+        # compiler input halfway through the universal build.
+        sources = work / "Sources"
+        sources.mkdir()
+        for source in sorted((root / "apps/desktop").glob("*.swift")):
+            (sources / source.name).write_bytes(source.read_bytes())
         images = []
         for arch in ("arm64", "x86_64"):
             image = work / ("AABridge-" + arch)
             subprocess.run(["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-parse-as-library", "-O",
                             "-target", arch + "-apple-macosx13.0", "-module-cache-path", str(work / "modules"),
                             "-framework", "SwiftUI", "-framework", "AppKit",
-                            *map(str, sorted((root / "apps/desktop").glob("*.swift"))), "-o", str(image)], check=True)
+                            *map(str, sorted(sources.glob("*.swift"))), "-o", str(image)], check=True)
             images.append(str(image))
         subprocess.run(["/usr/bin/lipo", "-create", *images, "-output", str(binary)], check=True)
         subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True)
