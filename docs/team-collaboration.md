@@ -40,3 +40,11 @@ The deterministic fixtures verify role reversal, exact handoff direction, real d
 ## Build verification for this preview
 
 171 deterministic tests passed, including the two-supervisor IPC and follow-up test. Offline wheel installation and all 15 MCP tool schemas passed. The universal arm64/x86_64 desktop compiled and passed code-signature and resource smoke checks; the new-task screen was rendered and visually inspected with the 1.2× typography scale. The existing real-Claude sandbox verifier could not run because a Claude CLI is not discoverable on this Mac. No live model turn or physical two-Mac acceptance test was performed.
+
+## Connection-card fix · 0.3.0.dev2
+
+The first team preview incorrectly treated a missing `/etc/ssh/ssh_host_ed25519_key.pub` file as proof that Remote Login was off. macOS can have its SSH service loaded before its host keys exist. Card creation now makes a bounded, unauthenticated check of the local SSH listener when the public file is missing, reads only its Ed25519 public key, and reports a host-key availability problem rather than claiming the setting is off.
+
+Cards now use macOS’s `LocalHostName` plus `.local` for the network address and keep `ComputerName` only for display. This fixes Macs whose display hostname contains spaces or an apostrophe. Pasting an SSH command into the card field now gives instructions for copying an actual connection card.
+
+Verification: card creation succeeded against the affected MacBook’s real AABridge state and SSH identity using `Sparsh-MBP.local`. All 177 deterministic tests passed, including missing-file/live-listener fallback, timeout and malformed-key handling, and display/network name separation. No model calls or remote agent tasks were started.
