@@ -131,6 +131,66 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((Path(before) / 'second.txt').exists())
         self.assertEqual(len([r for r in self.requests if r[0] == 'revise']), 1)
 
+    async def test_model_selection_blocks_old_participant_before_starting_any_agent(self):
+        room, _ = self.start()
+        stored = get(self.store, room['id'])
+        stored['leader']['model_settings'] = {'model':'selected-model','effort':'high'}
+        save(self.store, stored)
+        await self.runner.step(room['id'])
+        blocked = get(self.store, room['id'])
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertIn('Finish active tasks before updating', blocked['error'])
+        self.assertFalse(self.accepted)
+
+    async def test_model_settings_are_pinned_independently_for_each_role(self):
+        room, _ = self.start()
+        stored = get(self.store, room['id'])
+        lead = {'model':'leader-model','effort':'high'}
+        follow = {'model':'follower-model','effort':'low'}
+        stored['leader']['model_settings'] = lead; stored['follower']['model_settings'] = follow
+        save(self.store, stored)
+        self.project['capabilities'] = {'model_settings':True}
+        self.pending = True
+        await self.runner.step(room['id'])
+        self.assertEqual([r for r in self.requests if r[0] == 'submit'][0][1]['model_settings'], lead)
+        next(iter(self.accepted.values()))['status'] = 'completed'
+        await self.runner.step(room['id'])
+        await self.runner.step(room['id'])
+        self.assertEqual([r for r in self.requests if r[0] == 'submit'][1][1]['model_settings'], follow)
+
+    async def test_live_feed_survives_cursor_replay_and_does_not_replay_model_work(self):
+        room, _ = self.start()
+        self.project['capabilities'] = {'activity':True}
+        self.pending = True
+        original = self.runner.call
+        async def streamed(op, body, target, key=None):
+            if op == 'activity':
+                entries = [] if body['cursor'] else [{'cursor':1,'id':'tool-1','kind':'tool','text':'Reading a file: app.py','state':'running','task_id':body['task_id'],'revision':1,'time':1234.0}]
+                return {'entries':entries,'cursor':1,'has_more':False}
+            return await original(op, body, target, key)
+        self.runner.call = streamed
+        await self.runner.step(room['id'])
+        page = self.store.handle(request('team_activity',{'team_id':room['id'],'cursor':0}),'local',{})
+        self.assertEqual(len(page['entries']),1)
+        self.assertEqual(page['entries'][0]['role'],'leader')
+        stored = get(self.store,room['id']); stored['activity_cursors'] = {}; save(self.store,stored)
+        await self.runner.step(room['id'])
+        replay = self.store.handle(request('team_activity',{'team_id':room['id'],'cursor':0}),'local',{})
+        self.assertEqual(len(replay['entries']),1)
+        self.assertEqual(len(self.accepted),1)
+        with self.assertRaises(BridgeError):
+            self.store.handle(request('team_activity',{'team_id':room['id'],'cursor':0}),'mini',{})
+
+    async def test_activity_failure_keeps_the_model_task_running(self):
+        room, _ = self.start()
+        self.project['capabilities'] = {'activity':True}
+        self.pending = True
+        await self.runner.step(room['id'])  # Fixture rejects activity; runner must tolerate it.
+        stored = get(self.store,room['id'])
+        self.assertEqual(stored['status'],'running')
+        self.assertIn('task continues',stored['live']['stream_error'])
+        self.assertEqual(len(self.accepted),1)
+
     async def test_lost_ack_restart_reuses_stage_key(self):
         room, _ = self.start()
         self.drop = True

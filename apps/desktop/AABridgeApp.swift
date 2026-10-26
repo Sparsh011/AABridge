@@ -303,6 +303,25 @@ struct AABridgeDesktop: App {
 
     init() {
         let payload = Bundle.main.resourceURL!.appendingPathComponent("SetupPayload")
+        if let index = CommandLine.arguments.firstIndex(of: "--preview-live"), CommandLine.arguments.count > index + 1 {
+            let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
+            let team = TeamRoomModel(activity: activity)
+            let lead = TeamMember(target: "local", project: "app", agent: "codex", model_settings: AgentModelSettings(model: "gpt-6.1-sol", effort: "high"))
+            let follower = TeamMember(target: "mini", project: "app", agent: "claude", model_settings: AgentModelSettings(model: "opus", effort: "medium"))
+            team.choices = [TeamChoice(id: "local/app", label: "Codex · MacBook · My business", member: lead), TeamChoice(id: "mini/app", label: "Claude · Mac mini · My business", member: follower)]
+            let now = Date().timeIntervalSince1970
+            var room = TeamRoom(id: "team-preview", objective: "Build a simple booking page for my business", status: "running", stage: "work", leader: lead, follower: follower,
+                                messages: [TeamEntry(id: "admin", speaker: "You · admin", text: "Build a booking page that works well on a phone.", time: now - 30),
+                                           TeamEntry(id: "leader", speaker: "Codex · leader", text: "I’ve planned the booking flow. Claude will build the form and check validation; I’ll review the result.", time: now - 20)], error: nil, result: nil)
+            room.live = TeamLiveState(role: "follower", agent: "claude", target: "mini", stage: "work", status: "running", checked_at: now, supported: true,
+                                      activity: WorkerActivity(phase: "tool", message: "Running a project command", time: now - 2), stream_error: nil, model_settings: follower.model_settings)
+            team.room = room; team.rooms = [room]; team.selected = room.id
+            team.liveEntries = [LiveActivityEntry(id: "1", cursor: 1, role: "leader", agent: "codex", target: "local", stage: "plan", kind: "message", text: "Checking the existing booking flow before writing the plan.", state: "completed", time: now - 25),
+                                LiveActivityEntry(id: "2", cursor: 2, role: "follower", agent: "claude", target: "mini", stage: "work", kind: "status", text: "Selected model: opus · effort: medium", state: "completed", time: now - 15),
+                                LiveActivityEntry(id: "3", cursor: 3, role: "follower", agent: "claude", target: "mini", stage: "work", kind: "file", text: "Editing a file: src/BookingForm.tsx", state: "completed", time: now - 8),
+                                LiveActivityEntry(id: "4", cursor: 4, role: "follower", agent: "claude", target: "mini", stage: "work", kind: "tool", text: "Running a project command", state: "running", time: now - 2)]
+            exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-team"), CommandLine.arguments.count > index + 1 {
             let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
             let team = TeamRoomModel(activity: activity)
@@ -310,6 +329,7 @@ struct AABridgeDesktop: App {
             team.choices = [TeamChoice(id: "local/app", label: "Codex · MacBook · My business", member: TeamMember(target: "local", project: "app", agent: "codex")),
                             TeamChoice(id: "mini/app", label: "Claude · Mac mini · My business", member: TeamMember(target: "mini", project: "app", agent: "claude"))]
             team.leader = "local/app"; team.follower = "mini/app"
+            team.leaderModel = "gpt-6.1-sol"; team.leaderEffort = "high"; team.followerModel = "opus"; team.followerEffort = "medium"
             team.draft = "Build a simple booking page for my business. Make it easy to use on a phone."
             exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }

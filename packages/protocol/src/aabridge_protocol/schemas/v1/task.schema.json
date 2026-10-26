@@ -326,6 +326,30 @@
         "review"
       ],
       "description": "Coding role: planning and review leave the checkout unchanged."
+    },
+    "model_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/\\[\\]-]{0,159}$"
+        },
+        "effort": {
+          "enum": [
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+            "ultracode"
+          ]
+        }
+      },
+      "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
     }
   },
   "required": [

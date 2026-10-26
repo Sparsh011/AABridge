@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aabridge"
-version = "0.3.0.dev2"
+version = "0.3.0.dev3"
 description = "A local-first communication bridge for managed coding agents"
 readme = "README.md"
 requires-python = ">=3.11"

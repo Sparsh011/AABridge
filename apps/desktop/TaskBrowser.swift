@@ -24,6 +24,7 @@ struct BridgeProject: Decodable, Identifiable {
     let limits: ProjectLimits
     let execution_enabled: Bool
     let verification: ProjectVerification?
+    var capabilities: [String: Bool]? = nil
     var available: Bool { execution_enabled && ["codex", "claude"].contains(adapter) }
 }
 
@@ -449,7 +450,7 @@ extension TaskBrowserModel {
             retryPending()
         } catch { self.error = error.localizedDescription }
     }
-    func startTask(projectID: String, scope: [String]? = nil) {
+    func startTask(projectID: String, scope: [String]? = nil, settings: AgentModelSettings? = nil) {
         guard let project = projects.first(where: { $0.id == projectID }), project.available else {
             error = "Choose an enabled Codex or Claude project. Gemini managed workers are not implemented yet."
             return
@@ -458,16 +459,19 @@ extension TaskBrowserModel {
             error = "Enter task instructions of 1–4000 characters."
             return
         }
+        guard AgentModelSettings.validModel(settings?.model ?? "") else { error = "Use a model ID without spaces or command options."; return }
         let selectedScope = scope ?? project.scope
         guard !selectedScope.isEmpty, selectedScope.count <= 16, Set(selectedScope).count == selectedScope.count,
               Set(selectedScope).isSubset(of: Set(project.scope)) else {
             error = "Choose 1–16 files within the receiver-approved scope. Add other files using Projects & scope on that Mac."
             return
         }
-        stage("submit", body: ["project_id": project.id, "recipient": project.worker, "base_commit": project.base_commit,
+        var body: [String: Any] = ["project_id": project.id, "recipient": project.worker, "base_commit": project.base_commit,
             "objective": newObjective, "scope": selectedScope, "acceptance": [project.verification?.profile == "file-proposal-v1" ? "Return a scoped file proposal for human review; no application tests are run." : "Pass the locally configured verification profile."],
             "context": [], "limits": ["runtime_seconds": project.limits.runtime_seconds, "max_turns": project.limits.max_turns, "max_revisions": project.limits.max_revisions],
-            "permission_profile": project.verification?.profile == "repository-v1" ? "coding-v1" : "proposal-v1"], taskID: nil)
+            "permission_profile": project.verification?.profile == "repository-v1" ? "coding-v1" : "proposal-v1"]
+        if let selected = settings?.dictionary, !selected.isEmpty { body["model_settings"] = selected }
+        stage("submit", body: body, taskID: nil)
     }
     func sendReply() {
         guard canReply, let state = taskState, let text = drafts[state.id], !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.unicodeScalars.count <= 4000 else { return }

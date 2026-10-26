@@ -9,7 +9,7 @@ import asyncio
 import json
 import time
 
-from aabridge_protocol.messages import canonical, require
+from aabridge_protocol.messages import BridgeError, canonical, fields, integer, model_settings, require, text
 from .store import new_id
 
 STAGES = ('plan', 'work', 'review')
@@ -44,6 +44,7 @@ def public(room):
     while len(canonical(messages).encode()) > 90000:
         messages.pop(0)
     result['messages'] = messages
+    result['live'] = room.get('live')
     result['earlier_messages'] = len(room['messages']) - len(messages)
     work = room.get('outputs', {}).get('work')
     result['result'] = ({k: work[k] for k in ('branch', 'worktree', 'result_commit', 'base_commit')} if work else None)
@@ -70,6 +71,18 @@ def handle(store, request, identity):
         store.db.execute('INSERT INTO teams VALUES (?,?,?)', (room['id'], request.key, canonical(room)))
         return public(room)
     room = get(store, body['team_id'])
+    if op == 'team_activity':
+        cursor = body['cursor']
+        rows = store.db.execute('SELECT seq,document FROM team_activity WHERE team_id=? AND seq>? ORDER BY seq LIMIT 32', (room['id'], cursor)).fetchall()
+        entries, size = [], 0
+        for seq, document in rows:
+            if size + len(document.encode()) > 180000:
+                break
+            entries.append({**json.loads(document), 'cursor': seq})
+            size += len(document.encode())
+        next_cursor = entries[-1]['cursor'] if entries else cursor
+        more = store.db.execute('SELECT 1 FROM team_activity WHERE team_id=? AND seq>?', (room['id'], next_cursor)).fetchone() is not None
+        return {'entries': entries, 'cursor': next_cursor, 'has_more': more}
     if op == 'team_status':
         return public(room)
     digest = request.digest
@@ -85,6 +98,10 @@ def handle(store, request, identity):
         room['status'], room['error'] = 'running', ''
     elif op == 'team_reply':
         require(room['status'] in {'completed', 'failed', 'cancelled'}, 'Stop or finish the current task before sending new instructions.', 'invalid_state')
+        for role in ('leader', 'follower'):
+            if role + '_settings' in body:
+                room[role]['model_settings'] = model_settings(body[role + '_settings'], room[role]['agent'])
+        room.pop('live', None)
         if room.get('outputs', {}).get('work'):
             room['previous_result'] = room['outputs']['work']
             room['continuation'] = next(t for t in reversed(room['stage_tasks']) if t['stage'] == 'work')
@@ -135,12 +152,47 @@ class TeamRunner:
             context = ['Your plan:\n' + room['outputs']['plan']['summary'][:12000],
                        'Follower report:\n' + room['outputs']['work']['summary'][:24000],
                        'Follower diff:\n' + room.get('diff', '')[:64000]]
-        return {'project_id': room['follower' if stage == 'work' else 'leader']['project'],
+        member = room['follower' if stage == 'work' else 'leader']
+        selected = member.get('model_settings', {})
+        return {**({'model_settings': selected} if selected else {}), 'project_id': member['project'],
                 'recipient': project['worker'], 'base_commit': project['base_commit'],
                 'objective': objective, 'scope': ['*'], 'acceptance': ['Follow the admin task and assigned team role.'],
                 'context': context, 'limits': project['limits'], 'permission_profile': 'coding-v1',
                 'mode': stage if stage != 'work' else 'work',
                 'origin': {'kind': 'human' if stage == 'plan' else 'agent', 'name': 'You' if stage == 'plan' else lead}}
+
+    async def relay_activity(self, room, task, member):
+        role = 'follower' if room['stage'] == 'work' else 'leader'
+        project = room['follower_project' if role == 'follower' else 'leader_project']
+        supported = project.get('capabilities', {}).get('activity', False)
+        room['live'] = {'role': role, 'agent': member['agent'], 'target': member['target'], 'stage': room['stage'],
+                        'task_id': task['id'], 'status': task['status'], 'checked_at': time.time(),
+                        'activity': task.get('activity'), 'supported': supported,
+                        'model_settings': task.get('model_settings', member.get('model_settings', {}))}
+        if not supported:
+            return
+        source = member['target'] + '/' + task['id']
+        cursor = room.setdefault('activity_cursors', {}).get(source, 0)
+        try:
+            page = await self.call('activity', {'task_id': task['id'], 'cursor': cursor}, member['target'])
+            for entry in page['entries']:
+                fields(entry, {'cursor', 'id', 'kind', 'text', 'state', 'task_id', 'revision', 'time'})
+                seq = integer(entry['cursor'], cursor + 1, 2**63 - 1)
+                require(entry['task_id'] == task['id'], 'Cross-task activity was rejected.')
+                require(entry['kind'] in {'status', 'tool', 'file', 'message'} and entry['state'] in {'running', 'completed', 'failed'}, 'Unsupported activity entry.')
+                text(entry['id'], 200); text(entry['text'], 2000, empty=True)
+                document = {**entry, 'id': source + '/' + str(entry['revision']) + '/' + entry['id'],
+                            'role': role, 'agent': member['agent'], 'target': member['target'], 'stage': room['stage']}
+                self.store.db.execute('INSERT OR IGNORE INTO team_activity(team_id,source,source_cursor,document) VALUES (?,?,?,?)',
+                                      (room['id'], source, seq, canonical(document)))
+                cursor = seq
+            require(page['cursor'] == cursor, 'Activity page did not advance correctly.')
+            room['activity_cursors'][source] = cursor
+            room['live']['catching_up'] = bool(page.get('has_more'))
+        except Exception:
+            # Activity is observational. Losing it must never fail or replay an
+            # implementation task or discard a model result.
+            room['live']['stream_error'] = 'Live updates are temporarily unavailable; the task continues.'
 
     async def step(self, room_id):
         room = get(self.store, room_id)
@@ -164,6 +216,8 @@ class TeamRunner:
                         require(project and project['execution_enabled'] and project['verification']['profile'] == 'repository-v1',
                                 'Choose an enabled full coding project on both Macs.', 'team_setup')
                         require(project['adapter'] == peer['agent'], 'The chosen project uses another agent. Choose the matching project.', 'team_setup')
+                        if peer.get('model_settings'):
+                            require(project.get('capabilities', {}).get('model_settings'), 'Model selection needs the new AABridge service on this participant. Finish active tasks before updating that Mac.', 'upgrade_required')
                         room[role + '_project'] = project
                     require(room['leader_project']['base_commit'] == room['follower_project']['base_commit'],
                             'Both project copies need the same Git commit. Sync them and save both projects before retrying.', 'baseline_mismatch')
@@ -177,6 +231,8 @@ class TeamRunner:
                         room['stage_body'] = {'task_id': previous['id'], 'revision': previous['revision'],
                             'text': draft['objective'] + '\n' + '\n'.join(draft['context']),
                             'origin': draft['origin']}
+                        if room['follower_project'].get('capabilities', {}).get('model_settings'):
+                            room['stage_body']['model_settings'] = room['follower'].get('model_settings', {})
                 latest = get(self.store, room_id)
                 if latest['status'] == 'stopping' and not room['attempted']:
                     room['status'] = 'cancelled'
@@ -192,6 +248,9 @@ class TeamRunner:
                 save_runtime(self.store, room)
             task = await self.call('status', {'task_id': room['task_id']}, target)
             room = get(self.store, room_id)
+            await self.relay_activity(room, task, member)
+            if get(self.store, room_id)['status'] == 'stopping':
+                room['status'] = 'stopping'
             if room['status'] == 'stopping':
                 if task['status'] not in {'completed', 'failed', 'cancelled', 'interrupted'}:
                     await self.call('cancel', {'task_id': task['id']}, target, room['id'] + '-stop-' + task['id'])
@@ -202,6 +261,9 @@ class TeamRunner:
                 room['status'] = 'failed'
                 message(room, member['agent'] + ' · ' + ('follower' if stage == 'work' else 'leader'),
                         task.get('error') or (task.get('question') or {}).get('text') or 'The task stopped; review its saved task conversation.')
+            elif task['status'] == 'completed' and room.get('live', {}).get('catching_up'):
+                save_runtime(self.store, room)
+                return
             elif task['status'] == 'completed':
                 result = task['result']
                 room['outputs'][stage] = result
@@ -244,6 +306,6 @@ class TeamRunner:
                 if json.loads(document)['status'] in {'running', 'stopping'}:
                     await self.step(room_id)
             try:
-                await asyncio.wait_for(stopping.wait(), 2)
+                await asyncio.wait_for(stopping.wait(), .5)
             except asyncio.TimeoutError:
                 pass

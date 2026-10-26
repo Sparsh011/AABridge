@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Public activity page",
+  "type": "object",
+  "required": [
+    "entries",
+    "cursor",
+    "has_more"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "has_more": {
+      "type": "boolean"
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "cursor",
+          "kind",
+          "text",
+          "state",
+          "time",
+          "task_id",
+          "revision"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "enum": [
+              "status",
+              "tool",
+              "file",
+              "message"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "state": {
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "time": {
+            "type": "number"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "role": {
+            "enum": [
+              "leader",
+              "follower"
+            ]
+          },
+          "agent": {
+            "enum": [
+              "codex",
+              "claude"
+            ]
+          },
+          "target": {
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "plan",
+              "work",
+              "review"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

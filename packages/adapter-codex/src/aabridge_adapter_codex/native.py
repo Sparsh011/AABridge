@@ -23,6 +23,7 @@ class NativeWorker:
         self.on_session, self.on_pid = on_session, on_pid
         self.on_progress = lambda *args: None
         self.process = None
+        self.on_activity = lambda event: None
 
     def executable(self):
         agent = self.project['adapter']
@@ -44,16 +45,22 @@ class NativeWorker:
         agent = self.project['adapter']
         readonly = self.task.get('mode', 'work') != 'work'
         session = self.task.get('thread_id')
+        settings = self.task.get('model_settings', {})
+        selected = ['--model', settings['model']] if settings.get('model') else []
         if agent == 'codex':
             # Global config works with both exec and exec resume. Never disable
             # the CLI sandbox or silently approve broader permissions.
             common = ['-c', 'sandbox_mode="' + ('read-only' if readonly else 'workspace-write') + '"',
                       '-c', 'approval_policy="never"']
+            if settings.get('effort'):
+                common += ['-c', 'model_reasoning_effort=' + json.dumps(settings['effort'])]
             if session:
-                return common + ['exec', 'resume', '--json', session, '-']
-            return common + ['exec', '--json', '-']
+                return common + ['exec', 'resume', '--json', *selected, session, '-']
+            return common + ['exec', '--json', *selected, '-']
         tools = 'Read,Glob,Grep' if readonly else 'Read,Glob,Grep,Edit,Write,Bash'
-        return ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
+        if settings.get('effort'):
+            selected += ['--effort', settings['effort']]
+        return ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', *selected, '--permission-mode', 'acceptEdits',
                 '--tools', tools, '--allowedTools', tools, '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
                 *((['--resume', session]) if session else ['--session-id', str(uuid.uuid4())])]
 
@@ -63,6 +70,7 @@ class NativeWorker:
         prompt = ('You are working in AABridge. The human is the admin. Follow the assigned team role. '
                   'Work only in this checkout and keep its branch. Do not push, merge, deploy, or change remotes. '
                   'Report what changed, checks actually run, and remaining issues. '
+                  'Give the human short progress updates as you work: what you are doing, files you are changing, and check results. Do not disclose private internal reasoning. '
                   + ('Inspect and respond only; do not edit files or create commits. ' if mode != 'work' else '')
                   + '\nTask:\n' + self.task['objective'] + '\nContext:\n' + canonical(self.task.get('context', []))
                   + '\nFollow-up:\n' + canonical(self.task.get('pending')))
@@ -83,12 +91,17 @@ class NativeWorker:
         self.process.stdin.close()
         summary = ''
         succeeded = False
+        from .activity import ActivityStream
+        activity = ActivityStream(self.on_activity)
+        settings = self.task.get('model_settings', {})
+        activity.emit('settings', 'status', 'Selected model: ' + settings.get('model', 'agent default') + ' · effort: ' + settings.get('effort', 'agent default'), force=True)
         while line := await self.process.stdout.readline():
             try:
                 event = json.loads(line)
             except ValueError:
                 raise BridgeError('worker_protocol_error', 'The coding agent returned invalid output.') from None
             if self.project['adapter'] == 'codex':
+                activity.codex(event)
                 if event.get('type') == 'thread.started':
                     session = event['thread_id']
                     self.on_session(session, session)
@@ -99,6 +112,7 @@ class NativeWorker:
                 if event.get('type') == 'turn.completed':
                     succeeded = True
             else:
+                activity.claude(event)
                 if event.get('type') == 'system' and event.get('subtype') == 'init':
                     session = event['session_id']
                     self.on_session(session, session)
@@ -107,7 +121,7 @@ class NativeWorker:
                     summary = event.get('result', '')
         await self.process.wait()
         require(self.process.returncode == 0 and succeeded and isinstance(summary, str) and summary.strip(),
-                'The agent stopped before completing. Check its login and CLI permissions; partial files are preserved.', 'worker_failed')
+                'The agent stopped before completing. Check its login, selected model/effort, and CLI permissions; partial files are preserved.', 'worker_failed')
         summary = summary[:60000]
         while len(canonical(summary).encode()) > 80000:
             summary = summary[:len(summary) * 3 // 4]
