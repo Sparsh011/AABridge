@@ -315,11 +315,40 @@ struct AABridgeDesktop: App {
                                            TeamEntry(id: "leader", speaker: "Codex · leader", text: "I’ve planned the booking flow. Claude will build the form and check validation; I’ll review the result.", time: now - 20)], error: nil, result: nil)
             room.live = TeamLiveState(role: "follower", agent: "claude", target: "mini", stage: "work", status: "running", checked_at: now, supported: true,
                                       activity: WorkerActivity(phase: "tool", message: "Running a project command", time: now - 2), stream_error: nil, model_settings: follower.model_settings)
+            room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true); room.fixes = 1; room.max_fixes = 3; room.notes_waiting = 1
             team.room = room; team.rooms = [room]; team.selected = room.id
             team.liveEntries = [LiveActivityEntry(id: "1", cursor: 1, role: "leader", agent: "codex", target: "local", stage: "plan", kind: "message", text: "Checking the existing booking flow before writing the plan.", state: "completed", time: now - 25),
                                 LiveActivityEntry(id: "2", cursor: 2, role: "follower", agent: "claude", target: "mini", stage: "work", kind: "status", text: "Selected model: opus · effort: medium", state: "completed", time: now - 15),
                                 LiveActivityEntry(id: "3", cursor: 3, role: "follower", agent: "claude", target: "mini", stage: "work", kind: "file", text: "Editing a file: src/BookingForm.tsx", state: "completed", time: now - 8),
                                 LiveActivityEntry(id: "4", cursor: 4, role: "follower", agent: "claude", target: "mini", stage: "work", kind: "tool", text: "Running a project command", state: "running", time: now - 2)]
+            exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--preview-done"), CommandLine.arguments.count > index + 2 {
+            // Renders a finished autonomous task (--preview-done <png> done) or one waiting for the admin (--preview-done <png> gate).
+            let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
+            let team = TeamRoomModel(activity: activity)
+            let lead = TeamMember(target: "local", project: "app", agent: "codex"), follower = TeamMember(target: "mini", project: "app", agent: "claude")
+            team.choices = [TeamChoice(id: "local/app", label: "Codex · MacBook · Fitness", member: lead), TeamChoice(id: "mini/app", label: "Claude · Mac mini · Fitness", member: follower)]
+            let now = Date().timeIntervalSince1970
+            let gate = CommandLine.arguments[index + 2] == "gate"
+            var room = TeamRoom(id: "team-done", objective: "Add a new screen that takes weight as input", status: gate ? "awaiting_admin" : "completed", stage: gate ? "plan" : "review", leader: lead, follower: follower,
+                                messages: [TeamEntry(id: "1", speaker: "You · admin", text: "Add a new screen that takes weight as input.", time: now - 900),
+                                           TeamEntry(id: "2", speaker: "AABridge", text: "The leader owns this task. It plans, the worker builds, and the leader reviews the real changes.", time: now - 890),
+                                           TeamEntry(id: "3", speaker: "codex · leader", text: "Plan: add WeightEntryScreen with a numeric field, validate 1–500 kg, save to the local store, and show the last 7 entries. Tests for validation and persistence.", time: now - 800)]
+                                    + (gate ? [] : [TeamEntry(id: "4", speaker: "claude · follower", text: "Added WeightEntryScreen, validation and storage. 12 tests pass.", time: now - 500),
+                                                    TeamEntry(id: "5", speaker: "codex · leader", text: "1. Negative weights are accepted by the save path.\nVERDICT: CHANGES_REQUESTED", time: now - 400),
+                                                    TeamEntry(id: "6", speaker: "AABridge", text: "The leader asked for fixes (round 1 of 3). The worker is on it.", time: now - 399),
+                                                    TeamEntry(id: "7", speaker: "claude · follower", text: "Rejected negative and zero weights in the save path and added two tests.", time: now - 200),
+                                                    TeamEntry(id: "8", speaker: "codex · leader", text: "The fix is correct and covered by tests.\nVERDICT: APPROVED", time: now - 60)]),
+                                error: nil, result: TeamResult(branch: "claude/task-1", worktree: "/tmp/task", result_commit: "a", base_commit: "b"))
+            room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true); room.verdict = gate ? nil : "approved"; room.fixes = gate ? 0 : 1; room.max_fixes = 3
+            room.gate = gate ? TeamGate(kind: "plan", reason: "The leader’s plan is ready. Approve it to start building, or ask for changes.") : nil
+            room.publication = gate ? nil : TeamPublication(mode: "branch", branch: "claude/add-a-new-screen-that-takes-weight-as-3f9c2a", path: "/Users/you/Fitness", pull_request: "https://github.com/you/fitness/pull/42")
+            team.room = room; team.rooms = [room]; team.selected = room.id
+            if CommandLine.arguments.contains("--card-only") {
+                let panel = VStack(spacing: 16) { DeliveryCard(model: team, room: room, confirmMerge: .constant(false)); TeamMessageRow(entry: room.messages!.last!) }.padding(30).frame(width: 1200, height: 820, alignment: .top)
+                exit(renderOwnView(panel, output: CommandLine.arguments[index + 1]) ? 0 : 1)
+            }
             exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-team"), CommandLine.arguments.count > index + 1 {

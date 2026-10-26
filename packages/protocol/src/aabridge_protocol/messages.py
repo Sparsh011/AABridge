@@ -10,9 +10,14 @@ MAX_MESSAGE = 131_072
 ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,79}\Z")
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity"})
-TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry", "team_activity"})
+TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry", "team_activity",
+                      "team_guide", "team_decide", "team_merge"})
 OPERATIONS = OPERATIONS | TEAM_OPS
-MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry"})
+MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry",
+                       "team_guide", "team_decide", "team_merge"})
+APPROVALS = ("ask", "auto")
+PLACEMENTS = ("sandbox", "branch", "worktree", "current")
+DECISIONS = ("continue", "replan", "finish")
 
 
 class BridgeError(Exception):
@@ -109,8 +114,16 @@ def validate_request(value: object) -> Request:
     key = identifier(envelope["key"])
     body = envelope["body"]
     if op == "team_start":
-        fields(body, {"objective", "leader", "follower"})
+        fields(body, {"objective", "leader", "follower"}, {"approval", "placement", "max_fixes"})
         text(body["objective"], 3000)
+        require(body.get("approval", "ask") in APPROVALS, "Choose whether the team asks you for approval.")
+        if "max_fixes" in body:
+            integer(body["max_fixes"], 1, 10)
+        if "placement" in body:
+            placement = fields(body["placement"], {"mode"}, {"pull_request"})
+            require(placement["mode"] in PLACEMENTS, "Choose where the result goes.")
+            require(type(placement.get("pull_request", False)) is bool, "Pull request must be true or false.")
+            require(not placement.get("pull_request") or placement["mode"] != "sandbox", "A pull request needs a branch in your project.")
         for role in ("leader", "follower"):
             member = fields(body[role], {"target", "project", "agent"}, {"model_settings"})
             identifier(member["target"])
@@ -123,7 +136,17 @@ def validate_request(value: object) -> Request:
         fields(body, {"team_id", "cursor"})
         identifier(body["team_id"])
         integer(body["cursor"], 0, 2**63 - 1)
-    elif op in {"team_status", "team_cancel", "team_retry", "team_reply"}:
+    elif op == "team_guide":
+        fields(body, {"team_id", "text"})
+        identifier(body["team_id"])
+        text(body["text"], 3000)
+    elif op == "team_decide":
+        fields(body, {"team_id", "decision"}, {"text"})
+        identifier(body["team_id"])
+        require(body["decision"] in DECISIONS, "Unknown decision.")
+        if "text" in body:
+            text(body["text"], 3000)
+    elif op in {"team_status", "team_cancel", "team_retry", "team_reply", "team_merge"}:
         fields(body, {"team_id"} | ({"text"} if op == "team_reply" else set()), {"leader_settings", "follower_settings"} if op == "team_reply" else set())
         identifier(body["team_id"])
         if op == "team_reply":
