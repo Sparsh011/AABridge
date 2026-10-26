@@ -25,7 +25,7 @@ class TeamServiceTests(unittest.IsolatedAsyncioTestCase):
             base = git(repo, 'rev-parse', 'HEAD')
             executable = root / 'fixture-agent'
             executable.write_text('#!' + sys.executable + '\n' + '''
-import json,sys
+import json,sys,time
 from pathlib import Path
 if '--version' in sys.argv:
     print('Fixture version'); raise SystemExit(0)
@@ -38,10 +38,14 @@ if not readonly:
 summary='Review: ready after checking the supplied diff' if 'Review the follower' in prompt else 'Implement the requested feature' if readonly else 'Implemented the feature in built.txt'
 session='session-'+Path.cwd().name
 if is_claude:
-    print(json.dumps({'type':'system','subtype':'init','session_id':session}))
+    print(json.dumps({'type':'system','subtype':'init','session_id':session,'model':'claude-test-resolved'}),flush=True)
+    print(json.dumps({'type':'assistant','message':{'id':'progress','content':[{'type':'text','text':'Checking the project before editing.'}]}}),flush=True)
+    time.sleep(.8)
     print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':summary}))
 else:
-    print(json.dumps({'type':'thread.started','thread_id':session}))
+    print(json.dumps({'type':'thread.started','thread_id':session}),flush=True)
+    print(json.dumps({'type':'item.completed','item':{'id':'progress','type':'agent_message','text':'Planning the implementation.'}}),flush=True)
+    time.sleep(.8)
     print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':summary}}))
     print(json.dumps({'type':'turn.completed'}))
 ''')
@@ -78,10 +82,24 @@ else:
             try:
                 with patch('aabridge_cli.actions.send', side_effect=routed), patch('aabridge_cli.actions.fetch_result', side_effect=fetch):
                     schedules = [asyncio.create_task(supervisor.schedule()) for _, supervisor in nodes.values()]
-                    body = {'objective':'Build a feature','leader':{'target':'local','agent':'codex','project':'app'},
-                            'follower':{'target':'mini','agent':'claude','project':'app'}}
+                    body = {'objective':'Build a feature','leader':{'target':'local','agent':'codex','project':'app','model_settings':{'model':'codex-test','effort':'high'}},
+                            'follower':{'target':'mini','agent':'claude','project':'app','model_settings':{'model':'opus','effort':'medium'}}}
                     room = await operation('team_start', body, 'team-ipc-one')
+                    # Observe the stream while a model turn is still running.
+                    observed = False
+                    for _ in range(100):
+                        page = await operation('team_activity', {'team_id':room['id'],'cursor':0})
+                        status = await operation('team_status', {'team_id':room['id']})
+                        if page['entries'] and status['status'] == 'running':
+                            observed = True
+                            break
+                        await asyncio.sleep(.05)
+                    self.assertTrue(observed, 'Activity should arrive before the final result')
                     done = await completed(room['id'])
+                    page = await operation('team_activity', {'team_id':room['id'],'cursor':0})
+                    self.assertEqual({e['role'] for e in page['entries']}, {'leader','follower'})
+                    self.assertIn('Checking the project', json.dumps(page))
+                    self.assertIn('codex-test', json.dumps(page))
                     work = Path(done['result']['worktree'])
                     self.assertEqual((work / 'built.txt').read_text(), 'Feature delivered\n')
                     await operation('team_reply', {'team_id':room['id'],'text':'Add another feature'}, 'team-ipc-two')

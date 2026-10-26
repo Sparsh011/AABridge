@@ -33,6 +33,13 @@ class Store:
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute("PRAGMA busy_timeout=5000")
         self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS activity (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL, document TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS activity_task ON activity(task_id,seq);
+            CREATE TABLE IF NOT EXISTS team_activity (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                team_id TEXT NOT NULL, source TEXT NOT NULL, source_cursor INTEGER NOT NULL, document TEXT NOT NULL,
+                UNIQUE(team_id,source,source_cursor));
+            CREATE INDEX IF NOT EXISTS activity_team ON team_activity(team_id,seq);
             CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, project TEXT NOT NULL,
                 owner TEXT NOT NULL, status TEXT NOT NULL, document TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,6 +169,24 @@ class Store:
             self.db.execute("ROLLBACK")
             raise
 
+    def record_activity(self, task_id: str, event: dict):
+        task = self.get(task_id)
+        document = {**event, "task_id": task_id, "revision": task["revision"], "time": time.time()}
+        self.db.execute("INSERT INTO activity(task_id,document) VALUES (?,?)", (task_id, canonical(document)))
+        return document
+
+    def activity_page(self, task_id: str, cursor: int) -> dict:
+        rows = self.db.execute("SELECT seq,document FROM activity WHERE task_id=? AND seq>? ORDER BY seq LIMIT 32", (task_id, cursor)).fetchall()
+        entries, size = [], 0
+        for seq, document in rows:
+            if size + len(document.encode()) > 180000:
+                break
+            entries.append({**json.loads(document), "cursor": seq})
+            size += len(document.encode())
+        next_cursor = entries[-1]["cursor"] if entries else cursor
+        more = self.db.execute("SELECT 1 FROM activity WHERE task_id=? AND seq>?", (task_id, next_cursor)).fetchone() is not None
+        return {"entries": entries, "cursor": next_cursor, "has_more": more}
+
     def handle(self, request: Request, identity: str, config: dict) -> dict:
         if request.op.startswith("team"):
             from .teams import handle
@@ -172,7 +197,7 @@ class Store:
             peer = config["peers"][identity]
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
-            return {name: {key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}
+            return {name: {"capabilities": {"activity": True, "model_settings": project.get("permission_profile") == "coding-v1"}, **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
         if request.op == "tasks":
             peer = config["peers"].get(identity, {})
@@ -234,6 +259,8 @@ class Store:
         task = self.get(body["task_id"])
         if op == "status":
             return task
+        if op == "activity":
+            return self.activity_page(task["id"], body["cursor"])
         if op == "conversation":
             return self.history_page(task["id"], body["cursor"])
         if op == "events":
@@ -248,6 +275,10 @@ class Store:
         require(body["revision"] == task["revision"], "Stale task revision.", "stale_revision")
         task["last_actor"] = body.get("origin", {"kind": "coordinator", "name": identity})
         task["last_sender_identity"] = identity
+        if "model_settings" in body:
+            from aabridge_protocol.messages import model_settings
+            require(task["permission_profile"] == "coding-v1", "Model selection requires a full coding project.")
+            task["model_settings"] = model_settings(body["model_settings"], project["adapter"])
         if op == "answer":
             require(task["status"] == "waiting_question" and task["question"]["id"] == body["question_id"], "Question is stale or belongs to another task.", "stale_question")
             task["pending"] = {"kind": "answer", "question_id": body["question_id"], "text": body["text"]}

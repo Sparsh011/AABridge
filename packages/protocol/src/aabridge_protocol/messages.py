@@ -9,8 +9,8 @@ from pathlib import PurePosixPath
 MAX_MESSAGE = 131_072
 ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,79}\Z")
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
-OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown"})
-TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry"})
+OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity"})
+TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry", "team_activity"})
 OPERATIONS = OPERATIONS | TEAM_OPS
 MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry"})
 
@@ -58,6 +58,17 @@ def relative_file(value: object) -> str:
     return value
 
 
+
+def model_settings(value: object, agent: str) -> dict:
+    value = fields(value, set(), {"model", "effort"})
+    if "model" in value:
+        require(isinstance(value["model"], str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,159}", value["model"]) is not None,
+                "Enter a model ID or alias without spaces or command options.")
+    if "effort" in value:
+        supported = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"} if agent == "codex" else {"low", "medium", "high", "xhigh", "max", "ultracode"}
+        require(isinstance(value["effort"], str) and value["effort"] in supported, "Unsupported effort setting for this agent.")
+    return value
+
 def canonical(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
 
@@ -101,18 +112,27 @@ def validate_request(value: object) -> Request:
         fields(body, {"objective", "leader", "follower"})
         text(body["objective"], 3000)
         for role in ("leader", "follower"):
-            member = fields(body[role], {"target", "project", "agent"})
+            member = fields(body[role], {"target", "project", "agent"}, {"model_settings"})
             identifier(member["target"])
             identifier(member["project"])
             require(member["agent"] in {"codex", "claude"}, "Choose Codex or Claude.")
-        require(body["leader"] != body["follower"], "Choose different leader and follower participants.")
+            if "model_settings" in member:
+                model_settings(member["model_settings"], member["agent"])
+        require(tuple(body["leader"][key] for key in ("target", "project", "agent")) != tuple(body["follower"][key] for key in ("target", "project", "agent")), "Choose different leader and follower participants.")
+    elif op == "team_activity":
+        fields(body, {"team_id", "cursor"})
+        identifier(body["team_id"])
+        integer(body["cursor"], 0, 2**63 - 1)
     elif op in {"team_status", "team_cancel", "team_retry", "team_reply"}:
-        fields(body, {"team_id"} | ({"text"} if op == "team_reply" else set()))
+        fields(body, {"team_id"} | ({"text"} if op == "team_reply" else set()), {"leader_settings", "follower_settings"} if op == "team_reply" else set())
         identifier(body["team_id"])
         if op == "team_reply":
             text(body["text"], 3000)
+            for role in ("leader", "follower"):
+                if role + "_settings" in body:
+                    fields(body[role + "_settings"], set(), {"model", "effort"})
     elif op == "submit":
-        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin", "mode"})
+        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin", "mode", "model_settings"})
         identifier(body["project_id"])
         identifier(body["recipient"])
         require(isinstance(body["base_commit"], str) and SHA.fullmatch(body["base_commit"]) is not None, "An exact base commit is required.")
@@ -120,6 +140,9 @@ def validate_request(value: object) -> Request:
         coding = body["permission_profile"] == "coding-v1"
         require(body.get("mode", "work") in {"work", "plan", "review"}, "Invalid coding role.")
         require(coding or "mode" not in body, "Roles require coding mode.")
+        if "model_settings" in body:
+            require(coding, "Model selection requires a full coding project.")
+            model_settings(body["model_settings"], body["recipient"])
         for name, cap, item_cap in (("scope", 16, 200), ("acceptance", 8, 1000), ("context", 8, 1000)):
             items = body[name]
             require(isinstance(items, list) and len(items) <= cap, "List exceeds bounds.")
@@ -135,7 +158,7 @@ def validate_request(value: object) -> Request:
     elif op in {"status", "cancel"}:
         fields(body, {"task_id"})
         identifier(body["task_id"])
-    elif op in {"events", "conversation"}:
+    elif op in {"events", "conversation", "activity"}:
         fields(body, {"task_id", "cursor"})
         identifier(body["task_id"])
         integer(body["cursor"], 0, 2**63 - 1)
@@ -143,10 +166,12 @@ def validate_request(value: object) -> Request:
         fields(body, {"cursor"})
         integer(body["cursor"], 0, 2**63 - 1)
     elif op in {"answer", "revise"}:
-        fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin", "mode"})
+        fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin", "mode", "model_settings"})
         identifier(body["task_id"])
         integer(body["revision"], 1, 101)
         text(body["text"], 100000)
+        if "model_settings" in body:
+            fields(body["model_settings"], set(), {"model", "effort"})
         if op == "answer":
             identifier(body["question_id"])
     else:

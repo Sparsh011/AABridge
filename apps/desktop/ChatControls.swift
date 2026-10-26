@@ -59,6 +59,8 @@ struct NewTaskSheet: View {
     @ObservedObject var model: TaskBrowserModel
     @State private var projectID = ""
     @State private var scopeText = ""
+    @State private var chosenModel = ""
+    @State private var chosenEffort = ""
     private var scope: [String] { scopeText.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
     private var project: BridgeProject? { model.projects.first(where: { $0.id == projectID }) }
     private func chooseDefault() {
@@ -90,6 +92,11 @@ struct NewTaskSheet: View {
                 Text(project.verification?.profile == "file-proposal-v1" ? "File proposal: changes are prepared in a separate task checkout for review. No application tests are run and the original folder is not modified." : "Math demo: this project must pass its fixed addition tests. For other work, create a file-proposal project in Projects & scope on the receiver.").font(.bridge(.callout)).foregroundStyle(.secondary)
                 } else {
                     Text("Full coding · the agent can edit the project and run checks in its own task branch.").foregroundStyle(.secondary)
+                    if project.capabilities?["model_settings"] == true {
+                        ModelSettingsFields(agent: project.adapter, model: $chosenModel, effort: $chosenEffort)
+                    } else {
+                        Text("Model selection requires the new service on this Mac. Finish active tasks before updating.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                    }
                 }
                 if !project.available {
                     Text(["codex", "claude"].contains(project.adapter) ? "This project's execution gate is disabled on the receiver." : "The \(model.agentName(project.worker)) managed worker adapter is not implemented. Choose an enabled Codex or Claude project.").foregroundStyle(.orange).font(.bridge(.callout))
@@ -106,13 +113,13 @@ struct NewTaskSheet: View {
                 Text("\(model.newObjective.unicodeScalars.count)/4000").font(.bridge(.caption)).foregroundStyle(.secondary)
                 Spacer()
                 Button("Close") { model.showNewTask = false }.disabled(model.actionBusy)
-                Button("Start task") { model.startTask(projectID: projectID, scope: scope) }.buttonStyle(.borderedProminent)
-                    .disabled(!model.canAct || project?.available != true || scope.isEmpty || scope.count > 16 || Set(scope).count != scope.count || !Set(scope).isSubset(of: Set(project?.scope ?? [])) || model.newObjective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.newObjective.unicodeScalars.count > 4000)
+                Button("Start task") { model.startTask(projectID: projectID, scope: scope, settings: AgentModelSettings(model: chosenModel, effort: chosenEffort)) }.buttonStyle(.borderedProminent)
+                    .disabled(!AgentModelSettings.validModel(chosenModel) || !model.canAct || project?.available != true || scope.isEmpty || scope.count > 16 || Set(scope).count != scope.count || !Set(scope).isSubset(of: Set(project?.scope ?? [])) || model.newObjective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.newObjective.unicodeScalars.count > 4000)
             }
         }.padding(24).frame(width: 620) }.frame(width: 660, height: 700)
             .onAppear { chooseDefault() }
             .onChange(of: model.projects.map(\.id)) { _ in chooseDefault() }
-            .onChange(of: projectID) { _ in scopeText = project?.scope.joined(separator: "\n") ?? "" }
+            .onChange(of: projectID) { _ in scopeText = project?.scope.joined(separator: "\n") ?? ""; chosenModel = ""; chosenEffort = "" }
     }
 }
 

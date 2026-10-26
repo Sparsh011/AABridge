@@ -104,6 +104,10 @@ class Supervisor:
                 self.store.update(task["id"], "worker_process", worker_pid=pid)
             from aabridge_adapter_codex.native import NativeWorker
             worker = (self.worker_factory or (NativeWorker if coding else WORKERS[project["adapter"]]))(self.state, task, project, on_session, on_pid)
+            def on_activity(event):
+                document = self.store.record_activity(task["id"], event)
+                self.store.update(task["id"], "worker_activity", activity={"phase": event["kind"], "message": event["text"], "time": document["time"]})
+            worker.on_activity = on_activity
             last_phase = [None]
             def on_progress(phase, message):
                 if phase != last_phase[0]:
