@@ -43,7 +43,10 @@ def main():
         if args.action == "connection-card":
             print(json.dumps(card(state)))
         else:
-            print(json.dumps(connect(state, decode(sys.stdin.buffer.read(MAX_MESSAGE + 1)))))
+            raw_card = sys.stdin.buffer.read(MAX_MESSAGE + 1)
+            require(not raw_card.lstrip().startswith(b"ssh "),
+                    "Paste an AABridge connection card, not an SSH command. On the other Mac, choose Create connection card → Copy card.")
+            print(json.dumps(connect(state, decode(raw_card))))
         return
     if args.action.startswith("team"):
         require(not args.remote, "Manage team roles on the admin Mac.")

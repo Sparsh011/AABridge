@@ -1,6 +1,8 @@
 """Public connection cards: exchange one from each Mac for two-way pairing."""
 from __future__ import annotations
 
+import base64
+import binascii
 import fcntl
 import getpass
 import json
@@ -16,17 +18,66 @@ from aabridge_protocol.messages import fields, identifier, require, text
 from .config import load_config, private_directory, read_private, save_config
 
 
+HOST_PUBLIC_KEY = Path('/etc/ssh/ssh_host_ed25519_key.pub')
+
+
+def host_public_key():
+    """macOS may generate host keys only when sshd first accepts a connection."""
+    try:
+        key = HOST_PUBLIC_KEY.read_text().strip()
+    except FileNotFoundError:
+        try:
+            result = subprocess.run(['/usr/bin/ssh-keyscan', '-T', '5', '-t', 'ed25519', '127.0.0.1'],
+                                    capture_output=True, text=True, timeout=8)
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        keys = []
+        if result is not None and result.returncode == 0:
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 3 and parts[0] == '127.0.0.1' and parts[1] == 'ssh-ed25519':
+                    keys.append(' '.join(parts[1:3]))
+        require(len(set(keys)) == 1,
+                'AABridge could not read this Mac’s SSH host key. If Remote Login is already on, '
+                'turn it off and on once in System Settings → General → Sharing, then retry. '
+                'A missing host-key file does not mean Remote Login is off.', 'ssh_host_key_unavailable')
+        key = keys[0]
+    parts = key.split()
+    require(len(parts) >= 2 and parts[0] == 'ssh-ed25519', 'This Mac’s SSH public host key is invalid.', 'ssh_host_key_unavailable')
+    try:
+        wire = base64.b64decode(parts[1], validate=True)
+    except (ValueError, binascii.Error):
+        wire = b''
+    require(wire.startswith(b'\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20') and len(wire) == 51,
+            'This Mac’s SSH public host key is invalid.', 'ssh_host_key_unavailable')
+    return ' '.join(parts[:2])
+
+
+def mac_name(setting):
+    try:
+        result = subprocess.run(['/usr/sbin/scutil', '--get', setting], capture_output=True, text=True, timeout=3)
+        return result.stdout.strip() if result.returncode == 0 else ''
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+
+
 def card(state, name='', host=''):
     config = load_config(state)
+    # Read the daemon's public identity before generating this device's key.
+    public_host = host_public_key()
+    if not host:
+        local_name = mac_name('LocalHostName')
+        host = local_name + '.local' if local_name else socket.gethostname()
+    require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,252}', host) is not None,
+            'Could not determine this Mac’s network address. Check its local hostname in System Settings → General → Sharing.',
+            'ssh_hostname_unavailable')
     key = state / 'device-key'
     if not key.exists():
         subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True, timeout=10)
     read_private(key)
-    host_key = Path('/etc/ssh/ssh_host_ed25519_key.pub')
-    require(host_key.is_file(), 'Turn on Remote Login in macOS Settings, then create the connection card again.', 'ssh_setup')
-    return {'version': 1, 'id': config['node_id'], 'name': name or socket.gethostname(),
-            'host': host or socket.gethostname(), 'user': getpass.getuser(), 'port': 22,
-            'public_key': (state / 'device-key.pub').read_text().strip(), 'host_key': host_key.read_text().strip()}
+    return {'version': 1, 'id': config['node_id'], 'name': name or mac_name('ComputerName') or host,
+            'host': host, 'user': getpass.getuser(), 'port': 22,
+            'public_key': (state / 'device-key.pub').read_text().strip(), 'host_key': public_host}
 
 
 def append_key(home, entry):
