@@ -37,6 +37,12 @@ Read `AGENTS.md` (also referenced by `CLAUDE.md`). Work in separate worktrees an
 
 Run `python scripts/git_sync.py` before a push. It fetches using the authenticated `gh` HTTPS credential helper, checks a clean feature branch and requires both the latest main and the remote feature branch to be ancestors of HEAD. `--push` uses an ordinary non-force push; a racing branch update is rejected by Git. This avoids overwrites but cannot promise that two independent feature branches will never need integration work. Use reviewed PRs.
 
+## Shell startup and speed
+
+The desktop app runs `Activity.command` with `zsh -f`, so the user's zsh startup files no longer run for each UI call. One Mac mini had a `~/.zshenv` line that appended a copy of itself every time a shell started. After about 8,000 copies, each call took 7.7 s instead of 0.11 s.
+
+SSH requests from the paired Mac still run through the receiving user's login shell, because sshd runs the forced command with `$SHELL -c` and zsh always reads `~/.zshenv`. **Check prerequisites** now inspects that file without running it, and warns about self-appending or heavily duplicated lines.
+
 ## Current limits
 
 This is a development preview, not a production-ready paid product. It runs a sequential leader-plan → follower-code → leader-review cycle; agents do not chat freely or create nested delegations. Automatic repair rounds are bounded by `max_fixes` (1–10), and the verdict is read from the leader's final `VERDICT:` line, so it relies on the leader following that instruction. Admin notes reach the agents at step boundaries, not mid-turn. A stop is the way to interrupt active work. Pull requests need a GitHub `origin` and a signed-in `gh` on the admin Mac. Each native task still has its one-hour runtime budget across all of its fix revisions.

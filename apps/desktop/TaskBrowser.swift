@@ -143,7 +143,9 @@ final class TaskBrowserModel: ObservableObject {
     func call(_ action: String, target: String, task: String? = nil, input: Data? = nil) throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        var args = [resources.appendingPathComponent("Activity.command").path, "--action", action]
+        // -f skips the user's zsh startup files. Every UI refresh runs this, and
+        // a slow or self-appending ~/.zshenv made each call take seconds.
+        var args = ["-f", resources.appendingPathComponent("Activity.command").path, "--action", action]
         if let stateDirectory = stateDirectory { args += ["--state-dir", stateDirectory] }
         if target != "local" { args += ["--remote", target] }
         if let task = task { args += ["--task-id", task] }
