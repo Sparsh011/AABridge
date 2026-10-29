@@ -1,5 +1,48 @@
 # MacBook–Mac mini setup
 
+## Direct app connection (current desktop)
+
+Install the same current build on both Macs and use **Settings → Set up this
+Mac** in AABridge. Sign in to each agent on its own Mac. In **Devices**:
+
+1. Select **Create connection card** on each Mac. This creates its private app
+   TLS identity and starts the supervisor's direct listener on TCP 47631.
+2. Copy each card to the other Mac through a trusted channel and connect it.
+   Cards contain a public certificate, its fingerprint and a network address.
+3. Add the committed Git project on both Macs in **Projects**, select the local
+   agent, and explicitly allow the paired Mac.
+4. Start a team chat. Desktop, CLI and MCP use the saved direct route for task
+   requests, status, activity and Git results.
+
+Remote Login, Screen Sharing and File Sharing are not needed for this route.
+Keep the AABridge supervisor running on each receiving Mac. macOS may ask for
+local-network/firewall permission; permit the connection when prompted. The
+listener accepts only explicitly paired app certificates and project grants.
+
+Use a reachable LAN or VPN address. The default `.local` name is for the local
+network. For a VPN, fill in the address field before creating the card. The app
+does not configure a VPN, traverse routers/NAT or relay through a cloud server.
+An address change is not silently accepted; review the saved connection locally.
+
+The equivalent CLI is:
+
+```sh
+.venv/bin/aabridge connection-card --host REACHABLE_HOST > this-mac-card.json
+.venv/bin/aabridge connect < other-mac-card.json
+```
+
+`--host` is optional. `--port` sets a different app port if 47631 is occupied;
+recreate/review the card on its peer after changing a saved address or port.
+Each receiving Mac needs an available local port. Task commands and MCP's
+`remote` field remain the same. A remote task can continue during a connection
+loss; handoffs, review and status need connectivity again.
+
+For existing SSH pairs, update both receivers and exchange new cards. Existing
+project permissions are preserved. Old SSH routes still require Remote Login
+until they are upgraded. The instructions below apply only to those legacy routes.
+
+## Legacy SSH setup
+
 The first physical connection and Codex question have passed; full result and
 revision testing awaits the receiver cleanup update described in [verification](verification.md). No password,
 private key, provider token or API key should be pasted into chat.

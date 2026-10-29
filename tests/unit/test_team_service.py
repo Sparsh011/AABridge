@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,6 +19,12 @@ from aabridge_workspace.git import git
 
 class TeamServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_two_supervisors_run_native_team_and_followup_over_ipc(self):
+        await self.round_trip()
+
+    async def test_two_supervisors_run_native_team_and_followup_over_direct_tls(self):
+        await self.round_trip(direct=True)
+
+    async def round_trip(self, direct=False):
         with tempfile.TemporaryDirectory(dir='/private/tmp', prefix='aab-team-ipc-') as tmp:
             root = Path(tmp).resolve(); repo = root / 'source'; repo.mkdir()
             (repo / 'README.md').write_text('Baseline')
@@ -79,8 +86,29 @@ else:
                     self.assertNotIn(room['status'], ('blocked','failed'), room)
                     await asyncio.sleep(.1)
                 self.fail('Team did not complete')
+            listener = None
+            if direct:
+                from aabridge_core.direct import identity, certificate_fingerprint
+                from aabridge_core.pairing import connect
+                from aabridge_daemon.direct import DirectListener
+                certificates = {name: await asyncio.to_thread(identity, node[0]) for name, node in nodes.items()}
+                listener = DirectListener(nodes['mini'][1])
+                port = await listener.start('127.0.0.1', 0)
+                for name, other in (('book', 'mini'), ('mini', 'book')):
+                    pem = certificates[other]
+                    connect(nodes[name][0], {'version':2, 'transport':'tls', 'id':load_config(nodes[other][0])['node_id'],
+                                            'name':other, 'host':'127.0.0.1', 'port':port, 'certificate':pem,
+                                            'fingerprint':certificate_fingerprint(pem)})
+                state = nodes['book'][0]; config = load_config(state)
+                config['remotes']['mini'] = config['remotes'].pop(load_config(nodes['mini'][0])['node_id'])
+                save_config(state, config)
+                state = nodes['mini'][0]; config = load_config(state)
+                config['peers'][load_config(nodes['book'][0])['node_id']]['projects'] = ['app']
+                save_config(state, config)
             try:
-                with patch('aabridge_cli.actions.send', side_effect=routed), patch('aabridge_cli.actions.fetch_result', side_effect=fetch):
+                with (nullcontext() if direct else patch('aabridge_cli.actions.send', side_effect=routed)), \
+                     (nullcontext() if direct else patch('aabridge_cli.actions.fetch_result', side_effect=fetch)):
+
                     schedules = [asyncio.create_task(supervisor.schedule()) for _, supervisor in nodes.values()]
                     body = {'objective':'Build a feature','leader':{'target':'local','agent':'codex','project':'app','model_settings':{'model':'codex-test','effort':'high'}},
                             'follower':{'target':'mini','agent':'claude','project':'app','model_settings':{'model':'opus','effort':'medium'}}}
@@ -112,4 +140,5 @@ else:
                 await asyncio.gather(*schedules)
                 for server in servers:
                     server.close(); await server.wait_closed()
+                if listener: await listener.close()
                 for _, supervisor in nodes.values(): supervisor.store.close()

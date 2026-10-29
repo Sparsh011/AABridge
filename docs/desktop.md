@@ -5,6 +5,11 @@ with a task/conversation viewer and the existing Python installer. It needs macO
 both Apple Silicon and Intel executable images. No Node server, browser, or
 third-party Python GUI package is needed.
 
+New device connections use AABridge's own encrypted TLS listener. After setting
+up this Mac, exchange cards in **Devices**, then choose projects. Remote Login
+is not required for new cards. See [direct connection setup](two-device.md).
+The older demo/SSH installer remains available for existing deployments.
+
 ![Receiver setup view, rendered from the native app](evidence/native-receiver-preview-2026-10-25.png)
 
 For browsing on the MacBook, read [tasks, conversations and storage](conversation-history.md).

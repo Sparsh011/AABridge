@@ -263,19 +263,13 @@ struct SetupView: View {
                 Spacer()
                 Button("Refresh status") { model.refreshStatus() }
             }.disabled(model.busy)
-            Text("Set up this Mac installs the bundled bridge, prepares a disposable demo, checks \(model.workerName) without a model call, and adds restricted SSH access for that demo. Existing repositories, keys, and provider credentials are preserved.")
+            Text("Set up this Mac installs the bundled bridge for \(model.workerName). Pair your Macs in Devices, then choose the projects they can use. Existing repositories, keys, and provider credentials are preserved.")
                 .font(.bridge(.caption)).foregroundStyle(.secondary)
             Divider()
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Remote Login is the connection route").font(.bridge(.headline))
-                    Text("On this receiving Mac: System Settings → General → Sharing → Remote Login, allowed for your account. The app location tells AABridge what to launch; Remote Login lets the other Mac reach it.")
-                        .font(.bridge(.callout)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("System Settings") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
-                }
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Connect directly in Devices").font(.bridge(.headline))
+                Text("Exchange connection cards to use AABridge’s encrypted app connection. Remote Login is not required. Keep both Macs reachable on the same network or a VPN.")
+                    .font(.bridge(.callout)).foregroundStyle(.secondary)
             }
             DisclosureGroup("Details", isExpanded: $expanded) {
                 ScrollView {

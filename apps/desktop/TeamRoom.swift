@@ -80,6 +80,7 @@ final class TeamRoomModel: ObservableObject {
     @Published var notice = ""
     @Published var showAssignment = false
     @Published var connectionCard = ""
+    @Published var connectionHost = ""
     @Published var pastedCard = ""
     private let activity: TaskBrowserModel
     private let preferences: UserDefaults
@@ -247,9 +248,11 @@ final class TeamRoomModel: ObservableObject {
     }
     func createCard() {
         guard !busy else { return }; busy = true
+        let host = connectionHost.trimmingCharacters(in: .whitespacesAndNewlines)
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let data = try self.activity.call("connection-card", target: "local")
+                let options = try JSONSerialization.data(withJSONObject: ["host": host])
+                let data = try self.activity.call("connection-card", target: "local", input: options)
                 let card = String(decoding: data, as: UTF8.self)
                 DispatchQueue.main.async { self.connectionCard = card; self.busy = false; self.notice = "Copy this card to your other Mac. Cards contain public connection details, never private keys." }
             } catch { DispatchQueue.main.async { self.busy = false; self.notice = error.localizedDescription } }
@@ -260,7 +263,7 @@ final class TeamRoomModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 _ = try self.activity.call("connect", target: "local", input: data)
-                DispatchQueue.main.async { self.busy = false; self.notice = "Mac connected. Do the same on the other Mac, then share a project in Projects."; self.pastedCard = "" }
+                DispatchQueue.main.async { self.busy = false; self.notice = "Connection saved. Exchange both cards, then share a project in Projects. The other Mac must be reachable when you start a task."; self.pastedCard = "" }
             } catch { DispatchQueue.main.async { self.busy = false; self.notice = error.localizedDescription } }
         }
     }
@@ -305,7 +308,8 @@ struct DevicesView: View {
             Text("Optional. Skip this if both agents run on this Mac. To use a second Mac, exchange a connection card once in each direction. Either Mac can then lead or do the work.").foregroundStyle(.secondary)
             GroupBox { VStack(alignment: .leading, spacing: 14) {
                 Text("1. Send this Mac’s card").font(.bridge(.headline))
-                Text("Turn on Remote Login in macOS System Settings → General → Sharing. Install AABridge on this Mac using Settings, then create its card.")
+                Text("Set up AABridge on this Mac using the app’s Settings, then create its card. AABridge accepts an encrypted connection directly; Remote Login is not needed.")
+                TextField("LAN or VPN address (optional; defaults to this Mac’s local hostname)", text: $model.connectionHost).textFieldStyle(.roundedBorder)
                 Button("Create connection card") { model.createCard() }.disabled(model.busy)
                 if !model.connectionCard.isEmpty {
                     Text(model.connectionCard).font(.bridge(.caption, design: .monospaced)).lineLimit(4).textSelection(.enabled)
@@ -314,11 +318,12 @@ struct DevicesView: View {
             }.padding(16).frame(maxWidth: .infinity, alignment: .leading) }
             GroupBox { VStack(alignment: .leading, spacing: 14) {
                 Text("2. Connect the other Mac").font(.bridge(.headline))
-                Text("Paste the card copied directly from your other Mac. Connecting trusts that Mac’s SSH identity and adds its restricted bridge key. Your agent logins stay on their own Macs.")
+                Text("Paste the card copied directly from your other Mac. Connecting trusts that Mac’s app certificate. Your agent logins stay on their own Macs.")
                 TextEditor(text: $model.pastedCard).font(.bridge(.callout, design: .monospaced)).frame(height: 120).padding(8).overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.15)))
                 Button("Connect this Mac") { model.connect() }.buttonStyle(.borderedProminent).disabled(model.busy || model.pastedCard.isEmpty)
             }.padding(16).frame(maxWidth: .infinity, alignment: .leading) }
             Text("Repeat on the other Mac. Then add the same Git project on both Macs in Projects, choose each agent, and allow the paired Mac. Use the same committed version of the project on both.").foregroundStyle(.secondary)
+            Text("Keep both Macs reachable on your LAN or VPN. If macOS asks, allow AABridge’s local network connection. Pairing does not create a connection across separate networks.").foregroundStyle(.secondary)
             if !model.notice.isEmpty { Text(model.notice).foregroundStyle(.orange).textSelection(.enabled) }
         }.padding(32).frame(maxWidth: 900, alignment: .leading) }
     }

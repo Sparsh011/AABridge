@@ -22,7 +22,10 @@ cancels active work for that project.
   state with reviewed policy; there is no automatic binary trust update command.
 - `host_identity_mismatch`: compare with the host itself through a trusted channel.
   Do not disable strict checks or replace pinned keys automatically.
-- `remote_unavailable`: check the panel's address/account, LAN/VPN, Remote Login,
+- `direct_unavailable`: check that AABridge is running on the other Mac and its
+  saved LAN/VPN address and app port are reachable. Remote Login is not used.
+  Update both receivers and exchange new version-2 cards when upgrading SSH pairs.
+- `remote_unavailable` (legacy SSH): check the panel's address/account, LAN/VPN, Remote Login,
   dedicated key and forced-command executable. No interactive SSH password
   fallback or forwarding is enabled. Reconnect and query the saved task ID.
 - `replay_conflict`: a mutation key was reused with changed content. Exact retries

@@ -85,7 +85,7 @@ class ConnectionCardCreationTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 'ssh_host_key_unavailable')
 
     def test_card_uses_network_hostname_instead_of_display_hostname(self):
-        from aabridge_core.pairing import card
+        from aabridge_core.pairing import _ssh_card as card
         with self.patch('aabridge_core.pairing.host_public_key', return_value=self.public), self.patch('aabridge_core.pairing.mac_name', side_effect=lambda field: {'LocalHostName':'Sparsh-MBP', 'ComputerName':"Sparsh's MBP"}[field]), self.patch('aabridge_core.pairing.socket.gethostname', return_value="Sparsh's-MBP"):
             value = card(self.state)
             self.assertEqual(value['host'], 'Sparsh-MBP.local')

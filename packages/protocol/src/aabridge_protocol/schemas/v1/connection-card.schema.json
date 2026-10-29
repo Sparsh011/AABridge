@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AABridge direct connection card v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "transport",
+    "id",
+    "name",
+    "host",
+    "port",
+    "certificate",
+    "fingerprint"
+  ],
+  "properties": {
+    "version": {
+      "const": 2
+    },
+    "transport": {
+      "const": "tls"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$",
+      "not": {
+        "const": "local"
+      }
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "host": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "certificate": {
+      "type": "string",
+      "maxLength": 8192
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

@@ -12,6 +12,7 @@ import socket
 import stat
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from aabridge_protocol.messages import fields, identifier, require, text
@@ -61,7 +62,41 @@ def mac_name(setting):
         return ''
 
 
-def card(state, name='', host=''):
+def card(state, name='', host='', port=None):
+    """Enable app-owned TLS and export only its public connection identity."""
+    from aabridge_cli.actions import start_daemon
+    from aabridge_core.direct import DEFAULT_PORT, certificate_fingerprint, identity
+    from aabridge_protocol.messages import integer, validate_connection_card
+    pem = identity(state)
+    config = load_config(state)
+    settings = config.get('direct', {})
+    selected_port = integer(port if port is not None else settings.get('port', DEFAULT_PORT), 1, 65535)
+    config['direct'] = {'enabled': True, 'bind': '0.0.0.0', 'port': selected_port}
+    save_config(state, config)
+    running = start_daemon(state)
+    require(running.get('direct_transport') is True, 'Update this Mac with Set up this Mac before creating a direct connection card.', 'receiver_upgrade_required')
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            status = json.loads(read_private(state / 'direct-listener.json'))
+        except (FileNotFoundError, ValueError):
+            status = {}
+        if status.get('pid') == running['pid'] and status.get('port') == selected_port:
+            require(not status.get('error'), status.get('error', ''), 'direct_listener_unavailable')
+            if status.get('ready'):
+                break
+        require(time.monotonic() < deadline, 'The app connection is not ready. Retry after setting up this Mac.', 'direct_listener_unavailable')
+        time.sleep(.05)
+    if not host:
+        local_name = mac_name('LocalHostName')
+        host = local_name + '.local' if local_name else socket.gethostname()
+    return validate_connection_card({'version': 2, 'transport': 'tls', 'id': config['node_id'],
+                                    'name': name or mac_name('ComputerName') or host, 'host': host,
+                                    'port': status['port'], 'certificate': pem,
+                                    'fingerprint': certificate_fingerprint(pem)})
+
+
+def _ssh_card(state, name='', host=''):
     config = load_config(state)
     # Read the daemon's public identity before generating this device's key.
     public_host = host_public_key()
@@ -104,12 +139,46 @@ def append_key(home, entry):
 
 
 def connect(state, value, home=None):
+    from aabridge_core.direct import certificate_fingerprint, identity
+    from aabridge_protocol.messages import validate_connection_card
+    require(isinstance(value, dict), 'Expected an AABridge connection card.')
+    if value.get('version') == 1:
+        return _connect_ssh(state, value, home)
+    value = validate_connection_card(value)
+    fingerprint = certificate_fingerprint(value['certificate'])
+    require(fingerprint == value['fingerprint'], 'The connection card certificate and fingerprint differ.', 'host_identity_mismatch')
+    config = load_config(state)
+    peer = value['id']
+    require(peer != config['node_id'], 'This is your own card. Paste the card from the other Mac.')
+    require(certificate_fingerprint(identity(state)) != fingerprint,
+            'This is this Mac’s own certificate. Paste the card from the other Mac.')
+    existing = config['remotes'].get(peer)
+    if existing and existing.get('transport') == 'tls':
+        require(all(existing[key] == value[key] for key in ('host', 'port', 'fingerprint')),
+                'This device’s address or certificate changed. Review the saved connection before replacing it.', 'host_identity_mismatch')
+    policy = config['peers'].get(peer, {'enabled': True, 'projects': []})
+    require(policy['enabled'], 'This connection was revoked; review it locally before reconnecting.', 'permission_denied')
+    if policy.get('tls_fingerprint'):
+        require(policy['tls_fingerprint'] == fingerprint, 'This device certificate changed. Review its saved pairing.', 'host_identity_mismatch')
+    require(not any(name != peer and p.get('tls_fingerprint') == fingerprint for name, p in config['peers'].items()),
+            'This certificate is already paired to another identity.', 'permission_denied')
+    config['remotes'][peer] = {key: value[key] for key in ('transport', 'host', 'port', 'certificate', 'fingerprint')}
+    config['remotes'][peer]['label'] = value['name']
+    policy.update(tls_certificate=value['certificate'], tls_fingerprint=fingerprint, label=value['name'])
+    config['peers'][peer] = policy
+    save_config(state, config)
+    return {'connected': peer, 'name': value['name'], 'fingerprint': fingerprint, 'transport': 'tls',
+            'note': 'Exchange both cards and allow the paired Mac in Projects. Connection saved; reachability is checked when you use it.'}
+
+
+def _connect_ssh(state, value, home=None):
     from aabridge_cli.actions import enroll_remote, grant_peer
     value = fields(value, {'version', 'id', 'name', 'host', 'user', 'port', 'public_key', 'host_key'})
     require(value['version'] == 1, 'Unsupported connection card.')
     peer = identifier(value['id'])
     config = load_config(state)
     require(peer != config['node_id'], 'This is your own card. Paste the card from the other Mac.')
+    require(config['remotes'].get(peer, {}).get('transport') != 'tls', 'This device uses direct TLS. Use its current connection card; an SSH downgrade is not permitted.')
     text(value['name'], 120)
     for field in ('public_key', 'host_key'):
         require(isinstance(value[field], str) and len(value[field]) < 4096 and '\n' not in value[field] and '\r' not in value[field] and value[field].startswith('ssh-ed25519 '), 'Invalid public key in connection card.')

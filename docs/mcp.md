@@ -5,6 +5,12 @@ stdio facade; ending it does not stop tasks. It can route requests to this host
 or a locally enrolled remote. It cannot inject text into existing desktop
 sessions or awaken an idle conversation.
 
+The saved remote chooses its transport: new connection cards use direct mutual
+TLS; older SSH enrollments keep SSH until explicitly upgraded with new cards.
+MCP tool names, request bodies, ownership and project grants are unchanged. The
+facade does not expose listener setup, pairing or certificate replacement as
+remote tools. Direct results are fetched over TLS by the admin's team runner.
+
 ## Codex coordinator
 
 Use the absolute installed executable and state path. From this checkout:
