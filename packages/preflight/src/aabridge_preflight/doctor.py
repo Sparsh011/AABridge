@@ -41,8 +41,25 @@ def check_sqlite() -> Check:
     return Check("runtime.sqlite", "ok", f"SQLite {sqlite3.sqlite_version}; in-memory transaction/rollback passed (disk durability not tested).")
 
 
+def check_shell_startup(home: Path | None = None) -> Check:
+    """Inspect ~/.zshenv without running it: SSH requests to this Mac run through it."""
+    path = (home or Path.home()) / ".zshenv"
+    try:
+        lines = path.read_text(errors="replace").splitlines() if path.is_file() else []
+    except OSError:
+        return Check("shell.startup", "warning", "Could not read ~/.zshenv to check shell startup time.")
+    appends = any(">>" in line and ".zshenv" in line and not line.lstrip().startswith("#") for line in lines)
+    repeated = max((lines.count(line) for line in set(lines) if line.strip()), default=0)
+    if appends or repeated > 50 or len(lines) > 2000:
+        detail = (f"~/.zshenv has {len(lines)} lines" + (f"; one line repeats {repeated} times" if repeated > 50 else "")
+                  + ("; it contains a command that appends to ~/.zshenv itself, so it grows every time a shell starts" if appends else "") + ".")
+        return Check("shell.startup", "warning", detail + " Every shell, including each SSH request from your other Mac, reads this file, which can make AABridge very slow.",
+                     "Remove the line that appends to ~/.zshenv and the duplicate lines, keeping one copy of each setting.")
+    return Check("shell.startup", "ok", f"~/.zshenv looks normal ({len(lines)} lines).")
+
+
 def collect_report(*, state_dir: Path | None = None) -> Report:
-    checks = [check_python(), check_sqlite()]
+    checks = [check_python(), check_sqlite(), check_shell_startup()]
     checks.append(Check(
         "platform", "ok" if sys.platform == "darwin" else "error",
         "macOS foundation target." if sys.platform == "darwin" else "This milestone targets macOS; other platforms are not validated.",

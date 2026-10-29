@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/zsh -f
 set -eu
 cd -- "${0:A:h}"
 for aabridge_activity_python in "$HOME/Library/Application Support/AABridgeInstall/venv/bin/python" /opt/homebrew/bin/python3.11 /usr/local/bin/python3.11 python3.11 python3.12 python3.13 python3.14 python3; do
