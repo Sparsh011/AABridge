@@ -324,6 +324,17 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         blocked = get(self.store, room['id'])
         self.assertEqual(blocked['status'], 'blocked')
         self.assertIn('Couldn’t reach AABridge on mini', blocked['error'])
+        self.assertIn('Remote Login', blocked['error'])
+
+    async def test_direct_connection_failure_does_not_mention_remote_login(self):
+        async def offline(op, body, target, key=None):
+            raise BridgeError('direct_unavailable', 'Direct connection failed.')
+        self.runner.call = offline
+        room = self.start(approval='auto')
+        await self.runner.step(room['id'])
+        error = get(self.store, room['id'])['error']
+        self.assertIn('over its direct connection', error)
+        self.assertNotIn('Remote Login', error)
 
     def test_branch_names_are_short_and_valid(self):
         name = publish.branch_name('codex', 'Add a NEW screen — that takes weight as input!!! and more words here', 'team-0123456789abcdef')

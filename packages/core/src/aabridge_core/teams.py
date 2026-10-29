@@ -574,6 +574,9 @@ class TeamRunner:
             if code in {'remote_unavailable', 'daemon_unavailable'}:
                 room['error'] = (f'Couldn’t reach AABridge on {mac}. Make sure it’s awake and on the same network, Remote Login is on, and AABridge is running there. Then press Try again.'
                                  if contact != 'local' else 'AABridge’s background service on this Mac isn’t running. Open Settings → Set up this Mac, then press Try again.')
+            elif code == 'direct_unavailable':
+                room['error'] = (f'Couldn’t reach AABridge on {mac} over its direct connection. Make sure it’s awake, AABridge is running there, and its address in Devices is reachable '
+                                 '(same network or VPN). macOS may ask that Mac to allow incoming connections. Then press Try again.')
             elif code == 'host_identity_mismatch':
                 room['error'] = f'{mac} answered with a different identity than when you connected it. If you reinstalled macOS there, reconnect it in Devices.'
             else:
