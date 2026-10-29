@@ -11,6 +11,7 @@ TOOL_OPS = {"bridge_projects": "projects", "bridge_submit": "submit", "bridge_st
             "bridge_tasks": "tasks", "bridge_conversation": "conversation",
             "bridge_teams": "teams", "bridge_team_start": "team_start", "bridge_team_status": "team_status", "bridge_team_activity": "team_activity", "bridge_activity": "activity",
             "bridge_team_reply": "team_reply", "bridge_team_cancel": "team_cancel", "bridge_team_retry": "team_retry",
+            "bridge_team_guide": "team_guide", "bridge_team_decide": "team_decide", "bridge_team_merge": "team_merge",
             "bridge_events": "events", "bridge_answer": "answer", "bridge_revise": "revise", "bridge_cancel": "cancel"}
 
 
@@ -32,11 +33,14 @@ def tools() -> list[dict]:
     descriptions.update({
         "team_activity": "Read saved live leader/follower activity after body.cursor. Reading does not start model work.",
         "teams": "List team chats owned by the local admin. Device roles are chosen per room.",
-        "team_start": "Create a team assignment explicitly authorized by the human admin. Leader plans and reviews; follower implements. Requires a local admin connection and full coding projects on both participants.",
+        "team_start": "Create a team assignment explicitly authorized by the human admin. Leader plans and reviews; follower implements. approval=auto lets the leader send fixes back until it approves; placement puts the result on a new branch, worktree or pull request in the admin's project. Requires a local admin connection and full coding projects on both participants.",
         "team_status": "Read the saved team conversation, stage, errors, and implementation branch.",
         "team_reply": "Send the admin's next task to a completed/stopped team. This starts model work.",
         "team_cancel": "Stop a team and its active task; preserve the checkout.",
         "team_retry": "Retry a blocked stage using its existing durable request key.",
+        "team_guide": "Send the admin's note to a working team. It reaches the active agent when its current step ends, and the team adjusts its approach.",
+        "team_decide": "Answer a team waiting for admin approval: continue (approve the plan or the requested fixes), replan (leader redoes the plan using body.text), or finish (stop fixing and deliver).",
+        "team_merge": "Merge a completed team's pull request on GitHub. Only the human admin may request this.",
     })
     result = []
     for name, op in TOOL_OPS.items():

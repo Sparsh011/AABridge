@@ -82,7 +82,7 @@ struct LiveActivityView: View {
                         HStack(alignment: .top) {
                             if active { ProgressView().controlSize(.small) }
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("\(live.role.capitalized) · \(live.agent == "claude" ? "Claude" : "Codex") · \(model.deviceLabel(live.target))")
+                                Text("\(live.role == "follower" ? "Worker" : "Leader") · \(live.agent == "claude" ? "Claude" : "Codex") · \(model.deviceLabel(live.target))")
                                     .font(.bridge(.headline))
                                 Text(live.activity?.message ?? (live.status == "queued" ? "Waiting for the agent to become available" : live.status.capitalized))
                                 if active { Text("Last agent update \(age)s ago · service checked \(max(0, Int(context.date.timeIntervalSince1970 - live.checked_at)))s ago").font(.bridge(.caption)).foregroundStyle(.secondary) }
@@ -110,7 +110,7 @@ struct LiveActivityView: View {
                                         .foregroundStyle(entry.state == "failed" ? Color.orange : Color.accentColor)
                                     VStack(alignment: .leading, spacing: 3) {
                                         HStack {
-                                            Text("\(entry.role.capitalized) · \(entry.agent == "claude" ? "Claude" : "Codex") · \(entry.stage == "plan" ? "Planning" : entry.stage == "work" ? "Building" : "Reviewing")")
+                                            Text("\(entry.role == "follower" ? "Worker" : "Leader") · \(entry.agent == "claude" ? "Claude" : "Codex") · \(entry.stage == "plan" ? "Planning" : entry.stage == "work" ? "Building" : "Reviewing")")
                                             Spacer()
                                             Text(Date(timeIntervalSince1970: entry.time), style: .time)
                                         }.font(.bridge(.caption)).foregroundStyle(.secondary)

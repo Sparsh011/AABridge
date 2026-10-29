@@ -7,14 +7,51 @@ struct TeamEntry: Decodable, Identifiable {
     let id: String; let speaker: String; let text: String; let time: Double
 }
 struct TeamResult: Decodable { let branch: String; let worktree: String; let result_commit: String; let base_commit: String }
+struct TeamPlacement: Codable { var mode: String; var pull_request: Bool? = nil }
+struct TeamGate: Decodable { let kind: String; let reason: String }
+struct TeamPublication: Decodable {
+    var mode: String? = nil; var branch: String? = nil; var path: String? = nil; var pull_request: String? = nil
+    var merge: String? = nil; var merge_error: String? = nil; var error: String? = nil
+}
 struct TeamRoom: Decodable, Identifiable {
     let id: String; let objective: String; let status: String; let stage: String
     let leader: TeamMember; let follower: TeamMember
     let messages: [TeamEntry]?; let error: String?; let result: TeamResult?
     var live: TeamLiveState? = nil
+    var approval: String? = nil; var placement: TeamPlacement? = nil; var gate: TeamGate? = nil
+    var publication: TeamPublication? = nil; var verdict: String? = nil
+    var fixes: Int? = nil; var max_fixes: Int? = nil; var notes_waiting: Int? = nil
 }
 struct TeamChoice: Identifiable {
     let id: String; let label: String; let member: TeamMember
+}
+
+/// Where the finished code goes, in the order the new-task form offers it.
+struct PlacementOption: Identifiable {
+    let id: String; let title: String; let detail: String; let icon: String
+    var short: String { ["sandbox": "result kept in AABridge", "branch": "new branch", "worktree": "new branch in its own folder", "current": "your current branch"][id] ?? id }
+    static let all = [
+        PlacementOption(id: "sandbox", title: "Keep it in AABridge", detail: "Safest. Your project folder isn’t touched. You review the result first.", icon: "shippingbox"),
+        PlacementOption(id: "branch", title: "New branch in my project", detail: "Adds a branch to your project. The branch you’re on and main stay as they are.", icon: "arrow.triangle.branch"),
+        PlacementOption(id: "worktree", title: "New branch in a separate folder", detail: "The same new branch, checked out in its own folder next to your project (a Git worktree), so you can open and run it separately.", icon: "folder.badge.plus"),
+        PlacementOption(id: "current", title: "My current branch", detail: "Adds the commits to the feature branch you have checked out. AABridge refuses to do this on main.", icon: "arrow.down.to.line"),
+    ]
+}
+
+/// Mirrors `aabridge_workspace.publish.slug` so the form can preview the branch name.
+func branchSlug(_ text: String, limit: Int = 40) -> String {
+    var parts: [String] = [], current = ""
+    for character in text.lowercased() {
+        if character.isASCII && (character.isLetter || character.isNumber) { current.append(character) }
+        else if !current.isEmpty { parts.append(current); current = "" }
+    }
+    if !current.isEmpty { parts.append(current) }
+    var words: [String] = []
+    for part in parts {
+        if (words + [part]).joined(separator: "-").count > limit { break }
+        words.append(part)
+    }
+    return words.isEmpty ? "task" : words.joined(separator: "-")
 }
 
 final class TeamRoomModel: ObservableObject {
@@ -29,27 +66,51 @@ final class TeamRoomModel: ObservableObject {
     @Published var leaderEffort = ""
     @Published var followerModel = ""
     @Published var followerEffort = ""
+    @Published var approval: String { didSet { preferences.set(approval, forKey: "teamApproval") } }
+    @Published var placement: String { didSet { preferences.set(placement, forKey: "teamPlacement") } }
+    @Published var pullRequest: Bool { didSet { preferences.set(pullRequest, forKey: "teamPullRequest") } }
+    @Published var maxFixes: Int { didSet { preferences.set(maxFixes, forKey: "teamMaxFixes") } }
     @Published var liveEntries: [LiveActivityEntry] = []
     @Published var liveNotice = ""
     private var liveCursor = 0
     private var liveRoom = ""
+    /// A send is in flight. Polling uses `refreshing`, so buttons don't flicker.
     @Published var busy = false
+    private var refreshing = false
     @Published var notice = ""
     @Published var showAssignment = false
     @Published var connectionCard = ""
     @Published var pastedCard = ""
     private let activity: TaskBrowserModel
-    private let preferences = UserDefaults.standard
-    init(activity: TaskBrowserModel) { self.activity = activity }
+    private let preferences: UserDefaults
+    init(activity: TaskBrowserModel, preferences: UserDefaults = .standard) {
+        self.activity = activity
+        self.preferences = preferences
+        approval = preferences.string(forKey: "teamApproval") ?? "ask"
+        placement = preferences.string(forKey: "teamPlacement") ?? "sandbox"
+        pullRequest = preferences.bool(forKey: "teamPullRequest")
+        maxFixes = preferences.object(forKey: "teamMaxFixes") as? Int ?? 3
+    }
     var settingsValid: Bool { AgentModelSettings.validModel(leaderModel) && AgentModelSettings.validModel(followerModel) }
-    var ready: Bool { settingsValid && !busy && !leader.isEmpty && !follower.isEmpty && leader != follower && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.count <= 3000 }
+    var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var ready: Bool { settingsValid && !busy && !leader.isEmpty && !follower.isEmpty && leader != follower && !trimmedDraft.isEmpty && draft.count <= 3000 && placementAllowed(placement) }
     var terminal: Bool { room == nil || ["completed", "failed", "cancelled"].contains(room!.status) }
+    var waiting: Bool { room?.status == "awaiting_admin" }
+    var working: Bool { ["running", "stopping", "blocked"].contains(room?.status ?? "") }
+    var leaderChoice: TeamChoice? { choices.first(where: { $0.id == leader }) }
+    var followerChoice: TeamChoice? { choices.first(where: { $0.id == follower }) }
+    /// The result can only reach a project folder on this Mac.
+    var hasLocalMember: Bool { leaderChoice?.member.target == "local" || followerChoice?.member.target == "local" }
+    func placementAllowed(_ mode: String) -> Bool { mode == "sandbox" || hasLocalMember }
+    var branchPreview: String {
+        (followerChoice?.member.agent ?? "claude") + "/" + branchSlug(trimmedDraft.isEmpty ? "your task" : trimmedDraft) + "-…"
+    }
     private func envelope(_ body: [String: Any], key: String? = nil) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["key": key ?? "team-ui-" + UUID().uuidString, "body": body])
     }
     func refresh(discover: Bool = false) {
-        guard !busy else { return }
-        busy = true
+        guard !refreshing && !busy else { return }
+        refreshing = true
         let selection = selected
         let feedRoom = liveRoom
         let feedCursor = liveCursor
@@ -107,7 +168,7 @@ final class TeamRoomModel: ObservableObject {
                         self.leaderModel = room.leader.model_settings?.model ?? ""; self.leaderEffort = room.leader.model_settings?.effort ?? ""
                         self.followerModel = room.follower.model_settings?.model ?? ""; self.followerEffort = room.follower.model_settings?.effort ?? ""
                     }
-                    self.rooms = rooms; self.room = room; self.selected = wanted; self.busy = false
+                    self.rooms = rooms; self.room = room; self.selected = wanted; self.refreshing = false
                     if let found = found {
                         self.choices = found
                         if !found.contains(where: { $0.id == self.leader }) { self.leader = found.first?.id ?? "" }
@@ -115,7 +176,7 @@ final class TeamRoomModel: ObservableObject {
                         self.notice = issues.joined(separator: "\n")
                     }
                 }
-            } catch { DispatchQueue.main.async { self.busy = false; self.notice = error.localizedDescription } }
+            } catch { DispatchQueue.main.async { self.refreshing = false; self.notice = error.localizedDescription } }
         }
     }
     func deviceLabel(_ target: String) -> String {
@@ -133,14 +194,27 @@ final class TeamRoomModel: ObservableObject {
             mutate("team_reply", body: ["team_id": room.id, "text": draft, "leader_settings": settings(leaderModel, leaderEffort), "follower_settings": settings(followerModel, followerEffort)])
             return
         }
-        guard ready, let lead = choices.first(where: { $0.id == leader }), let follow = choices.first(where: { $0.id == follower }) else { return }
+        guard ready, let lead = leaderChoice, let follow = followerChoice else { return }
         func member(_ value: TeamMember, model: String, effort: String) -> [String: Any] {
             var body: [String: Any] = ["target": value.target, "project": value.project, "agent": value.agent]
             let selected = settings(model, effort)
             if !selected.isEmpty { body["model_settings"] = selected }
             return body
         }
-        mutate("team_start", body: ["objective": draft, "leader": member(lead.member, model: leaderModel, effort: leaderEffort), "follower": member(follow.member, model: followerModel, effort: followerEffort)])
+        mutate("team_start", body: ["objective": draft, "approval": approval, "max_fixes": maxFixes,
+                                    "placement": ["mode": placement, "pull_request": placement != "sandbox" && pullRequest],
+                                    "leader": member(lead.member, model: leaderModel, effort: leaderEffort), "follower": member(follow.member, model: followerModel, effort: followerEffort)])
+    }
+    /// A note for the agents while they work; it reaches the next agent turn.
+    func sendNote() {
+        guard let room = room, !trimmedDraft.isEmpty, draft.count <= 3000 else { return }
+        mutate("team_guide", body: ["team_id": room.id, "text": draft])
+    }
+    func decide(_ decision: String) {
+        guard let room = room else { return }
+        var body: [String: Any] = ["team_id": room.id, "decision": decision]
+        if !trimmedDraft.isEmpty { body["text"] = draft }
+        mutate("team_decide", body: body)
     }
     func control(_ action: String) {
         guard let room = room else { return }
@@ -196,116 +270,28 @@ struct TeamRoomView: View {
     @ObservedObject var model: TeamRoomModel
     let active: Bool
     var preview = false
+    /// Switches the main window to another section (Projects, Devices, Settings).
+    var navigate: (Int) -> Void = { _ in }
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    private func name(_ member: TeamMember) -> String {
-        if let choice = model.choices.first(where: { $0.member.target == member.target && $0.member.project == member.project }) { return choice.label }
-        return (member.agent == "claude" ? "Claude" : "Codex") + " · " + (member.target == "local" ? "This Mac" : member.target) }
+
     var body: some View {
         HSplitView {
-            VStack(alignment: .leading, spacing: 18) {
-                Label("Your team", systemImage: "person.3.fill").font(.bridge(.title2).bold())
-                Text("You’re the admin.").foregroundStyle(.secondary)
-                Button { model.showAssignment = true; model.draft = ""; model.refresh(discover: true) } label: { Label("New task", systemImage: "square.and.pencil").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent).disabled(model.busy || model.hasPending)
-                ScrollView { VStack(spacing: 8) {
-                    ForEach(model.rooms) { room in
-                        Button { model.selected = room.id; model.showAssignment = false; model.refresh() } label: {
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text(room.objective).lineLimit(3).font(.bridge(.headline))
-                                Text(room.status.capitalized).font(.bridge(.caption)).foregroundStyle(.secondary)
-                            }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
-                                .background(model.selected == room.id ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.035)).clipShape(RoundedRectangle(cornerRadius: 12))
-                        }.buttonStyle(.plain)
-                    }
-                } }
-                Button("Refresh team & devices") { model.refresh(discover: true) }.disabled(model.busy)
-            }.padding(22).frame(minWidth: 240, idealWidth: 270, maxWidth: 320)
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(model.showAssignment || model.room == nil ? "What shall we build?" : "Team chat").font(.bridge(.title).bold())
-                        Text("Choose who leads. Tell your team what you need.").foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Text("YOU · ADMIN").font(.bridge(.caption).bold()).padding(10).background(Color.accentColor.opacity(0.10)).clipShape(Capsule())
-                }.padding(24)
-                Divider()
+            TeamSidebar(model: model).frame(minWidth: 250, idealWidth: 280, maxWidth: 330)
+            VStack(spacing: 0) {
                 if model.showAssignment || model.room == nil {
-                    ScrollView { VStack(alignment: .leading, spacing: 22) {
-                        Text("1. Choose your team").font(.bridge(.headline))
-                        Picker("Leader · sender", selection: $model.leader) { Text("Choose a Mac and agent").tag(""); ForEach(model.choices) { Text($0.label).tag($0.id) } }
-                        ModelSettingsFields(agent: model.choices.first(where: { $0.id == model.leader })?.member.agent ?? "codex", model: $model.leaderModel, effort: $model.leaderEffort)
-                        HStack { Spacer(); Button { let lead = model.leader; model.leader = model.follower; model.follower = lead } label: { Label("Swap roles", systemImage: "arrow.up.arrow.down") }; Spacer() }
-                        Picker("Worker · receiver", selection: $model.follower) { Text("Choose a Mac and agent").tag(""); ForEach(model.choices) { Text($0.label).tag($0.id) } }
-                        ModelSettingsFields(agent: model.choices.first(where: { $0.id == model.follower })?.member.agent ?? "claude", model: $model.followerModel, effort: $model.followerEffort)
-                        Text("The leader plans and reviews. The worker writes the code. Both report here. You have the final say.").foregroundStyle(.secondary)
-                        if model.choices.count < 2 { Label("Add both Macs in Devices, then add a full coding project on each Mac in Projects.", systemImage: "info.circle").foregroundStyle(.orange) }
-                        Text("2. Describe the result you want").font(.bridge(.headline))
-                        Text("For example: Build a simple booking page for my business. Make it work well on a phone.").foregroundStyle(.secondary)
-                        TextEditor(text: $model.draft).frame(minHeight: 160).padding(10).overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.15)))
-                    }.padding(28).frame(maxWidth: 850) }
-                    Divider()
-                    HStack {
-                        Text("Uses the selected agents’ accounts.").font(.bridge(.caption)).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Start working") { model.send() }.buttonStyle(.borderedProminent).disabled(!model.ready || model.hasPending)
-                    }.padding(20)
+                    NewTeamTaskView(model: model, navigate: navigate)
                 } else if let room = model.room {
-                    HStack {
-                        Label(name(room.leader) + " · Leader", systemImage: "crown")
-                        Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                        Label(name(room.follower) + " · Worker", systemImage: "hammer")
-                        Spacer()
-                        Text(room.status == "running" ? (room.stage == "plan" ? "Planning…" : room.stage == "work" ? "Building…" : "Reviewing…") : room.status.capitalized).foregroundStyle(.secondary)
-                    }.font(.bridge(.callout)).padding(18)
-                    LiveActivityView(model: model).padding(.horizontal, 20).padding(.bottom, 8)
-                    ScrollViewReader { proxy in ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 18) {
-                            ForEach(room.messages ?? []) { message in
-                                VStack(alignment: .leading, spacing: 9) {
-                                    Text(message.speaker).font(.bridge(.headline)).foregroundStyle(message.speaker.contains("admin") ? Color.accentColor : Color.primary)
-                                    Text(message.text).textSelection(.enabled)
-                                }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(message.speaker.contains("admin") ? Color.accentColor.opacity(0.09) : Color.primary.opacity(0.035)).clipShape(RoundedRectangle(cornerRadius: 14)).id(message.id)
-                            }
-                            if let result = room.result {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Label("Work saved for your review", systemImage: "checkmark.circle").font(.bridge(.headline))
-                                    Text("On \(name(room.follower)): \(result.worktree)").textSelection(.enabled)
-                                    Text(result.branch).font(.bridge(.caption, design: .monospaced)).textSelection(.enabled)
-                                    Text("Review the branch before publishing it to GitHub.").foregroundStyle(.secondary)
-                                }.padding(18)
-                            }
-                        }.padding(24)
-                    }.onChange(of: room.messages?.last?.id) { id in if let id = id { proxy.scrollTo(id, anchor: .bottom) } } }
-                    if let error = room.error, !error.isEmpty {
-                        HStack { Text(error).foregroundStyle(.orange).textSelection(.enabled); Spacer(); if room.status == "blocked" { Button("Retry") { model.control("team_retry") }.disabled(model.busy) } }.padding(18)
-                    }
-                    Divider()
-                    if model.terminal {
-                        DisclosureGroup("Models for the next message") {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Leader").font(.bridge(.headline))
-                                ModelSettingsFields(agent: room.leader.agent, model: $model.leaderModel, effort: $model.leaderEffort)
-                                Text("Follower").font(.bridge(.headline))
-                                ModelSettingsFields(agent: room.follower.agent, model: $model.followerModel, effort: $model.followerEffort)
-                            }
-                        }.padding(.horizontal, 20).padding(.top, 8)
-                    }
-                    HStack(spacing: 14) {
-                        if model.terminal {
-                            TextField("Tell the team what to change next…", text: $model.draft).textFieldStyle(.roundedBorder)
-                            Button("Send") { model.send() }.buttonStyle(.borderedProminent).disabled(!model.settingsValid || model.busy || model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.draft.count > 3000 || model.hasPending)
-                        } else {
-                            Text("Your team is working. You can stop it at any time.").foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Stop task", role: .destructive) { model.control("team_cancel") }.disabled(model.busy || room.status == "stopping" || model.hasPending)
-                        }
-                    }.padding(20)
+                    TeamChatView(model: model, room: room)
                 }
                 if !model.notice.isEmpty || model.hasPending {
-                    HStack { Text(model.notice).foregroundStyle(.orange).textSelection(.enabled); Spacer(); if model.hasPending { Button("Retry saved send") { model.retry() }.disabled(model.busy) } }.padding(16)
+                    HStack(alignment: .top) {
+                        Image(systemName: "exclamationmark.bubble").foregroundStyle(.orange)
+                        Text(model.notice.isEmpty ? "A message didn’t reach the team yet. It’s saved; retry to send it with the same key." : model.notice).textSelection(.enabled)
+                        Spacer()
+                        if model.hasPending { Button("Retry saved send") { model.retry() }.disabled(model.busy) }
+                    }.padding(14).background(Color.orange.opacity(0.08))
                 }
-            }.frame(minWidth: 650)
+            }.frame(minWidth: 680)
         }.onAppear { if !preview { model.refresh(discover: true) } }
             .onReceive(timer) { _ in if active && !model.showAssignment { model.refresh() } }
     }
@@ -316,7 +302,7 @@ struct DevicesView: View {
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
             Text("Connect your Macs").font(.bridge(.title).bold())
-            Text("Each Mac can lead or receive work. Exchange a connection card once in each direction.").foregroundStyle(.secondary)
+            Text("Optional. Skip this if both agents run on this Mac. To use a second Mac, exchange a connection card once in each direction. Either Mac can then lead or do the work.").foregroundStyle(.secondary)
             GroupBox { VStack(alignment: .leading, spacing: 14) {
                 Text("1. Send this Mac’s card").font(.bridge(.headline))
                 Text("Turn on Remote Login in macOS System Settings → General → Sharing. Install AABridge on this Mac using Settings, then create its card.")

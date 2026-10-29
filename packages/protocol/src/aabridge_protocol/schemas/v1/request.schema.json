@@ -1053,6 +1053,41 @@
                   "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
                 }
               }
+            },
+            "approval": {
+              "enum": [
+                "ask",
+                "auto"
+              ],
+              "description": "ask: pause for the admin to approve the plan and any requested fixes. auto: the leader owns the task, sending fixes back to the follower until it approves. Default ask."
+            },
+            "max_fixes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "description": "Automatic review-and-fix rounds before the team asks the admin. Default 3."
+            },
+            "placement": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "mode"
+              ],
+              "properties": {
+                "mode": {
+                  "enum": [
+                    "sandbox",
+                    "branch",
+                    "worktree",
+                    "current"
+                  ],
+                  "description": "sandbox: keep the result in AABridge's task clone. branch: create <agent>/<task> in the admin's project. worktree: that branch plus a separate checkout folder. current: fast-forward the checked-out feature branch (never main)."
+                },
+                "pull_request": {
+                  "type": "boolean",
+                  "description": "Push the branch and open a pull request with the admin's gh login. Never merges automatically."
+                }
+              }
             }
           },
           "required": [
@@ -1335,6 +1370,130 @@
           "required": [
             "team_id",
             "cursor"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_guide"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "team_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 3000
+            }
+          },
+          "required": [
+            "team_id",
+            "text"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_decide"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "team_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "decision": {
+              "enum": [
+                "continue",
+                "replan",
+                "finish"
+              ]
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 3000
+            }
+          },
+          "required": [
+            "team_id",
+            "decision"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_merge"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "team_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            }
+          },
+          "required": [
+            "team_id"
           ]
         }
       },

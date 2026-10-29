@@ -135,6 +135,11 @@ class Workspace:
         self.task, self.project = task, project
         self.path = state / "workspaces" / task["id"]
 
+    @property
+    def branch(self) -> str:
+        # Name the task branch after the agent that does the work.
+        return ("claude" if self.project.get("adapter") == "claude" else "codex") + "/" + self.task["id"]
+
     def prepare(self) -> dict[str, str]:
         if not self.path.exists():
             source = Path(self.project["repository"])
@@ -145,7 +150,7 @@ class Workspace:
             git(self.path.parent, "clone", "--no-local", "--no-hardlinks", "--no-checkout", "--template=", "--", str(source), str(self.path))
             entries = git(self.path, "ls-tree", "-r", "--full-tree", self.task["base_commit"]).splitlines()
             require(self.project["verification"]["profile"] == "repository-v1" or (len(entries) <= 5000 and all(entry.split(" ", 1)[0] in {"100644", "100755"} for entry in entries)), "Symlinks, submodules, and oversized repositories are unsupported.", "unsafe_workspace")
-            git(self.path, "checkout", "-b", "codex/" + self.task["id"], self.task["base_commit"])
+            git(self.path, "checkout", "-b", self.branch, self.task["base_commit"])
             # A task may never accidentally push back into the source checkout.
             git(self.path, "remote", "remove", "origin")
         require(not self.path.is_symlink(), "Task workspace was replaced by a symlink.", "unsafe_workspace")
@@ -214,8 +219,9 @@ class Workspace:
 
 
     def coding_result(self, proposal: dict) -> dict:
-        branch = "codex/" + self.task["id"]
-        require(git(self.path, "branch", "--show-current") == branch,
+        branch = git(self.path, "branch", "--show-current")
+        # Workspaces created before agent-named branches keep their codex/ name.
+        require(branch in {self.branch, "codex/" + self.task["id"]},
                 "The agent changed its assigned task branch; checkout preserved for review.", "verification_failed")
         # Native agents can add/delete files and execute project checks. Keep all
         # accepted changes in this isolated clone, with no push remote configured.

@@ -17,7 +17,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--state-dir", type=Path)
-    parser.add_argument("--action", choices=("connection-card", "connect", "teams", "team_start", "team_status", "team_activity", "team_reply", "team_cancel", "team_retry", "targets", "projects", "projects-local", "project-save", "tasks", "conversation", "status", "events", "submit", "answer", "revise", "cancel"), required=True)
+    parser.add_argument("--action", choices=("connection-card", "connect", "teams", "team_start", "team_status", "team_activity", "team_reply", "team_cancel", "team_retry", "team_guide", "team_decide", "team_merge", "targets", "projects", "projects-local", "project-save", "tasks", "conversation", "status", "events", "submit", "answer", "revise", "cancel"), required=True)
     parser.add_argument("--remote")
     parser.add_argument("--task-id")
     parser.add_argument("--cursor", type=int, default=0)

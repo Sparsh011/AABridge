@@ -21,6 +21,16 @@ AABridge now treats every Mac as a peer. A room has a human admin, a leader chos
 - Task clones have no push remote. Result branches are captured for review, never automatically pushed, merged or deployed. Native CLI instructions prohibit those actions; native coding is not a security boundary against a malicious local process.
 - Admin mutations and stage submissions use stable keys. Lost acknowledgements replay the same request. Stage handoffs resume after a supervisor restart; already-interrupted model processes remain explicit failures instead of silently starting replacement sessions. A stop retries cancellation until the current member is reachable.
 
+## Autonomy, admin notes and result delivery
+
+A new task picks three things in the desktop form (`team_start` fields; omitting them keeps the old single plan → build → review pass):
+
+- **`approval`**. `ask`: the room pauses in `awaiting_admin` after the plan, and after any review that requests changes. The admin answers with `team_decide`: `continue`, `replan` (needs a note) or `finish`. `auto`: the leader owns the task. A review that ends `VERDICT: CHANGES_REQUESTED` sends its points back to the follower, which is told to investigate each one and either fix it or explain with evidence why it disagrees. Each role resumes its own task and session, so the leader re-reviews with memory of its earlier review, against the full cumulative diff. The loop stops at `VERDICT: APPROVED`. After `max_fixes` rounds (default 3), or a review with no verdict line, the room asks the admin instead.
+- **`placement`**. `sandbox` (the default) keeps the result in the isolated task clone. `branch` copies the follower's commit into the admin's project as `<agent>/<task-slug>-<room suffix>`. It never adopts an existing branch name; a collision gets a `-2` suffix. `worktree` does the same and adds a Git worktree next to the project in `<project>-worktrees/`. `current` fast-forwards the checked-out feature branch, and refuses main/master/the default branch, a dirty tree or a branch that moved. `pull_request: true` pushes the branch without force, using the admin's `gh` login, and opens or reuses one pull request. The leader's reviews are posted on it as comments. Delivery runs on the admin Mac, so one member must be `local`, and it repeats after every fix round. A delivery failure is reported in the chat and never stops the team.
+- **Merging** happens only on `team_merge`, which is the desktop Merge button (`gh pr merge --merge`). Nothing is merged automatically.
+
+`team_guide` sends an admin note while the team works. Notes are queued durably and attached to the next agent turn. If one arrives mid-step, the runner adds a turn: the leader re-plans, or the worker adjusts before review. The note never interrupts a running CLI process. Task clones now use the working agent's prefix (`claude/task-…` or `codex/task-…`); older `codex/` clones are still accepted.
+
 ## Git cooperation with Claude
 
 Read `AGENTS.md` (also referenced by `CLAUDE.md`). Work in separate worktrees and branches. Never share a live checkout, reset another agent’s work, force push, or push directly to main.
@@ -29,7 +39,7 @@ Run `python scripts/git_sync.py` before a push. It fetches using the authenticat
 
 ## Current limits
 
-This is a development preview, not a production-ready paid product. It runs a sequential leader-plan → follower-code → leader-review cycle; agents do not chat freely or create nested delegations. A review reports defects to the admin rather than automatically launching unlimited repair rounds. A stop is the way to interrupt active work; the next admin message is sent after the task stops or finishes.
+This is a development preview, not a production-ready paid product. It runs a sequential leader-plan → follower-code → leader-review cycle; agents do not chat freely or create nested delegations. Automatic repair rounds are bounded by `max_fixes` (1–10), and the verdict is read from the leader's final `VERDICT:` line, so it relies on the leader following that instruction. Admin notes reach the agents at step boundaries, not mid-turn. A stop is the way to interrupt active work. Pull requests need a GitHub `origin` and a signed-in `gh` on the admin Mac. Each native task still has its one-hour runtime budget across all of its fix revisions.
 
 Two-way pairing currently uses a public JSON card exchange on a reachable network. It is not QR or zero-configuration discovery. Replacing a saved device’s address or host key requires explicit local configuration review. A project must already be a Git repository with a commit; uncommitted source-folder changes are not included in task clones. The UI explains this before saving.
 
