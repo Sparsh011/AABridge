@@ -170,11 +170,11 @@ def handle(store, request, identity):
             room.update(status='running', gate=None, task_id=None, attempted=False)
     elif op == 'team_merge':
         publication = room.get('publication') or {}
-        require(room['status'] == 'completed' and publication.get('pull_request'), 'There is no pull request to merge yet.', 'invalid_state')
+        require(room['status'] == 'completed' and pull_requests(publication), 'There is no pull request to merge yet.', 'invalid_state')
         if publication.get('merge') not in {'requested', 'merged'}:
             publication.update(merge='requested', merge_error='')
             room['publication'] = publication
-            message(room, 'You · admin', 'Merge the pull request.')
+            message(room, 'You · admin', 'Merge the pull request' + ('s.' if len(pull_requests(publication)) > 1 else '.'))
     elif op == 'team_reply':
         require(room['status'] in TERMINAL, 'Stop or finish the current task before sending new instructions.', 'invalid_state')
         for role in ('leader', 'follower'):
@@ -193,16 +193,29 @@ def handle(store, request, identity):
     return public(save(store, room))
 
 
+def pull_requests(publication):
+    """(repository, url, label) for the main pull request and each linked one."""
+    found = [(publication['repository'], publication['pull_request'], 'this project')] if publication.get('pull_request') else []
+    return found + [(entry['repository'], entry['pull_request'], entry['name']) for entry in publication.get('linked', []) if entry.get('pull_request')]
+
+
 def finished(room, opening):
     publication = room.get('publication') or {}
-    if publication.get('pull_request'):
-        where = f'Pull request: {publication["pull_request"]}\nMerge it here or on GitHub when you’re ready. Nothing was merged.'
-    elif publication.get('branch'):
-        where = f'It’s on branch `{publication["branch"]}` in {publication["path"]}. Nothing was merged.'
+    requests = pull_requests(publication)
+    if requests:
+        where = ('Pull request: ' if len(requests) == 1 else 'Pull requests:\n') + '\n'.join(
+            (f'- {label}: ' if len(requests) > 1 else '') + url for _, url, label in requests) + '\nMerge here or on GitHub when you’re ready. Nothing was merged.'
+    elif publication.get('branch') or publication.get('linked'):
+        places = ([f'`{publication["branch"]}` in {publication["path"]}'] if publication.get('branch') else []) + \
+                 [f'`{entry["branch"]}` in {entry["path"]}' for entry in publication.get('linked', []) if entry.get('branch')]
+        where = 'It’s on branch ' + ', '.join(places) + '. Nothing was merged.'
     else:
         where = 'The result branch is saved in AABridge for your review. Nothing was pushed or merged.'
     if publication.get('error'):
         where += '\nCouldn’t deliver it to your project: ' + publication['error']
+    for entry in publication.get('linked', []):
+        if entry.get('error'):
+            where += f'\nCouldn’t deliver the {entry["name"]} changes: ' + entry['error']
     return opening + ' ' + where
 
 
@@ -329,15 +342,37 @@ class TeamRunner:
         previous = room.get('publication') or {}
         if previous.get('merge') == 'merged':
             previous = {}  # A follow-up after a merge starts a fresh branch and pull request.
-        branch = previous.get('branch') or delivery.free_branch(repo, delivery.branch_name(room['follower']['agent'], room['assignment']['objective'], room['id']))
-        placed = delivery.place(repo, source, result['result_commit'], placement['mode'], branch)
-        publication = {**previous, **placed, 'repository': str(repo), 'error': ''}
-        if placement.get('pull_request'):
-            body = ('Opened by AABridge for a team task. The leader reviews this pull request; only the admin merges it.\n\n'
-                    f'## Task\n{room["objective"]}\n\n## Leader plan\n{room["outputs"]["plan"]["summary"][:6000]}\n\n'
-                    f'## Worker report ({room["follower"]["agent"]})\n{result["summary"][:8000]}\n')
-            title = room['follower']['agent'].capitalize() + ': ' + room['assignment']['objective'].strip().splitlines()[0][:150]
-            publication.update(pull_request=delivery.pull_request(repo, placed['branch'], title, body, previous.get('pull_request'))['url'])
+        wanted = delivery.branch_name(room['follower']['agent'], room['assignment']['objective'], room['id'])
+        publication = {**previous, 'repository': str(repo), 'error': ''}
+        body = ('Opened by AABridge for a team task. The leader reviews this pull request; only the admin merges it.\n\n'
+                f'## Task\n{room["objective"]}\n\n## Leader plan\n{room["outputs"]["plan"]["summary"][:6000]}\n\n'
+                f'## Worker report ({room["follower"]["agent"]})\n{result["summary"][:8000]}\n')
+        title = room['follower']['agent'].capitalize() + ': ' + room['assignment']['objective'].strip().splitlines()[0][:150]
+        if result['result_commit'] != result['base_commit'] or previous.get('branch'):
+            placed = delivery.place(repo, source, result['result_commit'], placement['mode'], previous.get('branch') or delivery.free_branch(repo, wanted))
+            publication.update(placed)
+            if placement.get('pull_request'):
+                publication.update(pull_request=delivery.pull_request(repo, placed['branch'], title, body, previous.get('pull_request'))['url'])
+        # Each linked project with edits gets the same branch name and its own PR.
+        earlier = {entry['name']: entry for entry in previous.get('linked', [])}
+        linked = []
+        for link in result.get('linked', []):
+            if link['access'] != 'edit' or not (link['changed_paths'] or link['name'] in earlier):
+                continue
+            entry, before = {'name': link['name']}, earlier.get(link['name'], {})
+            try:
+                require(room['follower']['target'] == 'local', f'The {link["name"]} changes stay in AABridge on the worker’s Mac. Only work done on this Mac can be copied into your folders.', 'publish_blocked')
+                folder = Path(link['repository'])
+                entry.update(delivery.place(folder, Path(link['worktree']), link['result_commit'], placement['mode'], before.get('branch') or delivery.free_branch(folder, wanted)),
+                             repository=str(folder))
+                if placement.get('pull_request'):
+                    related = f'\nPart of the same task as {publication["pull_request"]}.\n' if publication.get('pull_request') else ''
+                    entry['pull_request'] = delivery.pull_request(folder, entry['branch'], title + f' ({link["name"]})', body + related, before.get('pull_request'))['url']
+            except Exception as exc:
+                entry['error'] = getattr(exc, 'message', f'Could not copy the {link["name"]} changes into its folder.')
+            linked.append(entry)
+        if linked:
+            publication['linked'] = linked
         return publication
 
     async def deliver(self, room, task):
@@ -351,19 +386,36 @@ class TeamRunner:
         after = room['publication']
         if after.get('pull_request') and after['pull_request'] != before.get('pull_request'):
             message(room, 'AABridge', f'Opened a pull request for the leader to review: {after["pull_request"]}')
-        elif after.get('branch') != before.get('branch'):
+        elif after.get('branch') and after.get('branch') != before.get('branch'):
             message(room, 'AABridge', f'Copied the work to branch `{after["branch"]}` in {after["path"]}.')
+        earlier = {entry['name']: entry for entry in before.get('linked', [])}
+        for entry in after.get('linked', []):
+            old = earlier.get(entry['name'], {})
+            if entry.get('error') and entry['error'] != old.get('error'):
+                message(room, 'AABridge', f'Couldn’t copy the {entry["name"]} changes: {entry["error"]}')
+            elif entry.get('pull_request') and entry['pull_request'] != old.get('pull_request'):
+                message(room, 'AABridge', f'Opened a pull request in {entry["name"]}: {entry["pull_request"]}')
+            elif entry.get('branch') and entry['branch'] != old.get('branch'):
+                message(room, 'AABridge', f'Copied the {entry["name"]} changes to branch `{entry["branch"]}` in {entry["path"]}.')
 
     async def merge(self, room):
         from aabridge_workspace import publish as delivery
         publication = room['publication']
-        try:
-            await asyncio.to_thread(delivery.merge, Path(publication['repository']), publication['pull_request'])
+        failed = []
+        for repository, url, label in pull_requests(publication):
+            if url in publication.get('merged', []):
+                continue  # Retrying after a partial failure skips the ones already merged.
+            try:
+                await asyncio.to_thread(delivery.merge, Path(repository), url)
+                publication.setdefault('merged', []).append(url)
+                message(room, 'AABridge', f'Merged {url} on GitHub.')
+            except Exception as exc:
+                failed.append(f'{label}: ' + getattr(exc, 'message', 'GitHub did not merge the pull request.'))
+        if failed:
+            publication.update(merge='failed', merge_error='\n'.join(failed))
+            message(room, 'AABridge', 'Not everything merged:\n' + publication['merge_error'])
+        else:
             publication['merge'] = 'merged'
-            message(room, 'AABridge', f'Merged {publication["pull_request"]} on GitHub.')
-        except Exception as exc:
-            publication.update(merge='failed', merge_error=getattr(exc, 'message', 'GitHub did not merge the pull request.'))
-            message(room, 'AABridge', 'The merge didn’t go through: ' + publication['merge_error'])
         save_runtime(self.store, room)
 
     def wait(self, room, kind, reason):
@@ -504,18 +556,22 @@ class TeamRunner:
                     else:
                         fetched = await asyncio.to_thread(fetch_result, self.state, target, task['id'])
                         room['diff'] = fetched['diff']
+                    for link in result.get('linked', []):
+                        require(not link.get('diff_truncated'), f'This change needs manual review: the {link["name"]} diff exceeds the team review context.', 'review_too_large')
+                        if link.get('diff'):
+                            room['diff'] += f'\n\n# Linked project {link["name"]} ({"can edit" if link["access"] == "edit" else "read only"})\n' + link['diff']
                     # The review stage must receive a bounded, explicit diff.
                     require(len(room['diff'].encode()) <= 64000, 'This change needs manual review: the diff exceeds the team review context.', 'review_too_large')
                     room['last_diff'] = room['diff']
                     if room.get('placement', {}).get('mode', 'sandbox') != 'sandbox':
                         await self.deliver(room, task)
-                elif stage == 'review' and (room.get('publication') or {}).get('pull_request'):
+                elif stage == 'review':
                     from aabridge_workspace.publish import comment
-                    try:
-                        await asyncio.to_thread(comment, Path(room['publication']['repository']), room['publication']['pull_request'],
-                                                f'**Leader review · {member["agent"]}**\n\n' + result['summary'])
-                    except Exception:
-                        pass  # The review is always saved in the team chat; the PR comment is a convenience.
+                    for repository, url, _ in pull_requests(room.get('publication') or {}):
+                        try:
+                            await asyncio.to_thread(comment, Path(repository), url, f'**Leader review · {member["agent"]}**\n\n' + result['summary'])
+                        except Exception:
+                            pass  # The review is always saved in the team chat; the PR comment is a convenience.
                 self.advance(room, stage, result)
             room['error'] = ''
             save_runtime(self.store, room)

@@ -254,6 +254,10 @@ struct RolePicker: View {
                 Text("Choose an agent").tag("")
                 ForEach(choices) { Text($0.label).tag($0.id) }
             }.labelsHidden()
+            if let links = choices.first(where: { $0.id == selection })?.links, !links.isEmpty {
+                Label("Also works with " + links.map { "\($0.name) (\($0.accessLabel))" }.joined(separator: ", "), systemImage: "link")
+                    .font(.bridge(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             DisclosureGroup("Model and effort (optional)") {
                 ModelSettingsFields(agent: agent, model: $modelID, effort: $effort).padding(.top, 6)
             }.font(.bridge(.callout))
@@ -313,7 +317,7 @@ struct TeamChatView: View {
         }.confirmationDialog("Merge this pull request on GitHub?", isPresented: $confirmMerge) {
             Button("Merge pull request") { model.control("team_merge") }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("This merges the team’s branch into \(room.publication?.pull_request.map { _ in "the pull request’s base branch" } ?? "main") using your GitHub login.") }
+        } message: { Text("This merges the team’s pull request\((room.publication?.linked?.contains { $0.pull_request != nil } ?? false) ? "s in every project" : "") into their base branch using your GitHub login.") }
     }
 
     private var header: some View {
@@ -514,31 +518,36 @@ struct DeliveryCard: View {
     let room: TeamRoom
     @Binding var confirmMerge: Bool
 
+    /// Every repository the task changed: this project first, then linked ones.
+    private var places: [(label: String, branch: String?, path: String?, pull: String?, error: String?)] {
+        guard let publication = room.publication else { return [] }
+        let main: [(label: String, branch: String?, path: String?, pull: String?, error: String?)] =
+            publication.branch == nil && publication.pull_request == nil ? [] : [(publication.path.map { URL(fileURLWithPath: $0).lastPathComponent } ?? room.follower.project, publication.branch, publication.path, publication.pull_request, nil)]
+        return main + (publication.linked ?? []).map { ($0.name, $0.branch, $0.path, $0.pull_request, $0.error) }
+    }
+
     var body: some View {
         Card(tint: .green) {
             Label(room.verdict == "approved" ? "Done. The leader approved the work." : "Done", systemImage: "checkmark.seal.fill").font(.bridge(.title3).bold())
-            if let publication = room.publication, let url = publication.pull_request {
-                HStack(spacing: 10) {
-                    Image(systemName: "arrow.triangle.pull")
-                    Link(url, destination: URL(string: url)!).lineLimit(1)
+            let pulls = places.compactMap { $0.pull }
+            if !places.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(places, id: \.label) { place in row(place) }
                 }
+            } else if let result = room.result {
+                Text("The work is saved in AABridge, not in your project folder yet.").foregroundStyle(.secondary)
+                row((room.follower.project, result.branch, result.worktree, nil, nil))
+            }
+            if !pulls.isEmpty, let publication = room.publication {
                 switch publication.merge {
-                case "merged": Label("Merged on GitHub", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                case "merged": Label(pulls.count == 1 ? "Merged on GitHub" : "All \(pulls.count) pull requests merged on GitHub", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 case "requested": HStack { ProgressView().controlSize(.small); Text("Merging on GitHub…") }
                 default:
                     if let error = publication.merge_error, !error.isEmpty { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
-                    HStack {
-                        Button { confirmMerge = true } label: { Label("Merge pull request", systemImage: "arrow.triangle.merge") }.buttonStyle(.borderedProminent)
-                            .disabled(model.busy || model.hasPending)
-                        Button("Open on GitHub") { if let link = URL(string: url) { NSWorkspace.shared.open(link) } }
-                    }
+                    Button { confirmMerge = true } label: { Label(pulls.count == 1 ? "Merge pull request" : "Merge all \(pulls.count) pull requests", systemImage: "arrow.triangle.merge") }
+                        .buttonStyle(.borderedProminent).disabled(model.busy || model.hasPending)
                     Text("Nothing is merged until you press Merge.").font(.bridge(.caption)).foregroundStyle(.secondary)
                 }
-            } else if let publication = room.publication, let branch = publication.branch {
-                location(branch: branch, path: publication.path ?? "")
-            } else if let result = room.result {
-                Text("The work is saved in AABridge, not in your project folder yet.").foregroundStyle(.secondary)
-                location(branch: result.branch, path: result.worktree)
             }
             if let error = room.publication?.error, !error.isEmpty {
                 Label("Couldn’t deliver it to your project: " + error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled)
@@ -546,19 +555,23 @@ struct DeliveryCard: View {
         }
     }
 
-    private func location(branch: String, path: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.triangle.branch")
-                Text(branch).font(.bridge(.callout, design: .monospaced)).textSelection(.enabled)
+    private func row(_ place: (label: String, branch: String?, path: String?, pull: String?, error: String?)) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(place.label).font(.bridge(.headline))
+            if let url = place.pull, let link = URL(string: url) {
+                HStack(spacing: 8) { Image(systemName: "arrow.triangle.pull"); Link(url, destination: link).lineLimit(1) }
             }
-            Text(path).font(.bridge(.caption, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
-            HStack {
-                Button("Copy branch name") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(branch, forType: .string) }
-                if room.follower.target == "local" || room.publication?.path != nil {
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+            if let branch = place.branch {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.branch")
+                    Text(branch).font(.bridge(.callout, design: .monospaced)).textSelection(.enabled)
+                    Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(branch, forType: .string) }.buttonStyle(.borderless)
+                    if let path = place.path, room.follower.target == "local" || room.publication != nil {
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }.buttonStyle(.borderless)
+                    }
                 }
             }
+            if let error = place.error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled) }
         }
     }
 }

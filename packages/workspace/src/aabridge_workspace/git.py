@@ -154,6 +154,9 @@ class Workspace:
             # A task may never accidentally push back into the source checkout.
             git(self.path, "remote", "remove", "origin")
         require(not self.path.is_symlink(), "Task workspace was replaced by a symlink.", "unsafe_workspace")
+        if self.project.get("links"):
+            from . import linked
+            linked.prepare(self.path.parent.parent, self.task, self.project, git(self.path, "branch", "--show-current"))
         private_directory(self.path.parent)
         if self.project["verification"]["profile"] == "repository-v1":
             return {}  # Native CLIs read the checkout directly, without a context-size cap.
@@ -234,10 +237,13 @@ class Workspace:
             if git(self.path, "diff", "--cached", "--name-only"):
                 git(self.path, "commit", "-m", f"AABridge {self.task['id']} revision {self.task['revision']}")
         commit = git(self.path, "rev-parse", "HEAD")
+        from . import linked
+        links, notes = linked.results(self.path.parent.parent, self.task, self.project, branch, self.task.get("mode", "work") == "work")
         return {"base_commit": self.task["base_commit"], "result_commit": commit,
+                **({"linked": links} if links else {}),
                 "branch": branch, "worktree": str(self.path),
                 "changed_paths": git(self.path, "diff", "--name-only", self.task["base_commit"], commit).splitlines(),
                 "summary": proposal["summary"], "issues": proposal.get("issues", []),
                 "verification": [{"profile": "repository-v1", "review_required": True,
                                   "method": "Isolated Git branch captured. Agent-reported checks require review."}],
-                "limitations": ["Not pushed or merged.", "Native CLI commands use the permissions of this Mac's signed-in user."]}
+                "limitations": ["Not pushed or merged.", "Native CLI commands use the permissions of this Mac's signed-in user.", *notes]}

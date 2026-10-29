@@ -317,6 +317,15 @@ struct AABridgeDesktop: App {
                                 LiveActivityEntry(id: "4", cursor: 4, role: "follower", agent: "claude", target: "mini", stage: "work", kind: "tool", text: "Running a project command", state: "running", time: now - 2)]
             exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--preview-projects"), CommandLine.arguments.count > index + 1 {
+            let projects = ProjectSettingsModel(activity: TaskBrowserModel(resources: Bundle.main.resourceURL!))
+            let links = [ProjectLink(name: "sparshur-android", repository: "/Users/you/Sparshur-Android", access: "edit"),
+                         ProjectLink(name: "sparshur-mac", repository: "/Users/you/Sparshur-Mac", access: "read")]
+            projects.projects = [LocalProject(id: "sparshur-service-claude", repository: "/Users/you/Sparshur-Service", adapter: "claude", scope: ["*"],
+                                              verification: ProjectVerification(profile: "repository-v1"), execution_enabled: true, peers: [], links: links)]
+            projects.selected = "sparshur-service-claude"; projects.chooseProject(); projects.peers = ["mbp"]; projects.peerLabels = ["mbp": "Sparsh’s MBP"]
+            exit(renderOwnView(ProjectSettingsView(model: projects), output: CommandLine.arguments[index + 1]) ? 0 : 1)
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-done"), CommandLine.arguments.count > index + 2 {
             // Renders a finished autonomous task (--preview-done <png> done) or one waiting for the admin (--preview-done <png> gate).
             let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
@@ -338,6 +347,12 @@ struct AABridgeDesktop: App {
             room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true); room.verdict = gate ? nil : "approved"; room.fixes = gate ? 0 : 1; room.max_fixes = 3
             room.gate = gate ? TeamGate(kind: "plan", reason: "The leader’s plan is ready. Approve it to start building, or ask for changes.") : nil
             room.publication = gate ? nil : TeamPublication(mode: "branch", branch: "claude/add-a-new-screen-that-takes-weight-as-3f9c2a", path: "/Users/you/Fitness", pull_request: "https://github.com/you/fitness/pull/42")
+            if CommandLine.arguments.contains("--linked") {
+                let branch = "claude/sync-weight-api-3f9c2a"
+                room.publication = TeamPublication(mode: "branch", branch: branch, path: "/Users/you/Sparshur-Service", pull_request: "https://github.com/you/sparshur-service/pull/12",
+                                                   linked: [LinkedPublication(name: "sparshur-android", branch: branch, path: "/Users/you/Sparshur-Android", pull_request: "https://github.com/you/sparshur-android/pull/31"),
+                                                            LinkedPublication(name: "sparshur-mac", branch: branch, path: "/Users/you/Sparshur-Mac", pull_request: "https://github.com/you/sparshur-mac/pull/8")])
+            }
             team.room = room; team.rooms = [room]; team.selected = room.id
             if CommandLine.arguments.contains("--card-only") {
                 let panel = VStack(spacing: 16) { DeliveryCard(model: team, room: room, confirmMerge: .constant(false)); TeamMessageRow(entry: room.messages!.last!) }.padding(30).frame(width: 1200, height: 820, alignment: .top)
