@@ -192,7 +192,7 @@ class Store:
             from .teams import handle
             return handle(self, request, identity)
         if request.op == "ping":
-            return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1"}
+            return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1", "direct_transport": True, "pid": os.getpid()}
         if request.op == "projects":
             peer = config["peers"][identity]
             allowed = {name: project for name, project in config["projects"].items()

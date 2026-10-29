@@ -669,7 +669,7 @@ struct TaskBrowserView: View {
             }
             Divider()
             HStack {
-                Text("History stays on the receiving Mac. SSH uses its existing project grants.")
+                Text("History stays on the receiving Mac. Paired connections use its existing project grants.")
                 Spacer()
                 if let date = model.lastUpdated { Text("Updated \(date.formatted(date: .omitted, time: .standard))") }
             }.font(.bridge(.caption)).foregroundStyle(.secondary).padding(12)

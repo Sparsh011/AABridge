@@ -24,7 +24,9 @@ def main() -> int:
         for expected in ("aabridge_cli/main.py", "aabridge_preflight/doctor.py", "aabridge_daemon/server.py",
                          "aabridge_preflight/runtimes.py",
                          "aabridge_mcp/server.py", "aabridge_adapter_codex/worker.py", "aabridge_adapter_claude/worker.py", "aabridge_transport_ssh/client.py",
-                         "aabridge_protocol/schemas/v1/request.schema.json"):
+                         "aabridge_protocol/schemas/v1/request.schema.json", "aabridge_protocol/schemas/v1/connection-card.schema.json",
+                         "aabridge_protocol/schemas/v1/direct-envelope.schema.json", "aabridge_transport_direct/client.py",
+                         "aabridge_core/direct.py", "aabridge_daemon/direct.py"):
             if expected not in names:
                 raise SystemExit(f"Wheel is missing {expected}")
         metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
@@ -72,7 +74,7 @@ def main() -> int:
                             capture_output=True, text=True, check=True, timeout=5)
         responses = [json.loads(line) for line in mcp.stdout.splitlines()]
         advertised = responses[-1]["result"]["tools"]
-        if len(advertised) != 17 or not {"bridge_conversation", "bridge_team_start", "bridge_team_status", "bridge_team_activity", "bridge_activity"} <= {tool["name"] for tool in advertised}:
+        if len(advertised) != 20 or not {"bridge_conversation", "bridge_team_start", "bridge_team_status", "bridge_team_activity", "bridge_activity"} <= {tool["name"] for tool in advertised}:
             raise SystemExit("Installed MCP facade did not load its packaged schemas/tools.")
         # Verify this Python actually imports the installed wheel, not source paths.
         imported = subprocess.run(

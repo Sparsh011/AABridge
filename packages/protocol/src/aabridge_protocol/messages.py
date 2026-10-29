@@ -49,6 +49,36 @@ def identifier(value: object) -> str:
     return value
 
 
+def validate_direct_envelope(value: object) -> dict:
+    require(isinstance(value, dict) and type(value.get('version')) is int and value['version'] == 1,
+            'Unsupported direct transport version.')
+    if value.get('kind') == 'rpc':
+        fields(value, {'version', 'kind', 'request'})
+        validate_request(value['request'])
+    else:
+        fields(value, {'version', 'kind', 'task_id', 'commit'})
+        require(value['kind'] == 'result_bundle', 'Unsupported direct operation.')
+        identifier(value['task_id'])
+        require(isinstance(value['commit'], str) and SHA.fullmatch(value['commit']), 'Invalid result commit.')
+    require(len((canonical(value) + '\n').encode()) <= MAX_MESSAGE, 'Direct request exceeds the message limit.')
+    return value
+
+
+def validate_connection_card(value: object) -> dict:
+    value = fields(value, {'version', 'transport', 'id', 'name', 'host', 'port', 'certificate', 'fingerprint'})
+    require(type(value['version']) is int and value['version'] == 2 and value['transport'] == 'tls',
+            'Unsupported direct connection card.')
+    identifier(value['id'])
+    require(value['id'] != 'local', 'The local admin cannot be enrolled as a device.')
+    text(value['name'], 120)
+    require(isinstance(value['host'], str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,252}', value['host']),
+            'Enter a reachable LAN or VPN IPv4 address or hostname.')
+    integer(value['port'], 1, 65535)
+    require(isinstance(value['certificate'], str) and len(value['certificate']) <= 8192, 'Invalid public certificate.')
+    require(isinstance(value['fingerprint'], str) and re.fullmatch(r'[0-9a-f]{64}', value['fingerprint']), 'Invalid certificate fingerprint.')
+    return value
+
+
 def integer(value: object, low: int, high: int) -> int:
     require(type(value) is int and low <= value <= high, "Integer outside supported bounds.")
     return value

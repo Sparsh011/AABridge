@@ -2,6 +2,12 @@
 
 ## Team collaboration preview
 
+The 0.3.0.dev4 build connects paired Macs directly with mutual TLS. Create and
+exchange cards in **Devices**; macOS Remote Login is no longer required for new
+connections. Both Macs still need a reachable LAN or VPN address. Update both
+receivers and exchange new cards to upgrade an existing SSH pair. See
+[direct connection setup](docs/two-device.md#direct-app-connection-current-desktop).
+
 The 0.3.0.dev1 team build adds bidirectional Mac roles, admin-selected Codex/Claude leaders and followers, a shared team chat, full-project coding branches, and 20% larger text. Start with the [team setup guide](docs/team-collaboration.md). The older proposal-mode documentation below remains available for existing projects.
 
 A Python CLI and local supervisor, with a native macOS task/conversation viewer and receiver setup app, for delegating bounded tasks between

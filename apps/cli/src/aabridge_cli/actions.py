@@ -54,6 +54,9 @@ def send(state: Path, value: Request, remote: str | None = None) -> dict:
     if remote:
         config = load_config(state)
         require(remote in config["remotes"], "Remote is not enrolled locally.", "permission_denied")
+        if config['remotes'][remote].get('transport') == 'tls':
+            from aabridge_transport_direct.client import call
+            return call(state, config['remotes'][remote], value)
         return remote_call(config["remotes"][remote], value)
     return local_call(state, value)
 
@@ -303,7 +306,6 @@ def restricted_rpc(state: Path, peer: str) -> None:
 
 def fetch_result(state: Path, remote_name: str, task_id: str) -> dict:
     from aabridge_protocol.messages import SHA
-    from aabridge_transport_ssh.client import ssh_arguments
     task = send(state, request("status", {"task_id": task_id}), remote_name)
     require(task["status"] == "completed", "Task has no completed result.")
     result = task["result"]
@@ -317,16 +319,29 @@ def fetch_result(state: Path, remote_name: str, task_id: str) -> dict:
         review.mkdir(mode=0o700)
         git(review, "init", "--bare", "--template=", "--object-format=" + ("sha256" if len(result["result_commit"]) == 64 else "sha1"))
     require(review.resolve() == review, "Review repository cannot be a symlink.")
-    uri = f"ssh://{remote['user']}@{remote['host']}:{remote['port']}/aabridge/{project_id}/{task_id}"
-    environment = {"PATH": "/usr/bin:/bin", "HOME": str(state), "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
-                   "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_VARIANT": "ssh", "GIT_SSH_COMMAND": shlex.join(ssh_arguments(remote))}
-    outcome = subprocess.run(["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(review), "fetch", "--no-tags", uri, result["result_commit"]],
-                             env=environment, capture_output=True, timeout=40)
-    require(outcome.returncode == 0, "Authenticated Git result transfer failed; no active checkout was changed.", "git_transfer_failed")
+    if remote.get('transport') == 'tls':
+        from aabridge_transport_direct.client import fetch_bundle
+        with tempfile.TemporaryDirectory(prefix='result-transfer-', dir=review_root) as temporary:
+            bundle = Path(temporary) / 'result.bundle'
+            fetch_bundle(state, remote, task_id, result['result_commit'], bundle)
+            git(review, 'bundle', 'verify', str(bundle))
+            git(review, 'fetch', '--no-tags', str(bundle), result['result_commit'])
+    else:
+        _fetch_ssh_result(state, remote, review, project_id, task_id, result['result_commit'])
     require(git(review, "rev-parse", "FETCH_HEAD") == result["result_commit"], "Fetched commit identity mismatch.")
     diff = git(review, "diff", "--no-ext-diff", "--no-textconv", result["base_commit"], result["result_commit"])
     require(len(diff) <= 65536, "Result diff exceeds the review limit.")
     return {"review_repository": str(review), "base_commit": result["base_commit"], "result_commit": result["result_commit"], "diff": diff}
+
+
+def _fetch_ssh_result(state, remote, review, project_id, task_id, commit):
+    from aabridge_transport_ssh.client import ssh_arguments
+    uri = f"ssh://{remote['user']}@{remote['host']}:{remote['port']}/aabridge/{project_id}/{task_id}"
+    environment = {"PATH": "/usr/bin:/bin", "HOME": str(state), "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+                   "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_VARIANT": "ssh", "GIT_SSH_COMMAND": shlex.join(ssh_arguments(remote))}
+    outcome = subprocess.run(["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(review), "fetch", "--no-tags", uri, commit],
+                             env=environment, capture_output=True, timeout=40)
+    require(outcome.returncode == 0, "Authenticated Git result transfer failed; no active checkout was changed.", "git_transfer_failed")
 
 
 def configure_coding_project(state: Path, project_id: str, repository: Path, peers: list[str], agent: str = 'codex') -> dict:

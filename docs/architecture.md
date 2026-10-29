@@ -33,11 +33,20 @@ Local IPC uses a mode-0600 Unix socket inside a mode-0700 state directory, plus
 an unpredictable per-identity token. Files are checked for ownership, type,
 permissions and unsafe links. Tokens are not task IDs and are not model context.
 
-SSH uses a dedicated Ed25519 client key, an explicitly verified pinned host key,
+New device cards use an app-owned direct TLS listener with mutually authenticated,
+explicitly pinned certificates. The listener is enabled by creating a card and
+shares the local supervisor's request validator and Store, using the enrolled
+certificate's peer identity. It reloads trust on handshakes and policy on every
+request. Result bundles are authorized through task status/ownership before
+export, checksummed in transit and imported into private Git review repos with
+exact-commit verification. No local admin token is sent over the network.
+
+Legacy SSH uses a dedicated Ed25519 client key, an explicitly verified pinned host key,
 non-interactive fixed RPC command, and a restricted forced-command key entry.
 Remote input cannot choose local paths, installed binaries, commands or policy.
-There is no TCP task listener. SSH supplies encryption and peer authentication;
-network routing/LAN/VPN availability is still required.
+Both transports require network routing/LAN/VPN availability. Direct TLS does
+not start or configure the system SSH server. See the direct-connection section
+of team-collaboration.md for migration and integration limits.
 
 The small stdio MCP facade implements initialize, ping, tools/list and tools/call
 using JSON-RPC and the same validation/transport. It exposes project discovery,

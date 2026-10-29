@@ -99,7 +99,7 @@ def authenticate(config: dict, token: object) -> str:
     require(isinstance(token, str) and len(token) <= 128, "Invalid client credential.", "unauthorized")
     digest = token_digest(token)
     for identity, peer in config["peers"].items():
-        if peer["enabled"] and secrets.compare_digest(peer["digest"], digest):
+        if peer["enabled"] and isinstance(peer.get('digest'), str) and secrets.compare_digest(peer["digest"], digest):
             return identifier(identity)
     raise BridgeError("unauthorized", "Unknown or revoked client credential.")
 

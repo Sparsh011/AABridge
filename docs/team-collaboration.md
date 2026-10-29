@@ -5,7 +5,7 @@ AABridge now treats every Mac as a peer. A room has a human admin, a leader chos
 ## Use it
 
 1. Install the same AABridge Team build on both Macs. In Settings choose the installed agent and select **Set up this Mac**. Full coding setup does not require a demo or a special Claude token. Sign in to the agent CLI on its own Mac.
-2. Turn on Remote Login in macOS Settings on both Macs. In **Devices**, create and copy each Mac’s public connection card to the other Mac, then connect it. Exchange both cards. A card pins the host key and enrolls a dedicated restricted SSH key; private keys and agent logins are never included.
+2. In **Devices**, create and copy each Mac’s public connection card to the other Mac, then connect it. Exchange both cards. New cards pin each app’s TLS certificate and enable its direct listener; Remote Login is not required. Private keys and agent logins are never included. Keep both Macs reachable over a LAN or VPN.
 3. In **Projects**, select the root folder of your Git project, choose the local agent, select the paired Mac, and save. Add separate projects if both Codex and Claude will work on the same Mac. Both copies need the same committed baseline. Refresh in Team chat after saving.
 4. In **Team chat**, select a leader and a worker, describe the task, and start. The leader plans, the worker implements, and the leader reviews the actual implementation diff. Swap roles when creating the next task. You can stop an active team or retry a blocked connection.
 5. Read the result, then send a follow-up in the same chat. Follow-ups revise the existing implementation checkout, preserving previous changes. Publishing remains a separate admin decision.
@@ -41,7 +41,61 @@ Run `python scripts/git_sync.py` before a push. It fetches using the authenticat
 
 This is a development preview, not a production-ready paid product. It runs a sequential leader-plan → follower-code → leader-review cycle; agents do not chat freely or create nested delegations. Automatic repair rounds are bounded by `max_fixes` (1–10), and the verdict is read from the leader's final `VERDICT:` line, so it relies on the leader following that instruction. Admin notes reach the agents at step boundaries, not mid-turn. A stop is the way to interrupt active work. Pull requests need a GitHub `origin` and a signed-in `gh` on the admin Mac. Each native task still has its one-hour runtime budget across all of its fix revisions.
 
-Two-way pairing currently uses a public JSON card exchange on a reachable network. It is not QR or zero-configuration discovery. Replacing a saved device’s address or host key requires explicit local configuration review. A project must already be a Git repository with a commit; uncommitted source-folder changes are not included in task clones. The UI explains this before saving.
+Two-way pairing currently uses a public JSON card exchange on a reachable network. It is not QR or zero-configuration discovery. Replacing a saved device’s address or pinned identity requires explicit local configuration review. A project must already be a Git repository with a commit; uncommitted source-folder changes are not included in task clones. The UI explains this before saving.
+
+## Direct connections · 0.3.0.dev4
+
+New version-2 connection cards use an app-owned TLS listener (TCP 47631 by
+default), with mutual certificate authentication and exact SHA-256 certificate
+pins. Creating a card opts this Mac into listening; the supervisor opens the
+port itself and keeps it available while running. It does not enable Remote
+Login, inspect system SSH host keys, or modify authorized_keys. macOS may still
+request local-network/firewall permission. Agent credentials stay on their own
+Macs. A host/address override in Devices supports reachable VPN addresses;
+there is no relay, NAT traversal, or automatic cross-network discovery.
+
+The transport calls the same request validator and Store under the certificate's
+enrolled peer identity, with live project grants, task ownership, revocation,
+admin-only operations and idempotency unchanged. Client and server TLS trust
+stores contain only explicit paired certificates; an exact certificate check
+also prevents a certificate signed by a paired device from assuming its identity.
+The app identity is created locally with macOS OpenSSL and private 0600 files.
+Certificates last ten years; expiry or identity replacement needs explicit local
+review and a new pairing. No third-party Python runtime dependency was added.
+
+RPC uses one bounded TLS exchange per operation, without SSH or a remote login
+shell. Result transfer uses a checksummed Git bundle over the same authenticated
+channel, then verifies the exact result commit in a private local review repo.
+The bundle includes reachable history and is capped at 64 MiB; the existing
+64,000-character review-diff limit still applies. Large repositories may exceed
+that bundle limit. There is no shared network filesystem or arbitrary path/file
+download endpoint.
+
+Upgrade both installed receivers using Set up this Mac, then exchange fresh
+cards in both directions. An explicit version-2 card upgrades that device's old
+SSH route while preserving project grants and history. It does not silently
+replace an existing TLS pin, re-enable revoked peers, or downgrade TLS to SSH.
+Existing SSH remotes and version-1 cards remain supported until upgraded; their
+Remote Login requirement still applies. Legacy SSH grants are preserved for
+local review rather than deleted automatically.
+
+This change is independent of Claude's `claude/fast-shell-startup` work: its
+shell launch optimization remains useful for local desktop backend startup;
+direct RPC additionally avoids launching SSH and the remote shell per request.
+Direct reachability failures use `direct_unavailable` so Claude's separate
+`claude/clear-team-errors` UI mapping cannot substitute legacy Remote Login
+instructions for this route. Its branch does not need to be merged first.
+The existing setup ZIP still carries a legacy public key for compatibility;
+direct runtime pairing uses its own TLS identity and does not consume that key.
+Physical two-Mac model execution remains unverified; local TLS fixtures do not
+establish that acceptance result.
+
+Validation: 221 deterministic tests passed, including actual mutual-TLS task
+submission, questions/answers, ownership/revocation, CLI/MCP routing, result
+bundle fetch, signed-certificate impersonation rejection, and a full native
+leader/follower/review/follow-up cycle with fixture agents. The offline wheel
+installed and loaded all 20 MCP tools and packaged schemas. The desktop compiled
+for arm64 and x86_64 and passed ad-hoc signature and resource smoke checks.
 
 Room history is retained in SQLite; the desktop shows a bounded recent window, and full task-stage conversations remain in Task history. Automatic review supports diffs up to 64,000 bytes; larger changes block for manual review. A room’s leader review runs against its baseline plus the actual follower diff. Submodules are not automatically initialized. Closing the window does not stop the daemon or the tasks.
 
