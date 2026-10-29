@@ -32,6 +32,7 @@ struct ProjectVerification: Decodable { let profile: String }
 struct WorkerActivity: Decodable { let phase: String; let message: String; let time: Double }
 
 struct TaskQuestion: Decodable { let id: String; let text: String }
+struct TaskPermissions: Decodable { let can_control: Bool }
 struct TaskState: Decodable {
     let id: String
     let status: String
@@ -44,6 +45,7 @@ struct TaskState: Decodable {
     let activity: WorkerActivity?
     let error: String?
     let scope: [String]?
+    var permissions: TaskPermissions? = nil
 }
 
 struct PendingChatAction: Codable {
@@ -69,6 +71,7 @@ struct BridgeTask: Decodable, Identifiable {
     let updated_at: Double
     let recipient: String
     let sender: String
+    var permissions: TaskPermissions? = nil
 }
 
 struct BridgeMessage: Decodable, Identifiable {
@@ -106,6 +109,7 @@ final class TaskBrowserModel: ObservableObject {
     @Published var lastUpdated: Date?
     @Published var projects: [BridgeProject] = []
     @Published var taskState: TaskState?
+    @Published var historyNotice = ""
     @Published var actionBusy = false
     @Published var actionNotice = ""
     @Published var pendingAction: PendingChatAction?
@@ -148,6 +152,7 @@ final class TaskBrowserModel: ObservableObject {
         var args = ["-f", resources.appendingPathComponent("Activity.command").path, "--action", action]
         if let stateDirectory = stateDirectory { args += ["--state-dir", stateDirectory] }
         if target != "local" { args += ["--remote", target] }
+        if target != "local" && ["tasks", "conversation", "events", "status"].contains(action) { args.append("--shared") }
         if let task = task { args += ["--task-id", task] }
         if ["tasks", "conversation", "events"].contains(action) { args.append("--all") }
         process.arguments = args
@@ -216,6 +221,7 @@ final class TaskBrowserModel: ObservableObject {
         session = ""
         projects = []
         taskState = nil
+        historyNotice = ""
         lastUpdated = nil
         preferences.set(target, forKey: "activityTarget")
         refresh(silent: false)
@@ -229,13 +235,14 @@ final class TaskBrowserModel: ObservableObject {
         let token = generation, selectedTarget = target
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                struct Reply: Decodable { let tasks: [BridgeTask] }
+                struct Reply: Decodable { let tasks: [BridgeTask]; var history_notice: String? = nil }
                 let reply = try JSONDecoder().decode(Reply.self, from: self.call("tasks", target: selectedTarget))
                 struct ProjectReply: Decodable { let projects: [BridgeProject] }
                 let projects = try JSONDecoder().decode(ProjectReply.self, from: self.call("projects", target: selectedTarget)).projects
                 DispatchQueue.main.async {
                     guard token == self.generation else { return }
                     self.tasks = reply.tasks
+                    self.historyNotice = reply.history_notice ?? ""
                     self.projects = projects
                     self.loading = false
                     self.showListLoader = false
@@ -332,8 +339,9 @@ extension TaskBrowserModel {
     var selectedTask: BridgeTask? { tasks.first(where: { $0.id == selection }) }
     var workerName: String { agentName(taskState?.recipient ?? selectedTask?.recipient ?? "agent") }
     var canAct: Bool { !actionBusy && pendingAction == nil && !outboxUnsafe }
+    var canControlSelectedTask: Bool { taskState?.permissions?.can_control ?? selectedTask?.permissions?.can_control ?? true }
     var canReply: Bool {
-        guard canAct, let state = taskState, state.id == selection else { return false }
+        guard canAct, canControlSelectedTask, let state = taskState, state.id == selection else { return false }
         return state.status == "waiting_question" || (state.status == "completed" && state.revision <= state.limits.max_revisions)
     }
     var replyLabel: String {
@@ -362,6 +370,7 @@ extension TaskBrowserModel {
     }
     var pendingNewTask: Bool { pendingAction?.action == "submit" && pendingAction?.target == target && selection == nil }
     var composerHint: String {
+        if !canControlSelectedTask { return "This task was created on the selected Mac. Open AABridge there to continue it; its shared history is read-only here." }
         switch taskState?.status {
         case "waiting_question": return "Reply to \(workerName)'s question…"
         case "completed": return canReply ? "Ask \(workerName) for a revision…" : "Revision limit reached. Start a new task to continue."
@@ -442,7 +451,7 @@ extension TaskBrowserModel {
         } catch { self.error = error.localizedDescription }
     }
     private func stage(_ action: String, body: [String: Any], taskID: String?) {
-        guard canAct else { return }
+        guard canAct, action == "submit" || canControlSelectedTask else { return }
         do {
             let payload = try JSONSerialization.data(withJSONObject: ["key": "gui-" + UUID().uuidString.lowercased(), "body": body], options: [.sortedKeys])
             let pending = PendingChatAction(action: action, target: target, taskID: taskID, payload: payload, createdAt: Date().timeIntervalSince1970)
@@ -487,7 +496,7 @@ extension TaskBrowserModel {
         stage(action, body: body, taskID: state.id)
     }
     func cancelTask() {
-        guard canAct, let state = taskState, ["queued", "running", "waiting_question"].contains(state.status) else { return }
+        guard canAct, canControlSelectedTask, let state = taskState, ["queued", "running", "waiting_question"].contains(state.status) else { return }
         stage("cancel", body: ["task_id": state.id], taskID: state.id)
     }
     func retryPending() {
@@ -595,6 +604,9 @@ struct TaskBrowserView: View {
                 Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }.help("Refresh without starting a model turn")
                     .disabled(model.showListLoader || model.actionBusy)
             }.padding(20)
+            if !model.historyNotice.isEmpty {
+                Text(model.historyNotice).font(.bridge(.callout)).foregroundStyle(.secondary).textSelection(.enabled).padding(14)
+            }
             if !model.error.isEmpty {
                 HStack(alignment: .top) {
                     Image(systemName: "exclamationmark.circle")
@@ -615,6 +627,7 @@ struct TaskBrowserView: View {
                                 Button { model.selection = task.id } label: {
                                     VStack(alignment: .leading, spacing: 8) {
                                         Text(task.objective).lineLimit(4).font(.bridge(.headline)).foregroundStyle(.primary)
+                                        if task.permissions?.can_control == false { Label("Created on this receiver · read-only", systemImage: "eye").font(.bridge(.caption2)).foregroundStyle(.secondary) }
                                         HStack { Text(task.project_id); Spacer(); Text(task.status.replacingOccurrences(of: "_", with: " ")) }
                                             .font(.bridge(.caption)).foregroundStyle(.secondary)
                                         Text(Date(timeIntervalSince1970: task.updated_at), style: .date).font(.bridge(.caption2)).foregroundStyle(.secondary)
@@ -726,6 +739,32 @@ func verifyActivity(resources: URL, stateDirectory: String, output: String) -> B
     guard !model.tasks.isEmpty && !model.messages.isEmpty && !model.events.isEmpty else { return false }
     guard renderTaskBrowser(model: model, output: output) else { return false }
     print("Activity viewer verified through bundled backend and local IPC: \(model.tasks.count) tasks, \(model.messages.count) saved message parts. No model inference started.")
+    return true
+}
+
+func verifySharedHistoryView(resources: URL, output: String) -> Bool {
+    let domain = "local.aabridge.shared-history-verification." + UUID().uuidString
+    let preferences = UserDefaults(suiteName: domain)!
+    defer { preferences.removePersistentDomain(forName: domain) }
+    let fixtureState = FileManager.default.temporaryDirectory.appendingPathComponent("aabridge-shared-view-" + UUID().uuidString).appendingPathComponent("state").path
+    let model = TaskBrowserModel(resources: resources, preferences: preferences, stateDirectory: fixtureState)
+    let now = Date().timeIntervalSince1970
+    model.targets = [ActivityTarget(id: "fixture-mini", label: "Fixture Mac mini")]
+    model.target = "fixture-mini"
+    model.tasks = [BridgeTask(id: "task-shared", project_id: "booking", status: "waiting_question", objective: "Task created on the Mac mini",
+                             revision: 1, created_at: now - 60, updated_at: now, recipient: "claude", sender: "local", permissions: TaskPermissions(can_control: false))]
+    model.selection = "task-shared"
+    model.taskState = TaskState(id: "task-shared", status: "waiting_question", recipient: "claude", sender: "local", revision: 1,
+                               limits: ProjectLimits(runtime_seconds: 60, max_turns: 6, max_revisions: 3),
+                               question: TaskQuestion(id: "question-fixture", text: "Which time zone should bookings use?"), session_id: nil,
+                               activity: nil, error: nil, scope: ["*"], permissions: TaskPermissions(can_control: false))
+    model.messages = [BridgeMessage(cursor: 1, role: "worker", kind: "question", text: "Which time zone should bookings use?", part: 1, parts: 1,
+                                   time: now, recovered: false, actor: MessageActor(kind: "agent", name: "Claude"), recipient: nil, sender_identity: "local")]
+    model.drafts["task-shared"] = "This reply must not be sent from the viewing Mac."
+    model.sendReply(); model.cancelTask()
+    guard !model.canControlSelectedTask && !model.canReply && model.pendingAction == nil else { return false }
+    guard renderTaskBrowser(model: model, output: output) else { return false }
+    print("Shared history renders read-only; answer and cancel did not create an outbox send. No model inference started.")
     return true
 }
 

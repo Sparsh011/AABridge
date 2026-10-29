@@ -43,6 +43,53 @@ The desktop app runs `Activity.command` with `zsh -f`, so the user's zsh startup
 
 SSH requests from the paired Mac still run through the receiving user's login shell, because sshd runs the forced command with `$SHELL -c` and zsh always reads `~/.zshenv`. **Check prerequisites** now inspects that file without running it, and warns about self-appending or heavily duplicated lines.
 
+## Shared Task history · 0.3.0.dev5
+
+Task history previously returned only tasks submitted by the connecting peer.
+A task started locally on the mini has sender `local`, so it was absent from a
+MacBook's remote list even when that MacBook had project access. This is separate
+from Team chat, whose room controls and local-admin boundary are unchanged.
+
+Task history now requests `shared: true` for remote list/status/conversation/
+event reads. The receiver may additionally return locally created `coding-v1`
+tasks in a currently registered coding project explicitly granted to this peer.
+Those tasks are read-only: listing/status carries `permissions.can_control:
+false`, the desktop shows that state, and cancel/answer/revise remain denied by
+the server. Other peers' tasks remain private even with shared reads. Proposal
+tasks are not shared by this extension. Current project grants, peer enablement
+and project type are rechecked on every request. Revocation takes effect without
+changing task owners, assignments, workspaces or saved conversation records.
+
+The same boolean is available on CLI read commands with `--shared` and through
+MCP read-tool bodies. Runtime validation and packaged request/task schemas agree;
+`shared` is rejected on mutations. Default CLI/MCP reads retain owned-only
+behavior. Source-repository or Git result access is not expanded by this flag.
+
+Update the app/installed receiver on both Macs, then select the mini in Task
+history. An old receiver falls back to its owned-task list with a visible update
+notice; the app does not present that subset as synchronized shared history.
+The viewer sorts the collected pages by last update so continued older tasks
+are visible near the top. Wire pagination still uses the existing stable row
+cursor. A legacy alias and a newer device card can authenticate as different
+peers with different project grants; neither route's permissions are silently
+copied to the other. Allow the intended paired Mac in the source project's
+settings if that connection lacks the project.
+
+This is a live authorized history read, not database replication. The source
+Mac must be reachable, and its history stays on that Mac. The full supplied
+context for shared coding tasks is readable to explicitly granted project peers;
+provider credentials and raw/private reasoning are not added to history.
+
+Validation: 230 deterministic tests passed, including a receiver-local coding
+task read from another authenticated TLS peer through CLI/MCP, ownership and
+project/revocation checks, strict read-only flags, mixed-owner pagination, and
+visible fallback for older receivers. The offline wheel and all 20 MCP/schema
+checks passed. The desktop compiled for arm64/x86_64, passed signature/resource
+smoke checks, and its isolated shared-history render verified that answer/cancel
+created no outbox send. No paid model calls or new physical two-Mac model run
+were performed. Existing physical SSH reads confirmed the mini was reachable
+and its two connection identities returned different owned-task subsets.
+
 ## Current limits
 
 This is a development preview, not a production-ready paid product. It runs a sequential leader-plan → follower-code → leader-review cycle; agents do not chat freely or create nested delegations. Automatic repair rounds are bounded by `max_fixes` (1–10), and the verdict is read from the leader's final `VERDICT:` line, so it relies on the leader following that instruction. Admin notes reach the agents at step boundaries, not mid-turn. A stop is the way to interrupt active work. Pull requests need a GitHub `origin` and a signed-in `gh` on the admin Mac. Each native task still has its one-hour runtime budget across all of its fix revisions.

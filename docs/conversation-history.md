@@ -10,6 +10,19 @@ captured first test exchange, not a new physical mini model run.
 
 ## Read tasks on either Mac
 
+Current builds include shared Task history for coding projects. Update the app
+and installed receiver on both Macs. In Task history, select the Mac where the
+task ran. Its local coding tasks appear read-only when that Mac has granted
+your paired connection access to the project. Tasks submitted through this
+connection retain their normal controls. Another peer's tasks and local proposal
+tasks are not included in shared reads. See the shared-history section of
+[team collaboration](team-collaboration.md).
+
+If the receiver is older, the viewer shows its existing owned tasks with a
+notice to update it. A normal network refresh does not upgrade the receiver.
+Local source history is read live; there is no background database copying.
+The older setup instructions below remain relevant to legacy SSH deployments.
+
 Use the current `dist/AABridge-Claude-2026-10-26.zip` on both Macs.
 Quit an older AABridge window before opening the newly extracted app.
 
@@ -71,8 +84,9 @@ Manually supplied task/context text may itself contain sensitive information.
 
 Large context entries are split into numbered parts. Cursor pagination preserves
 their order and complete text while bounding each RPC response. The CLI and MCP
-use the same access checks as the GUI: peers see only their own tasks in assigned
-projects, and revocation also blocks history. The GUI adds no SSH shell access.
+use the same access checks as the GUI: default peer reads see owned tasks in
+assigned projects; explicit shared reads also permit the receiver-local coding
+history described above. Revocation blocks both forms of history. The GUI adds no SSH shell access.
 
 The database remains in the private existing state directory. It is not encrypted
 by AABridge or automatically copied to a cloud backup. Append-only here protects
@@ -128,11 +142,14 @@ different questions; this project does not change your account settings.
 ## Command-line and MCP access
 
 ```sh
-.venv/bin/aabridge task list --remote mini --cursor 0
-.venv/bin/aabridge task conversation --remote mini --id TASK_ID --cursor 0
+.venv/bin/aabridge task list --remote mini --cursor 0 --shared
+.venv/bin/aabridge task conversation --remote mini --id TASK_ID --cursor 0 --shared
 ```
 
 For a conversation, continue from the returned cursor while `has_more` is true.
+Omit `--shared` to retain owned-only reads. MCP's `bridge_tasks`, `bridge_status`,
+`bridge_conversation`, `bridge_events`, and `bridge_activity` accept the same
+optional `shared: true` body field. This grants no task mutation authority.
 For a task list, cursors page backwards from newest to oldest. MCP exposes
 `bridge_tasks` and `bridge_conversation` with the same read-only semantics.
 

@@ -124,6 +124,7 @@ struct ProjectSettingsView: View {
                 Picker("Agent", selection: $model.agent) { Text("Codex").tag("codex"); Text("Claude").tag("claude") }.pickerStyle(.segmented)
                 Text("Full coding lets the agent edit the project and run commands with its normal CLI permissions and login. Sign in to the selected agent on this Mac first.").font(.bridge(.callout)).foregroundStyle(.secondary)
                 Text("3. Share with your other Mac").font(.bridge(.headline))
+                Text("Allowed Macs can read the history of coding tasks created locally in this project. They can control only tasks they submitted; other peers’ task histories stay private.").font(.bridge(.caption)).foregroundStyle(.secondary)
                 if model.peers.isEmpty { Text("Connect the other Mac in Devices first. You can still save a project for local work.").foregroundStyle(.secondary) }
                 ForEach(model.peers, id: \.self) { peer in
                     Toggle(model.peerLabels[peer] ?? peer, isOn: Binding(get: { model.selectedPeers.contains(peer) }, set: { if $0 { model.selectedPeers.insert(peer) } else { model.selectedPeers.remove(peer) } }))

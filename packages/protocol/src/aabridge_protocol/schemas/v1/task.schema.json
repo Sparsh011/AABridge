@@ -350,6 +350,18 @@
         }
       },
       "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "can_control": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "can_control"
+      ]
     }
   },
   "required": [

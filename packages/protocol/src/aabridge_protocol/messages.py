@@ -13,6 +13,7 @@ OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "
 TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry", "team_activity",
                       "team_guide", "team_decide", "team_merge"})
 OPERATIONS = OPERATIONS | TEAM_OPS
+HISTORY_READS = frozenset({'tasks', 'status', 'conversation', 'events', 'activity'})
 MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry",
                        "team_guide", "team_decide", "team_merge"})
 APPROVALS = ("ask", "auto")
@@ -209,14 +210,14 @@ def validate_request(value: object) -> Request:
         integer(limits["max_revisions"], 0, 100 if coding else 3)
         require(body["permission_profile"] in {"proposal-v1", "coding-v1"}, "Unknown permission profile.", "permission_denied")
     elif op in {"status", "cancel"}:
-        fields(body, {"task_id"})
+        fields(body, {"task_id"}, {'shared'} if op == 'status' else set())
         identifier(body["task_id"])
     elif op in {"events", "conversation", "activity"}:
-        fields(body, {"task_id", "cursor"})
+        fields(body, {"task_id", "cursor"}, {'shared'})
         identifier(body["task_id"])
         integer(body["cursor"], 0, 2**63 - 1)
     elif op == "tasks":
-        fields(body, {"cursor"})
+        fields(body, {"cursor"}, {'shared'})
         integer(body["cursor"], 0, 2**63 - 1)
     elif op in {"answer", "revise"}:
         fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin", "mode", "model_settings"})
@@ -229,6 +230,8 @@ def validate_request(value: object) -> Request:
             identifier(body["question_id"])
     else:
         fields(body, set())
+    if op in HISTORY_READS and 'shared' in body:
+        require(type(body['shared']) is bool, 'Shared history must be true or false.')
     if op in {"submit", "answer", "revise"} and "origin" in body:
         origin = fields(body["origin"], {"kind", "name"})
         require(isinstance(origin["kind"], str) and origin["kind"] in {"human", "agent"}, "Invalid message origin kind.")

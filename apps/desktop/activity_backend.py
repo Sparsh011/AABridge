@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--task-id")
     parser.add_argument("--cursor", type=int, default=0)
     parser.add_argument("--all", action="store_true", help="Collect bounded history pages for the desktop viewer.")
+    parser.add_argument('--shared', action='store_true', help='Read receiver-local coding history in granted projects.')
     args = parser.parse_args()
     manifest = json.loads((args.bundle / "manifest.json").read_text())
     name = manifest["wheel"]
@@ -36,6 +37,8 @@ def main():
     from aabridge_core.config import load_config
     from aabridge_preflight.paths import default_state_directory
     from aabridge_protocol.messages import BridgeError, MAX_MESSAGE, decode, fields, identifier, require
+    from aabridge_protocol.messages import HISTORY_READS
+    require(not args.shared or args.action in HISTORY_READS, 'Shared history is read-only.')
     state = args.state_dir or default_state_directory()
     if args.action in {"connection-card", "connect"}:
         require(not args.remote, "Connections belong to this Mac.")
@@ -58,7 +61,7 @@ def main():
         else:
             envelope = fields(decode(sys.stdin.buffer.read(MAX_MESSAGE + 1)), {"key", "body"})
             body, key = envelope["body"], envelope["key"]
-        print(json.dumps(send(state, request(args.action, body, key))))
+        print(json.dumps(send(state, request(args.action, dict(body), key))))
         return
     if args.action in {"projects-local", "project-save"}:
         require(not args.remote, "Project permissions must be edited locally on the receiving Mac.", "permission_denied")
@@ -110,28 +113,50 @@ def main():
         body = {"cursor": args.cursor} if args.action in {"tasks", "conversation", "events"} else {}
         if args.action not in {"tasks", "projects"}:
             body["task_id"] = identifier(args.task_id)
+    if args.shared:
+        body['shared'] = True
+    history_notice = ''
+    def read():
+        nonlocal history_notice
+        try:
+            return send(state, request(args.action, dict(body), key), args.remote)
+        except BridgeError as exc:
+            if body.get('shared') and exc.code == 'invalid_request' and exc.message == 'Missing or unknown fields.':
+                # Older receivers still expose owned history. Never label that
+                # subset as a successfully synchronized full history.
+                body.pop('shared')
+                label = load_config(state)['remotes'].get(args.remote, {}).get('label') or args.remote or 'this Mac'
+                history_notice = f'Showing tasks submitted through this connection only. Update AABridge on {label} to include tasks created on that Mac.'
+                return send(state, request(args.action, dict(body), key), args.remote)
+            raise
     try:
-        result = send(state, request(args.action, body, key), args.remote)
+        result = read()
+        if args.action == 'tasks' and args.shared and result.get('capabilities', {}).get('shared_task_history') is not True:
+            history_notice = history_notice or 'This receiver has not enabled shared task history. Update AABridge on the selected Mac; this list contains only tasks submitted through this connection.'
         if args.action == "projects":
             result = {"projects": [{"id": name, **value} for name, value in result.items()]}
         if args.all and args.action in {"tasks", "conversation", "events"}:
-            key = {"tasks": "tasks", "conversation": "messages", "events": "events"}[args.action]
-            items = list(result[key])
+            page_key = {"tasks": "tasks", "conversation": "messages", "events": "events"}[args.action]
+            items = list(result[page_key])
             for _ in range(128):
-                more = result.get("has_more", len(result[key]) == 64 if args.action == "events" else False)
+                more = result.get("has_more", len(result[page_key]) == 64 if args.action == "events" else False)
                 if not more:
                     break
                 previous = result["cursor"]
                 body["cursor"] = previous
-                result = send(state, request(args.action, body), args.remote)
-                if args.action == "events" and not result[key]:
+                result = read()
+                if args.action == "events" and not result[page_key]:
                     break  # A full final event page has no has_more indicator.
                 if result["cursor"] == previous:
                     raise ValueError("Receiver returned a history page without cursor progress.")
-                items.extend(result[key])
+                items.extend(result[page_key])
             else:
                 raise ValueError("History exceeds this viewer's page limit. Read remaining pages using the CLI cursor.")
-            result[key] = items
+            result[page_key] = items
+        if args.action == 'tasks':
+            result['tasks'].sort(key=lambda task: (task.get('updated_at', 0), task.get('id', '')), reverse=True)
+        if history_notice:
+            result['history_notice'] = history_notice
     except BridgeError as exc:
         if exc.code == "invalid_request" and exc.message in {"Unsupported operation.", "Missing or unknown fields."}:
             raise ValueError("This receiver needs the conversation-history/chat-controls update. Open the new AABridge app on that Mac and select Install receiver. Existing pairing and task history are preserved.") from None

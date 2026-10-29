@@ -7,7 +7,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from aabridge_protocol.messages import BridgeError, MUTATIONS, Request, canonical, require
+from aabridge_protocol.messages import BridgeError, HISTORY_READS, MUTATIONS, Request, canonical, require
 from .config import authorize, read_private, write_private
 
 
@@ -16,6 +16,16 @@ def new_id(prefix: str) -> str:
 
 
 class Store:
+    @staticmethod
+    def can_read(task, identity, project, *, shared=False):
+        return identity == 'local' or task['sender'] == identity or (
+            shared and task['sender'] == 'local' and task.get('permission_profile') == 'coding-v1'
+            and project.get('permission_profile') == 'coding-v1')
+
+    @staticmethod
+    def permissions(task, identity):
+        return {'can_control': identity == 'local' or task['sender'] == identity}
+
     def __init__(self, state: Path):
         path = state / "bridge.sqlite3"
         if not path.exists():
@@ -192,27 +202,30 @@ class Store:
             from .teams import handle
             return handle(self, request, identity)
         if request.op == "ping":
-            return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1", "direct_transport": True, "pid": os.getpid()}
+            return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1", "direct_transport": True, "shared_task_history": True, "pid": os.getpid()}
         if request.op == "projects":
             peer = config["peers"][identity]
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
-            return {name: {"capabilities": {"activity": True, "model_settings": project.get("permission_profile") == "coding-v1"}, **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
+            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "model_settings": project.get("permission_profile") == "coding-v1"}, **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
         if request.op == "tasks":
             peer = config["peers"].get(identity, {})
             require(peer.get("enabled") is True, "Coordinator access is revoked.", "permission_denied")
             cursor, output = request.body["cursor"], []
-            query = "SELECT rowid,document FROM tasks WHERE (?=0 OR rowid<?) AND (?='local' OR owner=?) ORDER BY rowid DESC"
-            for seq, document in self.db.execute(query, (cursor, cursor, identity, identity)):
+            shared = request.body.get('shared', False)
+            query = "SELECT rowid,document FROM tasks WHERE (?=0 OR rowid<?) AND (?='local' OR owner=? OR (? AND owner='local')) ORDER BY rowid DESC"
+            for seq, document in self.db.execute(query, (cursor, cursor, identity, identity, shared)):
                 task = json.loads(document)
                 if task["project_id"] not in config["projects"] or ("*" not in peer["projects"] and task["project_id"] not in peer["projects"]):
                     continue
+                if not self.can_read(task, identity, config['projects'][task['project_id']], shared=shared):
+                    continue
                 if len(output) == 32:
-                    return {"tasks": output, "cursor": output[-1]["cursor"], "has_more": True}
+                    return {"tasks": output, "cursor": output[-1]["cursor"], "has_more": True, 'capabilities': {'shared_task_history': True}}
                 summary = {key: task[key] for key in ("id", "project_id", "status", "recipient", "sender", "revision", "created_at", "updated_at")}
-                output.append({**summary, "objective": task["objective"][:300], "cursor": seq})
-            return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False}
+                output.append({**summary, "objective": task["objective"][:300], "cursor": seq, 'permissions': self.permissions(task, identity)})
+            return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False, 'capabilities': {'shared_task_history': True}}
         require(request.op != "shutdown" or identity == "local", "Only the local operator may stop the daemon.", "permission_denied")
         if request.op == "shutdown":
             return {"stopping": True}
@@ -224,7 +237,8 @@ class Store:
             else:
                 task = self.get(request.body["task_id"])
                 project = authorize(config, identity, task["project_id"])
-                require(identity == "local" or task["sender"] == identity, "Task access denied.", "permission_denied")
+                shared_read = request.op in HISTORY_READS and request.body.get('shared', False)
+                require(self.can_read(task, identity, project, shared=shared_read), "Task access denied.", "permission_denied")
             prior = self.db.execute("SELECT digest,response FROM requests WHERE owner=? AND key=?", (identity, request.key)).fetchone()
             if prior and request.op in MUTATIONS:
                 require(prior[0] == request.digest, "Idempotency key was reused with different content.", "replay_conflict")
@@ -258,7 +272,7 @@ class Store:
             return task
         task = self.get(body["task_id"])
         if op == "status":
-            return task
+            return {**task, 'permissions': self.permissions(task, identity)} if body.get('shared') else task
         if op == "activity":
             return self.activity_page(task["id"], body["cursor"])
         if op == "conversation":

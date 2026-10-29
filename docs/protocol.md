@@ -37,6 +37,17 @@ The supervisor assigns task/attempt IDs, sender/receiving-node identity,
 revision, timestamps and durable status. Context is bounded literal text,
 not a path to fetch or authority to read more files. A task ID is not a credential.
 
+Task-history reads (`tasks`, `status`, `conversation`, `events`, `activity`)
+accept optional boolean `body.shared`. Omitting it retains owned-only peer
+reads. When true, a receiver may also expose tasks whose sender is `local`,
+whose stored permission profile is `coding-v1`, and whose current coding
+project is granted to the authenticated peer. Other peers' tasks and proposal
+tasks stay private. Grants and revocation are rechecked for each read/page.
+Task lists advertise `capabilities.shared_task_history`; summaries and shared
+status carry `permissions.can_control`. That response metadata does not grant
+authority: mutations still require the owner or local admin, and reject a
+`shared` body field. Current request and task schemas describe these additions.
+
 Submit, answer and revise may include `origin: {kind, name}`, where kind is
 `human` or `agent`. This labels the conversation participant; it grants no
 permissions and is not a verified personal identity. The desktop supplies

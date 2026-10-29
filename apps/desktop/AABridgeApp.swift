@@ -297,6 +297,9 @@ struct AABridgeDesktop: App {
 
     init() {
         let payload = Bundle.main.resourceURL!.appendingPathComponent("SetupPayload")
+        if let index = CommandLine.arguments.firstIndex(of: "--verify-shared-history"), CommandLine.arguments.count > index + 1 {
+            exit(verifySharedHistoryView(resources: Bundle.main.resourceURL!, output: CommandLine.arguments[index + 1]) ? 0 : 1)
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-live"), CommandLine.arguments.count > index + 1 {
             let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
             let team = TeamRoomModel(activity: activity)

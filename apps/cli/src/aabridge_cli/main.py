@@ -81,6 +81,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     task.add_argument("action", choices=("list", "conversation", "submit", "status", "events", "wait", "answer", "revise", "cancel", "fetch"))
     task.add_argument("--state-dir", type=Path, default=default_state_directory())
     task.add_argument("--remote")
+    task.add_argument('--shared', action='store_true', help='Read local coding history in receiver-approved projects; does not grant task controls.')
     task.add_argument("--id")
     task.add_argument("--key")
     task.add_argument("--file", type=Path)
@@ -213,8 +214,10 @@ def dispatch(args):
         finally:
             store.close()
     if args.command == "task":
+        require(not args.shared or args.action in {'list', 'conversation', 'status', 'events', 'wait'},
+                '--shared is only available for task-history reads.')
         if args.action == "list":
-            return actions.send(state, actions.request("tasks", {"cursor": args.cursor}), args.remote)
+            return actions.send(state, actions.request("tasks", {"cursor": args.cursor, **({'shared': True} if args.shared else {})}), args.remote)
         if args.action == "submit":
             if args.file:
                 require(args.file.stat().st_size <= 120000, "Task file exceeds message limit.")
@@ -236,11 +239,13 @@ def dispatch(args):
             require(1 <= args.timeout <= 30, "Wait timeout must be between 1 and 30 seconds.")
             deadline = time.monotonic() + args.timeout
             while True:
-                task = actions.send(state, actions.request("status", {"task_id": args.id}), args.remote)
+                task = actions.send(state, actions.request("status", {"task_id": args.id, **({'shared': True} if args.shared else {})}), args.remote)
                 if task["status"] not in {"queued", "running", "cancelling"} or time.monotonic() >= deadline:
                     return task
                 time.sleep(0.5)
         body = {"task_id": args.id}
+        if args.shared:
+            body['shared'] = True
         if args.action in {"events", "conversation"}:
             body["cursor"] = args.cursor
         if args.action in {"answer", "revise"}:
