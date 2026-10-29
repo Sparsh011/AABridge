@@ -85,9 +85,9 @@ Existing SSH remotes and version-1 cards remain supported until upgraded; their
 Remote Login requirement still applies. Legacy SSH grants are preserved for
 local review rather than deleted automatically.
 
-This change is independent of Claude's `claude/fast-shell-startup` work: its
-shell launch optimization remains useful for local desktop backend startup;
-direct RPC additionally avoids launching SSH and the remote shell per request.
+Claude's startup-speed fix (PR #6) is integrated from main. Its shell launch
+optimization remains useful for local desktop backend startup; direct RPC
+additionally avoids launching SSH and the remote shell per request.
 Direct reachability failures use `direct_unavailable` so Claude's separate
 `claude/clear-team-errors` UI mapping cannot substitute legacy Remote Login
 instructions for this route. Its branch does not need to be merged first.
@@ -96,7 +96,7 @@ direct runtime pairing uses its own TLS identity and does not consume that key.
 Physical two-Mac model execution remains unverified; local TLS fixtures do not
 establish that acceptance result.
 
-Validation: 221 deterministic tests passed, including actual mutual-TLS task
+Validation after integrating PR #6: 222 deterministic tests passed, including actual mutual-TLS task
 submission, questions/answers, ownership/revocation, CLI/MCP routing, result
 bundle fetch, signed-certificate impersonation rejection, and a full native
 leader/follower/review/follow-up cycle with fixture agents. The offline wheel
