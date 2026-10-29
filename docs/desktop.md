@@ -76,6 +76,35 @@ determine whether it resolves that machine's failure.
 
 ## Build
 
+With the Python development environment installed as described in the README
+and Apple's command-line build tools available, run from the repository root:
+
+```sh
+make build
+```
+
+This runs the deterministic tests, builds the current Python wheel, creates a
+fresh pairing payload, then compiles and verifies the universal Apple Silicon
+and Intel app. Each run creates a new `dist/AABridge-build-XXXXXX/` directory
+containing `AABridge.app`, `AABridge.zip`, and `SetupPayload.zip`. Previous app
+builds are preserved. The command does not install or launch the app.
+
+The payload uses the existing local device public key at
+`~/Library/Application Support/AABridge/device-key.pub`. On a Mac without that
+key, or when packaging for another coordinator, supply an existing dedicated
+Ed25519 public key explicitly. No private key is bundled or generated:
+
+```sh
+make build PUBLIC_KEY="/absolute/path/to/dedicated-key.pub" PEER=macbook
+```
+
+`PYTHON` defaults to `.venv/bin/python` and can also be overridden. `make check`
+runs only the deterministic tests. Runtime locations can be selected in the
+app's receiver setup.
+
+For manual builds or payloads with preselected runtime locations, use the
+individual scripts below.
+
 Build the wheel and a pairing payload with `scripts/make_pairing_bundle.py`,
 then run:
 
