@@ -1,4 +1,4 @@
-"""Bounded local/SSH activity and human task controls for the desktop app.
+"""Bounded local/direct TLS activity and human task controls for the desktop app.
 
 Imports the bundled wheel without installation. No model credential export,
 remote enrollment, or generic command execution. Local project
@@ -41,7 +41,10 @@ def main():
         require(not args.remote, "Connections belong to this Mac.")
         from aabridge_core.pairing import card, connect
         if args.action == "connection-card":
-            print(json.dumps(card(state)))
+            raw = sys.stdin.buffer.read(MAX_MESSAGE + 1)
+            options = fields(decode(raw), set(), {'host', 'port'}) if raw.strip() else {}
+            require(isinstance(options.get('host', ''), str), 'Enter a LAN/VPN address or leave it blank.')
+            print(json.dumps(card(state, host=options.get('host', ''), port=options.get('port'))))
         else:
             raw_card = sys.stdin.buffer.read(MAX_MESSAGE + 1)
             require(not raw_card.lstrip().startswith(b"ssh "),
@@ -140,5 +143,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(json.dumps({"error": {"code": getattr(exc, "code", "local_error"), "message": getattr(exc, "message", None) or (str(exc) if isinstance(exc, ValueError) else "Could not complete the bridge operation. Check the receiver, Remote Login, and the selected connection.")}}))
+        print(json.dumps({"error": {"code": getattr(exc, "code", "local_error"), "message": getattr(exc, "message", None) or (str(exc) if isinstance(exc, ValueError) else "Could not complete the bridge operation. Check that AABridge is running on the other Mac and the selected LAN/VPN address is reachable.")}}))
         raise SystemExit(1)

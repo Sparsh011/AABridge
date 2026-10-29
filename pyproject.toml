@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aabridge"
-version = "0.3.0.dev3"
+version = "0.3.0.dev4"
 description = "A local-first communication bridge for managed coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,8 +20,8 @@ classifiers = [
 aabridge = "aabridge_cli.main:main"
 
 [tool.setuptools]
-packages = ["aabridge_cli", "aabridge_preflight", "aabridge_protocol", "aabridge_core", "aabridge_workspace", "aabridge_transport_local", "aabridge_transport_ssh", "aabridge_adapter_codex", "aabridge_adapter_claude", "aabridge_daemon", "aabridge_mcp"]
-package-dir = {aabridge_cli = "apps/cli/src/aabridge_cli", aabridge_preflight = "packages/preflight/src/aabridge_preflight", aabridge_protocol = "packages/protocol/src/aabridge_protocol", aabridge_core = "packages/core/src/aabridge_core", aabridge_workspace = "packages/workspace/src/aabridge_workspace", aabridge_transport_local = "packages/transport-local/src/aabridge_transport_local", aabridge_transport_ssh = "packages/transport-ssh/src/aabridge_transport_ssh", aabridge_adapter_codex = "packages/adapter-codex/src/aabridge_adapter_codex", aabridge_adapter_claude = "packages/adapter-claude/src/aabridge_adapter_claude", aabridge_daemon = "apps/daemon/src/aabridge_daemon", aabridge_mcp = "apps/mcp-server/src/aabridge_mcp"}
+packages = ["aabridge_cli", "aabridge_preflight", "aabridge_protocol", "aabridge_core", "aabridge_workspace", "aabridge_transport_local", "aabridge_transport_ssh", "aabridge_transport_direct", "aabridge_adapter_codex", "aabridge_adapter_claude", "aabridge_daemon", "aabridge_mcp"]
+package-dir = {aabridge_cli = "apps/cli/src/aabridge_cli", aabridge_preflight = "packages/preflight/src/aabridge_preflight", aabridge_protocol = "packages/protocol/src/aabridge_protocol", aabridge_core = "packages/core/src/aabridge_core", aabridge_workspace = "packages/workspace/src/aabridge_workspace", aabridge_transport_local = "packages/transport-local/src/aabridge_transport_local", aabridge_transport_ssh = "packages/transport-ssh/src/aabridge_transport_ssh", aabridge_transport_direct = "packages/transport-direct/src/aabridge_transport_direct", aabridge_adapter_codex = "packages/adapter-codex/src/aabridge_adapter_codex", aabridge_adapter_claude = "packages/adapter-claude/src/aabridge_adapter_claude", aabridge_daemon = "apps/daemon/src/aabridge_daemon", aabridge_mcp = "apps/mcp-server/src/aabridge_mcp"}
 
 [tool.setuptools.package-data]
 aabridge_protocol = ["schemas/v1/*.json"]

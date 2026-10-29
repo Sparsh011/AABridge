@@ -7,6 +7,25 @@ slice is `proposal-v1`, not arbitrary unattended repository execution.
 
 ## Trusted components and assets
 
+For new direct connections, the supervisor owns a TLS listener enabled by a
+local connection-card action. Both ends validate explicitly paired certificates
+and compare their exact SHA-256 pins; remote identity is derived from that
+certificate, never from a request's claimed sender or a local-admin token.
+Project grants, task ownership and revocation are rechecked for every request.
+Pairing/replacement remains a trusted local operator action. Public cards must
+be exchanged through a trusted channel; TLS cannot correct a substituted card.
+There is no generic shell, filesystem-download or remote administration endpoint.
+The system OpenSSL executable is trusted for one-time app identity generation.
+Private app keys stay 0600 in bridge state and are never exported in cards.
+
+Network connection and request-read/write timeouts and message/connection limits
+bound ordinary failures; this is not protection against network denial of
+service or malicious same-user processes. Result bundle transfer is capped at
+64 MiB after generation and may temporarily consume more disk while Git creates
+the export. No relay/NAT traversal is implemented. Native coding still uses the
+signed-in user's tool permissions as described in team-collaboration.md; the
+proposal sandbox described below does not apply to native coding projects.
+
 The local operator/account, OS, Python, system Git/OpenSSH, installed Codex
 harness and its signed app resources are trusted. Assets include unrelated
 files, source, provider credentials, bridge tokens/policy, task/session identities
@@ -19,8 +38,8 @@ trusted OS/harness services are outside the proven boundary.
 | Threat | Implemented control |
 | --- | --- |
 | Unenrolled client or task-ID impersonation | Private state/socket, random local credentials, peer-specific credentials and project/task ownership checks |
-| Remote MITM | Dedicated SSH identity and explicitly verified, immutable pinned host-key copy; no automatic acceptance/replacement |
-| Remote shell/policy escalation | Fixed RPC; forced key command with `restrict`; administrative commands remain local; no generic exec tool |
+| Remote MITM | Mutual TLS with exact paired certificate pins; legacy SSH uses a dedicated key and explicitly verified pinned host key; no automatic identity replacement |
+| Remote shell/policy escalation | Fixed validated direct RPC; legacy SSH forced key command with `restrict`; administrative commands remain local; no generic exec tool |
 | Replay, stale answer, cross-task injection | Transactional content-bound idempotency, revision/question/attempt IDs, exact saved thread binding and ordered event cursors |
 | Unsafe paths and state | Narrow relative scope; local project mapping; canonical/private ancestor checks; no-follow state/file opens; hardlink checks; committed symlinks/submodules rejected |
 | Malicious proposal code | No model tools; structured output; independent scope validation; demo AST interpretation or review-required file proposals; no repository scripts executed |

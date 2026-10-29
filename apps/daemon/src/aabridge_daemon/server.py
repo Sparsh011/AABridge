@@ -192,6 +192,8 @@ async def serve(state: Path):
                     "Refusing to replace an unsafe socket path.", "unsafe_state")
             endpoint.unlink()  # Only this verified stale IPC endpoint, under the daemon lock.
         supervisor = Supervisor(state)
+        from aabridge_daemon.direct import manage
+        direct = asyncio.create_task(manage(supervisor))
         server = await asyncio.start_unix_server(supervisor.accept, str(endpoint), limit=MAX_MESSAGE)
         endpoint.chmod(0o600)
         loop = asyncio.get_running_loop()
@@ -201,6 +203,8 @@ async def serve(state: Path):
             async with server:
                 await supervisor.schedule()
         finally:
+            supervisor.stopping.set()
+            await direct
             for connection in tuple(supervisor.connections):
                 connection.cancel()
             await asyncio.gather(*tuple(supervisor.connections), return_exceptions=True)

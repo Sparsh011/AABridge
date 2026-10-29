@@ -35,6 +35,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     rpc = commands.add_parser("rpc", help="Restricted SSH forced-command entry point.")
     rpc.add_argument("--state-dir", type=Path, required=True)
     rpc.add_argument("--peer", required=True)
+    card = commands.add_parser('connection-card', help='Create an app-managed direct TLS connection card; no Remote Login required.')
+    card.add_argument('--state-dir', type=Path, default=default_state_directory())
+    card.add_argument('--host', default='', help='Reachable LAN/VPN IPv4 address or hostname; defaults to this Mac’s .local name.')
+    card.add_argument('--port', type=int, help='Local app port for first-time setup (default 47631).')
+    connect = commands.add_parser('connect', help='Pair a public connection card read from stdin.')
+    connect.add_argument('--state-dir', type=Path, default=default_state_directory())
     demo = commands.add_parser("demo-init", help="Create and register a new disposable arithmetic repository.")
     demo.add_argument("--state-dir", type=Path, default=default_state_directory())
     demo.add_argument("--directory", type=Path, required=True)
@@ -125,6 +131,12 @@ def dispatch(args):
     if args.command == "isolation":
         return probe_isolation()
     private_directory(state)
+    if args.command in {'connection-card', 'connect'}:
+        from aabridge_core.pairing import card, connect
+        if args.command == 'connection-card':
+            return card(state, host=args.host, port=args.port)
+        import sys
+        return connect(state, decode(sys.stdin.buffer.read(131073)))
     if args.command == "runtime":
         if args.action == "list":
             return actions.runtime_inventory(state)
@@ -165,7 +177,7 @@ def dispatch(args):
         require(args.id != "local" and args.id in config["peers"], "Select an enrolled remote peer.")
         config["peers"][args.id]["enabled"] = False
         save_config(state, config)
-        return {"peer_id": args.id, "revoked": True, "note": "The forced SSH entry point can no longer access bridge tasks. Remove its public authorized_keys entry locally if desired."}
+        return {"peer_id": args.id, "revoked": True, "note": "This peer can no longer access bridge tasks through direct TLS or legacy SSH. Remove any legacy public authorized_keys entry locally if desired."}
     if args.command == "project":
         if args.action == "list":
             return actions.send(state, actions.request("projects", {}), args.remote)

@@ -143,7 +143,9 @@ final class TaskBrowserModel: ObservableObject {
     func call(_ action: String, target: String, task: String? = nil, input: Data? = nil) throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        var args = [resources.appendingPathComponent("Activity.command").path, "--action", action]
+        // -f skips the user's zsh startup files. Every UI refresh runs this, and
+        // a slow or self-appending ~/.zshenv made each call take seconds.
+        var args = ["-f", resources.appendingPathComponent("Activity.command").path, "--action", action]
         if let stateDirectory = stateDirectory { args += ["--state-dir", stateDirectory] }
         if target != "local" { args += ["--remote", target] }
         if let task = task { args += ["--task-id", task] }
@@ -669,7 +671,7 @@ struct TaskBrowserView: View {
             }
             Divider()
             HStack {
-                Text("History stays on the receiving Mac. SSH uses its existing project grants.")
+                Text("History stays on the receiving Mac. Paired connections use its existing project grants.")
                 Spacer()
                 if let date = model.lastUpdated { Text("Updated \(date.formatted(date: .omitted, time: .standard))") }
             }.font(.bridge(.caption)).foregroundStyle(.secondary).padding(12)

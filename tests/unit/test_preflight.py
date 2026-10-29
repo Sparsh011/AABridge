@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aabridge_cli.main import main
-from aabridge_preflight.doctor import check_python, check_sqlite, collect_report
+from aabridge_preflight.doctor import check_python, check_shell_startup, check_sqlite, collect_report
 from aabridge_preflight.models import Check, Report
 from aabridge_preflight.paths import check_state_directory, default_state_directory
 from aabridge_preflight.probes import TOOLS, ProbeOutput, _run_probe, check_agent_interface, check_tool
@@ -230,6 +230,20 @@ class ReportAndCliTests(unittest.TestCase):
             self.assertFalse(report.to_dict()["worker_execution_enabled"])
             identifiers = [check.id for check in report.checks]
             self.assertEqual(len(identifiers), len(set(identifiers)))
+
+    def test_self_appending_zshenv_is_reported_without_running_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            self.assertEqual(check_shell_startup(home).status, "ok")
+            line = "export PATH=$HOME/Downloads/flutter/bin:$PATH\n"
+            (home / ".zshenv").write_text("echo 'export PATH=$HOME/Downloads/flutter/bin:$PATH' >> ~/.zshenv\n" + line * 80)
+            check = check_shell_startup(home)
+            self.assertEqual(check.status, "warning")
+            self.assertIn("repeats 80 times", check.summary)
+            self.assertIn("appends to ~/.zshenv itself", check.summary)
+            self.assertEqual((home / ".zshenv").read_text().count(line), 80)  # Inspection never runs the file.
+            (home / ".zshenv").write_text("# echo x >> ~/.zshenv\n" + line)
+            self.assertEqual(check_shell_startup(home).status, "ok")
 
 
 if __name__ == "__main__":

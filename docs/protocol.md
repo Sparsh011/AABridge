@@ -8,11 +8,28 @@ Passing a JSON schema does not grant authority. MCP tool body schemas are read
 from the same packaged request schema; the runtime still validates every call.
 
 A request is a bounded newline-terminated JSON envelope with `version: 1`, `op`,
-`key` and `body`. Sender identity comes from authenticated local IPC/SSH, never
+`key` and `body`. Sender identity comes from authenticated local IPC, direct TLS or legacy SSH, never
 an envelope field. Operations: submit, status, events, tasks, conversation, answer, revise, cancel,
 ping, projects and local-only shutdown. Replies contain either `result` or a
 safe structured `error` with code and message. A well-formed remote exchange
 can return an operation error without being a failed SSH connection.
+
+Direct TLS uses a bounded newline-terminated outer envelope defined by
+`direct-envelope.schema.json`: `version: 1`, `kind: rpc`, and the unchanged
+`request` object; or `kind: result_bundle`, `task_id`, and an exact `commit` SHA.
+The entire request is at most 131,072 bytes. Replies use the same result/error
+shape, at most 262,144 bytes. Bundle replies carry size and SHA-256 metadata,
+followed by exactly that many binary bytes (at most 64 MiB). Only completed
+results owned by this authenticated peer with current project grants are
+exported. There is no caller-supplied path or executable.
+
+New public cards follow `connection-card.schema.json` (version 2, transport tls).
+They carry device ID, display name, host, port, one public X.509 certificate and
+its SHA-256 fingerprint. Runtime validation additionally checks certificate
+parsing, matching pins, duplicate identities, existing enrollment, and revocation.
+TLS validates the paired certificate chain and both ends compare the exact
+certificate fingerprint. Enrollment and listener settings are local operator
+actions, never remotely invokable task or MCP operations.
 
 Submission names a project, registered recipient, exact baseline, bounded
 objective/scope/acceptance/context, limits and `permission_profile: proposal-v1`.
