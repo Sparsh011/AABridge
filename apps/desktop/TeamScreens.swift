@@ -12,7 +12,7 @@ struct TeamStatus {
             text = stage == "plan" ? "Planning" : stage == "work" ? "Building" : "Reviewing"; color = .blue; icon = "circle.dotted"
         case "awaiting_admin": text = "Needs you"; color = .orange; icon = "hand.raised.fill"
         case "completed": text = "Done"; color = .green; icon = "checkmark.circle.fill"
-        case "blocked": text = "Blocked"; color = .red; icon = "exclamationmark.triangle.fill"
+        case "blocked": text = "Needs a fix"; color = .red; icon = "exclamationmark.triangle.fill"
         case "failed": text = "Stopped with an error"; color = .red; icon = "xmark.octagon.fill"
         case "stopping": text = "Stopping…"; color = .gray; icon = "stop.circle"
         default: text = "Stopped"; color = .gray; icon = "stop.circle.fill"
@@ -362,9 +362,11 @@ struct TeamChatView: View {
                     }
                 }.disabled(model.busy || model.hasPending)
             }
+        } else if let failure = room.failure, ["blocked", "failed"].contains(room.status) {
+            FailureCard(failure: failure, retry: room.status == "blocked" ? { model.control("team_retry") } : nil, disabled: model.busy || model.hasPending)
         } else if room.status == "blocked" {
             Card(tint: .red) {
-                Label("The team is blocked", systemImage: "exclamationmark.triangle.fill").font(.bridge(.headline))
+                Label("The team is paused", systemImage: "exclamationmark.triangle.fill").font(.bridge(.headline))
                 Text(room.error?.isEmpty == false ? room.error! : "A team member couldn’t be reached.").textSelection(.enabled)
                 Button("Try again") { model.control("team_retry") }.buttonStyle(.borderedProminent).disabled(model.busy || model.hasPending)
             }
@@ -557,6 +559,28 @@ struct DeliveryCard: View {
                 Button("Copy branch name") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(branch, forType: .string) }
                 if room.follower.target == "local" || room.publication?.path != nil {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+                }
+            }
+        }
+    }
+}
+
+struct FailureCard: View {
+    let failure: TeamFailure
+    let retry: (() -> Void)?
+    let disabled: Bool
+    var body: some View {
+        Card(tint: .red) {
+            Label(failure.machine == "this Mac" ? "Needs a fix on this Mac" : "Needs a fix on \(failure.machine)", systemImage: "wrench.and.screwdriver.fill").font(.bridge(.headline))
+            Text(failure.problem).textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("How to fix").font(.bridge(.caption).bold()).foregroundStyle(.secondary)
+                Text(failure.fix).textSelection(.enabled)
+            }
+            if let retry = retry {
+                HStack {
+                    Button { retry() } label: { Label("Try again", systemImage: "arrow.clockwise") }.buttonStyle(.borderedProminent).disabled(disabled)
+                    Text("Nothing is lost. The team continues from this step.").font(.bridge(.caption)).foregroundStyle(.secondary)
                 }
             }
         }
