@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from runtime_fixture import select_fake_codex
 from aabridge_cli.actions import demo_init, request
 from aabridge_core.config import initialize, load_config
 from aabridge_core.store import Store
@@ -19,6 +20,7 @@ class HistoryTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.state = self.root / "state"
         initialize(self.state)
+        select_fake_codex(self.state)
         demo_init(self.state, self.root / "source", "demo")
         self.config = load_config(self.state)
         project = self.config["projects"]["demo"]

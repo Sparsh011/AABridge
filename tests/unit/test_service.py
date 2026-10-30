@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from runtime_fixture import select_fake_codex
 from aabridge_cli.actions import demo_init, enroll_remote, request
 from aabridge_adapter_codex.proxy import ProviderProxy
 from aabridge_adapter_codex.worker import CodexWorker, validate_proposal
@@ -45,6 +46,7 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.temp.name).resolve()
         self.state = self.root / "state"
         initialize(self.state)
+        select_fake_codex(self.state)
         demo_init(self.state, self.root / "source", "demo")
         config = load_config(self.state)
         config["projects"]["demo"]["execution_enabled"] = True

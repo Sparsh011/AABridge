@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from runtime_fixture import select_fake_codex
 from aabridge_cli.actions import demo_init, fetch_result, request, send
 from aabridge_core.config import authenticate, initialize, load_config, read_private, save_config
 from aabridge_core.direct import CERTIFICATE, PRIVATE_KEY, certificate_fingerprint, identity
@@ -51,6 +52,7 @@ class DirectTransportTests(unittest.IsolatedAsyncioTestCase):
                 connect(state, self.cards[1-index])
         self.book, self.mini = self.states
         self.book_id, self.mini_id = (value['id'] for value in self.cards)
+        select_fake_codex(self.mini)
         demo_init(self.mini, self.root / 'source', 'demo')
         self.allow(self.mini, self.book_id, ['demo'])
         config = load_config(self.mini)

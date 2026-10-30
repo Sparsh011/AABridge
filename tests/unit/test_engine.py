@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from runtime_fixture import select_fake_codex
 from aabridge_cli.actions import demo_init, request
 from aabridge_core.config import authenticate, initialize, load_config, read_private, save_config, write_private
 from aabridge_core.store import Store
@@ -23,6 +24,7 @@ class EngineFixture(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.state = self.root / "state"
         initialize(self.state)
+        select_fake_codex(self.state)
         demo_init(self.state, self.root / "repo", "demo")
         self.config = load_config(self.state)
         self.project = self.config["projects"]["demo"]
