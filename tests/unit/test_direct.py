@@ -131,6 +131,35 @@ class DirectTransportTests(unittest.IsolatedAsyncioTestCase):
                 await self.rpc(op)
             self.assertEqual(error.exception.code, 'permission_denied')
 
+    async def test_receiver_local_coding_history_is_visible_from_the_other_mac(self):
+        config = load_config(self.mini)
+        project = config['projects']['demo']
+        project.update(permission_profile='coding-v1', scope=['*'])
+        save_config(self.mini, config)
+        body = {'project_id': 'demo', 'recipient': 'codex', 'base_commit': project['base_commit'],
+                'objective': 'Task created in the mini app', 'scope': ['*'], 'acceptance': ['Fixture history'],
+                'context': [], 'limits': project['limits'], 'permission_profile': 'coding-v1'}
+        task = self.supervisors[1].store.handle(request('submit', body, 'mini-local'), 'local', config)
+        self.supervisors[1].store.update(task['id'], 'completed-fixture', status='completed')
+        self.assertEqual((await self.rpc('tasks', {'cursor': 0}))['tasks'], [])
+        shared = await self.rpc('tasks', {'cursor': 0, 'shared': True})
+        self.assertEqual(shared['tasks'][0]['id'], task['id'])
+        detail = await self.rpc('status', {'task_id': task['id'], 'shared': True})
+        self.assertEqual(detail['sender'], 'local')
+        self.assertFalse(detail['permissions']['can_control'])
+        history = await self.rpc('conversation', {'task_id': task['id'], 'cursor': 0, 'shared': True})
+        self.assertIn('Task created in the mini app', json.dumps(history))
+        mcp = await asyncio.to_thread(mcp_handle, self.book, {'jsonrpc': '2.0', 'id': 10, 'method': 'tools/call',
+                                      'params': {'name': 'bridge_tasks', 'arguments': {'body': {'cursor': 0, 'shared': True}, 'remote': self.mini_id}}})
+        self.assertIn(task['id'], json.dumps(mcp))
+        cli = await asyncio.to_thread(subprocess.run, [sys.executable, '-m', 'aabridge_cli', 'task', 'status',
+                                      '--state-dir', str(self.book), '--remote', self.mini_id, '--id', task['id'], '--shared'],
+                                      capture_output=True, text=True, check=True)
+        self.assertFalse(json.loads(cli.stdout)['permissions']['can_control'])
+        with self.assertRaises(BridgeError) as denied:
+            await self.rpc('cancel', {'task_id': task['id']})
+        self.assertEqual(denied.exception.code, 'permission_denied')
+
     async def test_project_grants_and_revocation_apply_to_rpc_and_result_reads(self):
         task = await self.completed()
         self.allow(self.mini, self.book_id, [])

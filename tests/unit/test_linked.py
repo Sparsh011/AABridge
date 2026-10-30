@@ -120,6 +120,7 @@ class LinkedProjectTests(unittest.TestCase):
         store = Store(self.state)
         self.addCleanup(store.close)
         projects = store.handle(request('projects', {}), 'local', config)
+        self.assertTrue(projects['server']['capabilities']['shared_task_history'])
         self.assertEqual(projects['server']['links'], [{'name': 'sparshur-android', 'access': 'edit'}, {'name': 'mac-app', 'access': 'read'}])
         self.assertNotIn(str(self.android), json.dumps(projects))
 

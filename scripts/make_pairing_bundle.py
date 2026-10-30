@@ -1,4 +1,4 @@
-"""Build a reviewable mini setup ZIP containing a wheel and public key only."""
+"""Build a reviewable setup directory or ZIP with a wheel and public key only."""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--public-key", type=Path, required=True)
     parser.add_argument("--peer", default="macbook")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--directory", action="store_true", help="Write files directly instead of a ZIP.")
+    parser.add_argument("--wheel", type=Path, help="Use a wheel built in a temporary directory.")
     parser.add_argument("--codex-path", help="Local worker app/executable path, including an external drive; never a peer-supplied command.")
     parser.add_argument("--claude-path", help="Optional independent local Claude executable path.")
     args = parser.parse_args()
@@ -31,7 +33,9 @@ def main():
             selections[agent] = selected
     root = Path(__file__).resolve().parents[1]
     version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
-    wheel = root / "dist" / f"aabridge-{version}-py3-none-any.whl"
+    wheel = args.wheel or root / "dist" / f"aabridge-{version}-py3-none-any.whl"
+    if wheel.name != f"aabridge-{version}-py3-none-any.whl":
+        raise SystemExit("Build the wheel for the current source version first.")
     public = args.public_key.read_bytes()
     parts = public.decode().strip().split()
     if len(parts) < 2 or parts[0] != "ssh-ed25519" or len(public) > 4096:
@@ -71,9 +75,12 @@ def main():
             "Wait for AABRIDGE MINI READY, then tell the MacBook chat.\n"
             "If setup fails, paste only its final SETUP INCOMPLETE line, not raw provider logs.\n"
             "Inspect Setup.command and setup_worker.py before running if desired.\n")
-        with zipfile.ZipFile(args.output, "x", compression=zipfile.ZIP_DEFLATED) as archive:
-            for item in sorted(folder.iterdir()):
-                archive.write(item, arcname=str(Path(folder.name) / item.name))
+        if args.directory:
+            shutil.copytree(folder, args.output)
+        else:
+            with zipfile.ZipFile(args.output, "x", compression=zipfile.ZIP_DEFLATED) as archive:
+                for item in sorted(folder.iterdir()):
+                    archive.write(item, arcname=str(Path(folder.name) / item.name))
     print(json.dumps({"bundle": str(args.output.resolve()), "public_key_fingerprint": fingerprint,
                       "contains_private_key": False, "model_inference_started": False}, indent=2))
 

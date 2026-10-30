@@ -27,6 +27,9 @@ struct TaskComposer: View {
         Binding(get: { model.drafts[model.selection ?? ""] ?? "" }, set: { model.drafts[model.selection ?? ""] = $0 })
     }
     var body: some View {
+        if !model.canControlSelectedTask {
+            Label(model.composerHint, systemImage: "eye").font(.bridge(.callout)).foregroundStyle(.secondary).padding(16)
+        } else {
         VStack(alignment: .leading, spacing: 9) {
             PendingSendView(model: model)
             HStack {
@@ -52,6 +55,7 @@ struct TaskComposer: View {
                     .disabled(!model.canReply || draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.wrappedValue.unicodeScalars.count > 4000)
             }
         }.padding(16).background(Color.primary.opacity(0.02))
+        }
     }
 }
 

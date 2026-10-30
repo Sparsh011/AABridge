@@ -73,3 +73,28 @@ class ActivityBackendTests(unittest.TestCase):
                 with self.assertRaisesRegex(BridgeError, "locally on the receiving Mac"):
                     backend.main()
                 send.assert_not_called()
+
+    def test_old_shared_receiver_falls_back_to_owned_history_with_a_notice(self):
+        args = ['activity_backend.py', '--bundle', str(self.bundle), '--action', 'tasks', '--remote', 'mini', '--shared', '--all']
+        pages = [BridgeError('invalid_request', 'Missing or unknown fields.'),
+                 {'tasks': [{'id': 'task-old', 'updated_at': 50}], 'cursor': 4, 'has_more': True},
+                 {'tasks': [{'id': 'task-new', 'updated_at': 10}], 'cursor': 2, 'has_more': False}]
+        with patch.object(sys, 'argv', args), patch.object(sys, 'path', sys.path.copy()), \
+             patch('aabridge_cli.actions.send', side_effect=pages) as send, \
+             patch('aabridge_core.config.load_config', return_value={'remotes': {'mini': {'label': 'Mac mini'}}}), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            backend.main()
+        reply = json.loads(output.getvalue())
+        self.assertEqual([task['id'] for task in reply['tasks']], ['task-old', 'task-new'])
+        self.assertIn('Update AABridge on Mac mini', reply['history_notice'])
+        self.assertTrue(send.call_args_list[0].args[1].body['shared'])
+        self.assertNotIn('shared', send.call_args_list[1].args[1].body)
+        self.assertNotIn('shared', send.call_args_list[2].args[1].body)
+        self.assertEqual(send.call_args_list[2].args[1].body['cursor'], 4)
+
+    def test_shared_history_is_never_added_to_a_desktop_mutation(self):
+        args = ['activity_backend.py', '--bundle', str(self.bundle), '--action', 'cancel', '--remote', 'mini', '--shared']
+        with patch.object(sys, 'argv', args), patch.object(sys, 'path', sys.path.copy()), patch('aabridge_cli.actions.send') as send:
+            with self.assertRaises(BridgeError):
+                backend.main()
+            send.assert_not_called()

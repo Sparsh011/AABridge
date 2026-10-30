@@ -463,6 +463,10 @@
             "task_id": {
               "type": "string",
               "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "shared": {
+              "type": "boolean",
+              "description": "Also read receiver-local coding history in projects granted to this peer. Does not grant task controls."
             }
           },
           "required": [
@@ -503,6 +507,10 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9223372036854775807
+            },
+            "shared": {
+              "type": "boolean",
+              "description": "Also read receiver-local coding history in projects granted to this peer. Does not grant task controls."
             }
           },
           "required": [
@@ -854,6 +862,10 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9223372036854775807
+            },
+            "shared": {
+              "type": "boolean",
+              "description": "Also read receiver-local coding history in projects granted to this peer. Does not grant task controls."
             }
           },
           "required": [
@@ -891,6 +903,10 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9223372036854775807
+            },
+            "shared": {
+              "type": "boolean",
+              "description": "Also read receiver-local coding history in projects granted to this peer. Does not grant task controls."
             }
           },
           "required": [
@@ -1324,6 +1340,10 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9223372036854775807
+            },
+            "shared": {
+              "type": "boolean",
+              "description": "Also read receiver-local coding history in projects granted to this peer. Does not grant task controls."
             }
           },
           "required": [

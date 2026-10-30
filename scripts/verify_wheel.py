@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -13,9 +14,12 @@ from pathlib import Path
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--wheel", type=Path, help="Verify the wheel embedded in a built app.")
+    args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     release = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
-    wheels = sorted((root / "dist").glob(f"aabridge-{release}-*.whl"))
+    wheels = [args.wheel.resolve()] if args.wheel else sorted((root / "dist").glob(f"aabridge-{release}-*.whl"))
     if len(wheels) != 1:
         raise SystemExit("Expected exactly one AABridge wheel in dist/; review build artifacts.")
     wheel = wheels[0]

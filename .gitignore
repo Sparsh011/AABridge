@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+# Fixed local app output and Python build intermediates (make build).
 build/
 dist/
 .coverage

@@ -88,11 +88,20 @@ and Apple's command-line build tools available, run from the repository root:
 make build
 ```
 
-This runs the deterministic tests, builds the current Python wheel, creates a
-fresh pairing payload, then compiles and verifies the universal Apple Silicon
-and Intel app. Each run creates a new `dist/AABridge-build-XXXXXX/` directory
-containing `AABridge.app`, `AABridge.zip`, and `SetupPayload.zip`. Previous app
-builds are preserved. The command does not install or launch the app.
+This runs the deterministic tests, builds the current Python wheel and setup
+files, then compiles and verifies the universal Apple Silicon and Intel app.
+Each successful run replaces **`build/AABridge.app`**. The `build/` directory is
+Git-ignored. No ZIPs or numbered output folders are created. The wheel and setup
+files needed by the app live inside its bundle; other packaging intermediates
+use temporary directories that are removed when the command finishes. Python's
+build tools also reuse `build/` for their fixed compilation intermediates.
+
+Choose another fixed location with `make build APP_PATH="build/My Apps/AABridge.app"`.
+Keep repository output under an ignored directory such as `build/`. Quit that
+app before rebuilding it. Compilation, signing or smoke-check failures preserve
+the previous app; replacement is staged on the destination filesystem and rolls
+back if publication fails. Only an AABridge app bundle can be overwritten.
+The command does not install the receiver or launch the app.
 
 The payload uses the existing local device public key at
 `~/Library/Application Support/AABridge/device-key.pub`. On a Mac without that
@@ -105,10 +114,13 @@ make build PUBLIC_KEY="/absolute/path/to/dedicated-key.pub" PEER=macbook
 
 `PYTHON` defaults to `.venv/bin/python` and can also be overridden. `make check`
 runs only the deterministic tests. Runtime locations can be selected in the
-app's receiver setup.
+app's receiver setup. Checks and packaging resolve all source packages from the
+current checkout's `pyproject.toml`; a pull adding a package does not require an
+editable-install refresh before `make build`. To refresh your development CLI
+after pulling, run `.venv/bin/python -m pip install --no-build-isolation --no-deps -e .`.
 
-For manual builds or payloads with preselected runtime locations, use the
-individual scripts below.
+For manual ZIP builds or payloads with preselected runtime locations, use the
+individual scripts below. ZIP creation is optional and is not used by `make build`.
 
 Build the wheel and a pairing payload with `scripts/make_pairing_bundle.py`,
 then run:
