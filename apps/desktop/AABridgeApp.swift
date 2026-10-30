@@ -353,6 +353,14 @@ struct AABridgeDesktop: App {
                                                    linked: [LinkedPublication(name: "sparshur-android", branch: branch, path: "/Users/you/Sparshur-Android", pull_request: "https://github.com/you/sparshur-android/pull/31"),
                                                             LinkedPublication(name: "sparshur-mac", branch: branch, path: "/Users/you/Sparshur-Mac", pull_request: "https://github.com/you/sparshur-mac/pull/8")])
             }
+            if CommandLine.arguments[index + 2] == "fail" {
+                room = TeamRoom(id: "team-fail", objective: room.objective, status: "blocked", stage: "plan", leader: TeamMember(target: "mbp", project: "project-sparshur-service-codex", agent: "codex"), follower: follower,
+                                messages: Array(room.messages!.prefix(2)), error: nil, result: nil)
+                room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true)
+                room.failure = TeamFailure(problem: "Codex was updated on Sparsh’s MBP, so AABridge stopped it until the project is saved again.",
+                                           fix: "On Sparsh’s MBP, open AABridge → Projects, select “project-sparshur-service-codex” and press Save. Then press Try again here.",
+                                           machine: "Sparsh’s MBP", project: "project-sparshur-service-codex", retry: true)
+            }
             team.room = room; team.rooms = [room]; team.selected = room.id
             if CommandLine.arguments.contains("--card-only") {
                 let panel = VStack(spacing: 16) { DeliveryCard(model: team, room: room, confirmMerge: .constant(false)); TeamMessageRow(entry: room.messages!.last!) }.padding(30).frame(width: 1200, height: 820, alignment: .top)

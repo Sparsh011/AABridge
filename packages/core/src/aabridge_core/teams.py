@@ -72,7 +72,7 @@ def public(room):
     result['earlier_messages'] = len(room['messages']) - len(messages)
     work = room.get('outputs', {}).get('work')
     result['result'] = ({k: work[k] for k in ('branch', 'worktree', 'result_commit', 'base_commit')} if work else None)
-    for key in ('approval', 'placement', 'gate', 'publication', 'verdict', 'fixes', 'max_fixes'):
+    for key in ('approval', 'placement', 'gate', 'publication', 'verdict', 'fixes', 'max_fixes', 'failure'):
         result[key] = room.get(key)
     result['notes_waiting'] = len(waiting_notes(room))
     return result
@@ -136,6 +136,7 @@ def handle(store, request, identity):
     elif op == 'team_retry':
         require(room['status'] in {'running', 'blocked'}, 'This team cannot retry its current stage.', 'invalid_state')
         room['status'], room['error'] = 'running', ''
+        room.pop('failure', None)
     elif op == 'team_guide':
         require(room['status'] in {'running', 'blocked', 'awaiting_admin'}, 'This task has finished. Send your message as a follow-up instead.', 'invalid_state')
         room.setdefault('guidance', []).append({'id': new_id('note'), 'text': body['text'], 'time': time.time(), 'delivered': False})
@@ -186,6 +187,7 @@ def handle(store, request, identity):
             room['continuation'] = next(t for t in reversed(room['stage_tasks']) if t['stage'] == 'work')
         for key in ('stage_body', 'stage_operation', 'stage_key', 'work_reason'):
             room.pop(key, None)
+        room.pop('failure', None)
         room.update(status='running', stage='plan', round=room['round'] + 1, task_id=None,
                     attempted=False, outputs={}, error='', objective=body['text'], resume={}, fixes=0, verdict=None, gate=None)
         message(room, 'You · admin', body['text'])
@@ -418,6 +420,40 @@ class TeamRunner:
             publication['merge'] = 'merged'
         save_runtime(self.store, room)
 
+    def machine(self, target):
+        if target == 'local':
+            return 'this Mac'
+        try:
+            from aabridge_core.config import load_config
+            return load_config(self.state)['remotes'][target].get('label') or target
+        except Exception:
+            return target
+
+    def explain(self, room, member, stage, task):
+        """Turn a failed stage task into one short problem and one concrete fix."""
+        agent = 'Claude Code' if member['agent'] == 'claude' else 'Codex'
+        mac, project = self.machine(member['target']), member['project']
+        step = {'plan': 'plan', 'work': 'build', 'review': 'review'}[stage]
+        role = 'worker' if stage == 'work' else 'leader'
+        code, detail = task.get('error_code', ''), task.get('error') or ''
+        where = f'On {mac}, open AABridge → Projects, select “{project}” and press Save.'
+        if code == 'adapter_changed' or 'was updated' in detail or 'binary changed' in detail:
+            problem, fix, retry = f'{agent} was updated on {mac}, so AABridge stopped it until the project is saved again.', where + ' Then press Try again here.', True
+        elif code == 'adapter_unavailable':
+            problem, fix, retry = (f'AABridge couldn’t start {agent} on {mac}.',
+                                   f'On {mac}, open AABridge → Settings and check {agent}’s location, sign in to {agent} there, then save “{project}” in Projects. Then press Try again here.', True)
+        elif task['status'] == 'waiting_question':
+            problem, fix, retry = f'The {role} asked a question instead of finishing: ' + ((task.get('question') or {}).get('text') or ''), 'Answer it in a follow-up message.', False
+        elif task['status'] == 'interrupted':
+            problem, fix, retry = f'AABridge restarted on {mac} while the {role} was working.', 'Press Try again to run this step again.', True
+        elif 'runtime limit' in detail:
+            problem, fix, retry = f'The {role} used up its time limit on {mac}.', 'Send a follow-up to continue from the saved work.', False
+        elif task['status'] == 'cancelled':
+            problem, fix, retry = f'The {role}’s step was cancelled on {mac}.', 'Press Try again to run it again.', True
+        else:
+            problem, fix, retry = f'The {role} ({agent} on {mac}) couldn’t {step}: {detail or "it stopped without a reason"}', 'Press Try again, or send a follow-up with more guidance.', True
+        return {'problem': problem, 'fix': fix, 'machine': mac, 'project': project, 'code': code or task['status'], 'retry': retry}
+
     def wait(self, room, kind, reason):
         room.update(status='awaiting_admin', gate={'kind': kind, 'reason': reason})
         message(room, 'AABridge', reason)
@@ -471,7 +507,7 @@ class TeamRunner:
             return
         stage = room['stage']
         member = room['follower' if stage == 'work' else 'leader']
-        target = member['target']
+        target = contact = member['target']
         try:
             if not room['task_id']:
                 if room['status'] == 'stopping' and not room['attempted']:
@@ -482,16 +518,20 @@ class TeamRunner:
                     # Freeze both identities and their baselines before any inference.
                     for role in ('leader', 'follower'):
                         peer = room[role]
+                        contact, mac = peer['target'], self.machine(peer['target'])
                         projects = await self.call('projects', {}, peer['target'])
                         project = projects.get(peer['project'])
                         require(project and project['execution_enabled'] and project['verification']['profile'] == 'repository-v1',
-                                'Choose an enabled full coding project on both Macs.', 'team_setup')
-                        require(project['adapter'] == peer['agent'], 'The chosen project uses another agent. Choose the matching project.', 'team_setup')
+                                f'The project “{peer["project"]}” on {mac} is missing or switched off. On {mac}, open AABridge → Projects, save it as a full coding project, then press Try again.', 'team_setup')
+                        require(project['adapter'] == peer['agent'], f'The project “{peer["project"]}” on {mac} is set up for a different agent. Pick the matching project when you start a task.', 'team_setup')
                         if peer.get('model_settings'):
-                            require(project.get('capabilities', {}).get('model_settings'), 'Model selection needs the new AABridge service on this participant. Finish active tasks before updating that Mac.', 'upgrade_required')
+                            require(project.get('capabilities', {}).get('model_settings'), f'{mac} runs an older AABridge that can’t choose models. Update AABridge on {mac} when it has no active tasks, or use the agent default.', 'upgrade_required')
                         room[role + '_project'] = project
-                    require(room['leader_project']['base_commit'] == room['follower_project']['base_commit'],
-                            'Both project copies need the same Git commit. Sync them and save both projects before retrying.', 'baseline_mismatch')
+                    contact = target
+                    leader, follower = room['leader_project']['base_commit'], room['follower_project']['base_commit']
+                    require(leader == follower,
+                            f'The two project copies are on different Git commits: {self.machine(room["leader"]["target"])} has {leader[:7]}, {self.machine(room["follower"]["target"])} has {follower[:7]}. '
+                            'Check out the same commit on both Macs, save the project in Projects on each, then press Try again.', 'baseline_mismatch')
                     project = room['follower_project' if stage == 'work' else 'leader_project']
                     # Within a round each role continues its own task, so an agent
                     # remembers its earlier plan, work or review.
@@ -537,9 +577,18 @@ class TeamRunner:
                 room['status'] = 'cancelled'
                 message(room, 'AABridge', 'Stopped. Partial work is preserved in the task branch.')
             elif task['status'] in {'failed', 'cancelled', 'interrupted', 'waiting_question'}:
-                room['status'] = 'failed'
-                message(room, member['agent'] + ' · ' + ('follower' if stage == 'work' else 'leader'),
-                        task.get('error') or (task.get('question') or {}).get('text') or 'The task stopped; review its saved task conversation.')
+                failure = self.explain(room, member, stage, task)
+                # A retry must start a new task: replaying the stage key would
+                # return this failed one, and a failed task can't be revised.
+                if (room.get('resume') or {}).get(stage, {}).get('task_id') == task['id']:
+                    room['resume'].pop(stage)
+                room.update(status='blocked' if failure['retry'] else 'failed', failure=failure, task_id=None, attempted=False)
+                for key in ('stage_body', 'stage_operation', 'stage_key'):
+                    room.pop(key, None)
+                message(room, 'AABridge', failure['problem'] + '\nHow to fix: ' + failure['fix'])
+                room['error'] = failure['problem']
+                save_runtime(self.store, room)
+                return
             elif task['status'] == 'completed' and room.get('live', {}).get('catching_up'):
                 save_runtime(self.store, room)
                 return
@@ -577,7 +626,17 @@ class TeamRunner:
             save_runtime(self.store, room)
         except Exception as exc:
             room = get(self.store, room_id)
-            room['error'] = getattr(exc, 'message', 'Could not reach a team member. Check the Mac connection and retry.')
+            code, mac = getattr(exc, 'code', ''), self.machine(contact)
+            if code in {'remote_unavailable', 'daemon_unavailable'}:
+                room['error'] = (f'Couldn’t reach AABridge on {mac}. Make sure it’s awake and on the same network, Remote Login is on, and AABridge is running there. Then press Try again.'
+                                 if contact != 'local' else 'AABridge’s background service on this Mac isn’t running. Open Settings → Set up this Mac, then press Try again.')
+            elif code == 'direct_unavailable':
+                room['error'] = (f'Couldn’t reach AABridge on {mac} over its direct connection. Make sure it’s awake, AABridge is running there, and its address in Devices is reachable '
+                                 '(same network or VPN). macOS may ask that Mac to allow incoming connections. Then press Try again.')
+            elif code == 'host_identity_mismatch':
+                room['error'] = f'{mac} answered with a different identity than when you connected it. If you reinstalled macOS there, reconnect it in Devices.'
+            else:
+                room['error'] = getattr(exc, 'message', f'Something went wrong talking to {mac}. Press Try again.')
             # No automatic retry storm and no duplicate model turns. The same
             # durable stage key is replayed when the admin chooses Retry.
             if room['status'] != 'stopping':
