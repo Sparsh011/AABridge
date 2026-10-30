@@ -119,6 +119,19 @@ selection, local Claude discovery and disconnected-drive behavior.
 
 ## Check and build
 
+Build the universal macOS app and ZIP with one command after installing the
+development dependencies and Apple's command-line tools:
+
+```sh
+make build
+```
+
+Each build prints the new app and ZIP paths under `dist/`. It uses the existing
+local device public key for the setup payload; see [desktop build options](docs/desktop.md#build)
+to supply another public key. Run `make check` for tests alone.
+
+Individual checks and Python packaging commands:
+
 ```sh
 .venv/bin/python scripts/check.py
 .venv/bin/python scripts/verify_ssh.py
