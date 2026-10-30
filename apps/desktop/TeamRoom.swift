@@ -14,6 +14,18 @@ struct TeamFailure: Decodable { let problem: String; let fix: String; let machin
 struct TeamPublication: Decodable {
     var mode: String? = nil; var branch: String? = nil; var path: String? = nil; var pull_request: String? = nil
     var merge: String? = nil; var merge_error: String? = nil; var error: String? = nil
+    var linked: [LinkedPublication]? = nil
+}
+/// Where a linked project's changes went: its own branch and pull request.
+struct LinkedPublication: Decodable, Identifiable {
+    let name: String; var branch: String? = nil; var path: String? = nil; var pull_request: String? = nil; var error: String? = nil
+    var id: String { name }
+}
+/// A related project a task can also open. Peers see only the name and access.
+struct ProjectLink: Codable, Hashable, Identifiable {
+    var name: String; var repository: String? = nil; var access: String
+    var id: String { repository ?? name }
+    var accessLabel: String { access == "edit" ? "can edit" : "read only" }
 }
 struct TeamRoom: Decodable, Identifiable {
     let id: String; let objective: String; let status: String; let stage: String
@@ -27,6 +39,7 @@ struct TeamRoom: Decodable, Identifiable {
 }
 struct TeamChoice: Identifiable {
     let id: String; let label: String; let member: TeamMember
+    var links: [ProjectLink] = []
 }
 
 /// Where the finished code goes, in the order the new-task form offers it.
@@ -133,7 +146,7 @@ final class TeamRoomModel: ObservableObject {
                             for project in projects where project.available && project.verification?.profile == "repository-v1" {
                                 let agent = project.adapter == "claude" ? "Claude" : "Codex"
                                 options.append(TeamChoice(id: target.id + "/" + project.id, label: "\(agent) · \(target.label) · \(project.id)",
-                                    member: TeamMember(target: target.id, project: project.id, agent: project.adapter)))
+                                    member: TeamMember(target: target.id, project: project.id, agent: project.adapter), links: project.links ?? []))
                             }
                         } catch { issues.append("\(target.label): \(error.localizedDescription)") }
                     }

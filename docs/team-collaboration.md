@@ -33,6 +33,16 @@ When a stage fails, the runner records `failure` with the problem, the fix, the 
 
 `team_guide` sends an admin note while the team works. Notes are queued durably and attached to the next agent turn. If one arrives mid-step, the runner adds a turn: the leader re-plans, or the worker adjusts before review. The note never interrupts a running CLI process. Task clones now use the working agent's prefix (`claude/task-…` or `codex/task-…`); older `codex/` clones are still accepted.
 
+## Linked projects (multi-repository work)
+
+A coding project can list up to 8 **related projects** on the same Mac (Projects → step 4), each with **Can read** or **Can edit** access. One example is a Go server linked to its Android and Mac apps. The Mac that owns the project sets these links, and peers only see the link names and access levels, never local paths. A peer granted the main project gets its links; nothing else on that Mac is exposed.
+
+- **Where the copies live.** When a task starts, `aabridge_workspace.linked` clones each linked repository at its current commit into `workspaces/<task>.linked/<name>`, next to the main task checkout. Each clone is on the same task branch and has no `origin`. The admin's folders are never written to during the task.
+- **What the agents are given.** The prompt lists every linked folder with its access level. Codex gets only the **Can edit** folders as writable roots, through `sandbox_workspace_write.writable_roots`, so its sandbox keeps read-only links read-only. Claude Code gets every linked folder via `--add-dir`.
+- **After each turn.** AABridge commits changes in edit links. Anything changed in a read link, or in any link during plan and review, is reset and noted in the result. Each changed link's diff goes into the leader's review alongside the main diff, within the same 64,000-byte limit.
+- **Delivery.** Edit-link changes use the same placement as the main project and the same branch name, each with its own pull request when PR delivery is on; reviews are posted on every PR. **Merge** merges them all, and skips ones already merged when retried. Linked changes are only copied into the admin's folders when the worker runs on the admin Mac. Otherwise they stay in that Mac's task workspace and the chat says so.
+- **Limits.** Link baselines are taken at task start, not pinned when the project is saved, so the two Macs only need to match on the main project's commit. Not tested yet with live agents on real Android, Mac and Go repositories.
+
 ## Git cooperation with Claude
 
 Read `AGENTS.md` (also referenced by `CLAUDE.md`). Work in separate worktrees and branches. Never share a live checkout, reset another agent’s work, force push, or push directly to main.

@@ -344,7 +344,7 @@ def _fetch_ssh_result(state, remote, review, project_id, task_id, commit):
     require(outcome.returncode == 0, "Authenticated Git result transfer failed; no active checkout was changed.", "git_transfer_failed")
 
 
-def configure_coding_project(state: Path, project_id: str, repository: Path, peers: list[str], agent: str = 'codex') -> dict:
+def configure_coding_project(state: Path, project_id: str, repository: Path, peers: list[str], agent: str = 'codex', links: list | None = None) -> dict:
     """Local admin enables normal coding tools for a whole repository."""
     identifier(project_id)
     require(agent in AGENTS, 'Choose Codex or Claude.')
@@ -359,7 +359,9 @@ def configure_coding_project(state: Path, project_id: str, repository: Path, pee
     repository = repository.expanduser().resolve(strict=True)
     require(repository.is_dir() and not repository.is_relative_to(state), 'Choose a project folder outside bridge state.')
     require(git(repository, 'rev-parse', '--show-toplevel') == str(repository), 'Choose the root of the Git project.')
-    project = {'repository': str(repository), 'adapter': agent, 'worker': agent, 'scope': ['*'],
+    from aabridge_workspace.linked import validate_links
+    related = validate_links(state, repository, links or [])
+    project = {'repository': str(repository), 'adapter': agent, 'worker': agent, 'scope': ['*'], **({'links': related} if related else {}),
                'base_commit': git(repository, 'rev-parse', 'HEAD'), 'verification': {'profile': 'repository-v1'},
                'permission_profile': 'coding-v1', 'execution_enabled': False,
                'limits': {'runtime_seconds': 3600, 'max_turns': 100, 'max_revisions': 100}, **runtime_binding(state, agent)}

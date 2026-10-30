@@ -65,7 +65,7 @@ def main():
         if args.action == "project-save":
             import asyncio
             from aabridge_cli.actions import configure_file_project, enable_project, store_claude_token
-            body = fields(decode(sys.stdin.buffer.read(MAX_MESSAGE + 1)), {"id", "repository", "scope", "peers"}, {"agent", "claude_token", "coding"})
+            body = fields(decode(sys.stdin.buffer.read(MAX_MESSAGE + 1)), {"id", "repository", "scope", "peers"}, {"agent", "claude_token", "coding", "links"})
             identifier(body["id"])
             require(isinstance(body["repository"], str), "Choose a repository folder.")
             agent = body.get("agent", "codex")
@@ -75,7 +75,7 @@ def main():
                 store_claude_token(state, body["claude_token"])
             if body.get("coding") is True:
                 from aabridge_cli.actions import configure_coding_project
-                configure_coding_project(state, body["id"], Path(body["repository"]), body["peers"], agent)
+                configure_coding_project(state, body["id"], Path(body["repository"]), body["peers"], agent, body.get("links", []))
             else:
                 configure_file_project(state, body["id"], Path(body["repository"]), body["scope"], body["peers"], agent)
             try:
@@ -84,7 +84,7 @@ def main():
                 raise BridgeError(exc.code, "Project scope saved, but execution remains disabled: " + exc.message) from None
         config = load_config(state)
         print(json.dumps({"peer_labels": {name: policy.get("label", name) for name, policy in config["peers"].items()}, "claude_token_stored": (state / "claude-oauth-token").exists(),
-              "projects": [{"id": name, **{key: value[key] for key in ("repository", "adapter", "scope", "verification", "execution_enabled")},
+              "projects": [{"id": name, **{key: value[key] for key in ("repository", "adapter", "scope", "verification", "execution_enabled")}, "links": value.get("links", []),
               "peers": [peer for peer, policy in config["peers"].items() if peer != "local" and policy["enabled"] and (name in policy["projects"] or "*" in policy["projects"])]}
               for name, value in config["projects"].items()],
               "peers": [name for name, policy in config["peers"].items() if name != "local" and policy["enabled"]]}))
