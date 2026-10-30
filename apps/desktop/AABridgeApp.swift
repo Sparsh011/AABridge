@@ -25,8 +25,13 @@ final class SetupModel: ObservableObject {
         self.preferences = preferences
         let seed = (try? Data(contentsOf: payload.appendingPathComponent("runtime-paths.json")))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-        codex = preferences.string(forKey: "codexPath") ?? seed["codex"] as? String ?? ""
-        claude = preferences.string(forKey: "claudePath") ?? seed["claude"] as? String ?? ""
+        func selection(_ agent: String) -> String {
+            let saved = preferences.string(forKey: agent + "Path") ?? ""
+            if !saved.isEmpty && FileManager.default.fileExists(atPath: (saved as NSString).expandingTildeInPath) { return saved }
+            return seed[agent] as? String ?? saved
+        }
+        codex = selection("codex")
+        claude = selection("claude")
         let saved = preferences.string(forKey: "receiverWorker") ?? "codex"
         worker = SetupModel.workers.contains { $0.0 == saved } ? saved : "codex"
     }
