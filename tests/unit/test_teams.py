@@ -139,7 +139,7 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
         await self.runner.step(room['id'])
         blocked = get(self.store, room['id'])
         self.assertEqual(blocked['status'], 'blocked')
-        self.assertIn('Finish active tasks before updating', blocked['error'])
+        self.assertIn('older AABridge', blocked['error'])
         self.assertFalse(self.accepted)
 
     async def test_model_settings_are_pinned_independently_for_each_role(self):

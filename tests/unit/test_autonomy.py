@@ -288,6 +288,54 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
                 publish.pull_request(self.repo, 'main', 'x', 'y')
         self.assertEqual(log.read_text().count('pr create'), 1)
 
+    async def test_updated_agent_names_the_mac_and_project_and_retry_starts_fresh(self):
+        config = load_config(self.state)
+        config['remotes']['mini'] = {'label': 'Sparsh’s MBP', 'host': 'mbp.local', 'user': 'me', 'port': 22, 'identity_file': '/x', 'known_hosts': '/y'}
+        save_config(self.state, config)
+        original = self.call
+        broken = True
+        async def updated(op, body, target, key=None):
+            task = await original(op, body, target, key)
+            if op == 'submit' and broken:
+                task.update(status='failed', error_code='adapter_changed', error='The agent was updated. Save this project again to revalidate it.')
+            return task
+        self.runner.call = updated
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        blocked = await self.run_until(room['id'])
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertEqual((blocked['failure']['machine'], blocked['failure']['project']), ('Sparsh’s MBP', 'app'))
+        self.assertIn('Codex was updated on Sparsh’s MBP', blocked['messages'][-1]['text'])
+        self.assertIn('On Sparsh’s MBP, open AABridge → Projects, select “app” and press Save', blocked['messages'][-1]['text'])
+        self.assertEqual(blocked['messages'][-1]['speaker'], 'AABridge')  # Not shown as the leader talking.
+        broken = False
+        self.admin('team_retry', {'team_id': room['id']})
+        done = await self.run_until(room['id'], statuses=('completed',))
+        self.assertIsNone(done.get('failure'))
+        plan_keys = [key for op, body, _, key in self.requests if op == 'submit' and body['mode'] == 'plan']
+        self.assertEqual(len(set(plan_keys)), 2)  # The retry made a new task instead of replaying the failed one.
+
+    async def test_unreachable_mac_is_named(self):
+        async def offline(op, body, target, key=None):
+            raise BridgeError('remote_unavailable', 'SSH authentication, reachability, or restricted entry point failed; no raw SSH output returned.')
+        self.runner.call = offline
+        room = self.start(approval='auto')
+        await self.runner.step(room['id'])
+        blocked = get(self.store, room['id'])
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertIn('Couldn’t reach AABridge on mini', blocked['error'])
+        self.assertIn('Remote Login', blocked['error'])
+
+    async def test_direct_connection_failure_does_not_mention_remote_login(self):
+        async def offline(op, body, target, key=None):
+            raise BridgeError('direct_unavailable', 'Direct connection failed.')
+        self.runner.call = offline
+        room = self.start(approval='auto')
+        await self.runner.step(room['id'])
+        error = get(self.store, room['id'])['error']
+        self.assertIn('over its direct connection', error)
+        self.assertNotIn('Remote Login', error)
+
     def test_branch_names_are_short_and_valid(self):
         name = publish.branch_name('codex', 'Add a NEW screen — that takes weight as input!!! and more words here', 'team-0123456789abcdef')
         self.assertEqual(name, 'codex/add-a-new-screen-that-takes-weight-as-abcdef')

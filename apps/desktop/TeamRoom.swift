@@ -9,6 +9,8 @@ struct TeamEntry: Decodable, Identifiable {
 struct TeamResult: Decodable { let branch: String; let worktree: String; let result_commit: String; let base_commit: String }
 struct TeamPlacement: Codable { var mode: String; var pull_request: Bool? = nil }
 struct TeamGate: Decodable { let kind: String; let reason: String }
+/// Why a stage stopped, and the one thing to do about it.
+struct TeamFailure: Decodable { let problem: String; let fix: String; let machine: String; let project: String; let retry: Bool }
 struct TeamPublication: Decodable {
     var mode: String? = nil; var branch: String? = nil; var path: String? = nil; var pull_request: String? = nil
     var merge: String? = nil; var merge_error: String? = nil; var error: String? = nil
@@ -21,6 +23,7 @@ struct TeamRoom: Decodable, Identifiable {
     var approval: String? = nil; var placement: TeamPlacement? = nil; var gate: TeamGate? = nil
     var publication: TeamPublication? = nil; var verdict: String? = nil
     var fixes: Int? = nil; var max_fixes: Int? = nil; var notes_waiting: Int? = nil
+    var failure: TeamFailure? = nil
 }
 struct TeamChoice: Identifiable {
     let id: String; let label: String; let member: TeamMember
