@@ -25,6 +25,7 @@ struct BridgeProject: Decodable, Identifiable {
     let execution_enabled: Bool
     let verification: ProjectVerification?
     var capabilities: [String: Bool]? = nil
+    var links: [ProjectLink]? = nil
     var available: Bool { execution_enabled && ["codex", "claude"].contains(adapter) }
 }
 

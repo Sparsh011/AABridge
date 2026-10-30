@@ -29,7 +29,19 @@ A new task picks three things in the desktop form (`team_start` fields; omitting
 - **`placement`**. `sandbox` (the default) keeps the result in the isolated task clone. `branch` copies the follower's commit into the admin's project as `<agent>/<task-slug>-<room suffix>`. It never adopts an existing branch name; a collision gets a `-2` suffix. `worktree` does the same and adds a Git worktree next to the project in `<project>-worktrees/`. `current` fast-forwards the checked-out feature branch, and refuses main/master/the default branch, a dirty tree or a branch that moved. `pull_request: true` pushes the branch without force, using the admin's `gh` login, and opens or reuses one pull request. The leader's reviews are posted on it as comments. Delivery runs on the admin Mac, so one member must be `local`, and it repeats after every fix round. A delivery failure is reported in the chat and never stops the team.
 - **Merging** happens only on `team_merge`, which is the desktop Merge button (`gh pr merge --merge`). Nothing is merged automatically.
 
+When a stage fails, the runner records `failure` with the problem, the fix, the Mac and the project, and posts it as an AABridge message, not as the agent speaking. Fixable setup failures (agent updated, agent missing, restart, cancellation) pause the room as `blocked`. **Try again** then starts a fresh task for that stage, instead of replaying the failed one under the same key. Connection and baseline errors also name the Mac and the commits involved.
+
 `team_guide` sends an admin note while the team works. Notes are queued durably and attached to the next agent turn. If one arrives mid-step, the runner adds a turn: the leader re-plans, or the worker adjusts before review. The note never interrupts a running CLI process. Task clones now use the working agent's prefix (`claude/task-…` or `codex/task-…`); older `codex/` clones are still accepted.
+
+## Linked projects (multi-repository work)
+
+A coding project can list up to 8 **related projects** on the same Mac (Projects → step 4), each with **Can read** or **Can edit** access. One example is a Go server linked to its Android and Mac apps. The Mac that owns the project sets these links, and peers only see the link names and access levels, never local paths. A peer granted the main project gets its links; nothing else on that Mac is exposed.
+
+- **Where the copies live.** When a task starts, `aabridge_workspace.linked` clones each linked repository at its current commit into `workspaces/<task>.linked/<name>`, next to the main task checkout. Each clone is on the same task branch and has no `origin`. The admin's folders are never written to during the task.
+- **What the agents are given.** The prompt lists every linked folder with its access level. Codex gets only the **Can edit** folders as writable roots, through `sandbox_workspace_write.writable_roots`, so its sandbox keeps read-only links read-only. Claude Code gets every linked folder via `--add-dir`.
+- **After each turn.** AABridge commits changes in edit links. Anything changed in a read link, or in any link during plan and review, is reset and noted in the result. Each changed link's diff goes into the leader's review alongside the main diff, within the same 64,000-byte limit.
+- **Delivery.** Edit-link changes use the same placement as the main project and the same branch name, each with its own pull request when PR delivery is on; reviews are posted on every PR. **Merge** merges them all, and skips ones already merged when retried. Linked changes are only copied into the admin's folders when the worker runs on the admin Mac. Otherwise they stay in that Mac's task workspace and the chat says so.
+- **Limits.** Link baselines are taken at task start, not pinned when the project is saved, so the two Macs only need to match on the main project's commit. Not tested yet with live agents on real Android, Mac and Go repositories.
 
 ## Git cooperation with Claude
 
@@ -42,6 +54,36 @@ Run `python scripts/git_sync.py` before a push. It fetches using the authenticat
 The desktop app runs `Activity.command` with `zsh -f`, so the user's zsh startup files no longer run for each UI call. One Mac mini had a `~/.zshenv` line that appended a copy of itself every time a shell started. After about 8,000 copies, each call took 7.7 s instead of 0.11 s.
 
 SSH requests from the paired Mac still run through the receiving user's login shell, because sshd runs the forced command with `$SHELL -c` and zsh always reads `~/.zshenv`. **Check prerequisites** now inspects that file without running it, and warns about self-appending or heavily duplicated lines.
+
+## Build integration · 0.3.0.dev5
+
+PR #10 incorporates the linked-project and connection-error updates from main.
+Project discovery advertises both shared-history capabilities and linked-project
+names/access while continuing to omit receiver-local paths. Shared-history
+ownership and read-only controls remain in effect.
+
+`make build` now replaces the single Git-ignored `build/AABridge.app` (override
+with `APP_PATH`). Setup files and the Python wheel are bundled directly into the
+app, with temporary packaging files cleaned up and no generated ZIPs. The native
+builder verifies both architectures, signature and resources before publishing;
+it preserves the prior app on build failure and rolls back a failed replacement.
+This does not update a running installed receiver: use Set up this Mac after
+building, on both Macs when updating their shared-history protocol support.
+
+The check/build subprocess environment derives source roots from the current
+`pyproject.toml` package map. This fixes `aabridge_transport_direct` import errors
+after pulling into an older editable Python installation, without relying on
+that installation's generated module finder or modifying the user's environment.
+
+Integration validation: `make build` passed all 243 deterministic tests and
+created the app directly with both arm64/x86_64 images and valid signature/
+resources. The embedded wheel passed offline installation and all 20 MCP/schema
+checks. The native shared-history render confirmed answer/cancel send nothing
+for a receiver-local task. Regression checks cover source imports with no
+editable finder, repeated app replacement, rollback after publication failure,
+and preserving unrelated/symlinked output. Linked-project discovery was also
+rechecked with both linked names/access and shared-history capabilities present.
+No paid model calls or physical two-Mac model execution were performed.
 
 ## Shared Task history · 0.3.0.dev5
 

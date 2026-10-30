@@ -9,6 +9,7 @@ struct LocalProject: Decodable, Identifiable {
     let verification: ProjectVerification
     let execution_enabled: Bool
     let peers: [String]
+    var links: [ProjectLink]? = nil
 }
 
 final class ProjectSettingsModel: ObservableObject {
@@ -23,6 +24,8 @@ final class ProjectSettingsModel: ObservableObject {
     @Published var agent = "codex"
     @Published var coding = true
     @Published var claudeToken = ""
+    /// Related projects agents may also open while working on this one.
+    @Published var links: [ProjectLink] = []
     @Published var claudeTokenStored = false
     @Published var busy = false
     @Published var notice = ""
@@ -34,9 +37,28 @@ final class ProjectSettingsModel: ObservableObject {
     var agentName: String { agent == "claude" ? "Claude Code" : "Codex" }
     func chooseProject() {
         guard let project = projects.first(where: { $0.id == selected }) else {
-            projectID = ""; repository = ""; scopeText = ""; selectedPeers = []; agent = "codex"; coding = true; selectedPeers = Set(peers); return
+            projectID = ""; repository = ""; scopeText = ""; selectedPeers = []; agent = "codex"; coding = true; selectedPeers = Set(peers); links = []; return
         }
         projectID = project.id; repository = project.repository; scopeText = project.scope.joined(separator: "\n"); selectedPeers = Set(project.peers); agent = project.adapter; coding = project.verification.profile == "repository-v1"
+        links = project.links ?? []
+    }
+    /// Folder name as AABridge will name the link (matches the Python side).
+    static func linkName(_ folder: URL) -> String {
+        let slug = folder.lastPathComponent.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? String($0) : "-" }.joined()
+        let parts = slug.split(separator: "-").joined(separator: "-")
+        return parts.isEmpty ? "project" : String(parts.prefix(40))
+    }
+    func addLink() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a related Git project on this Mac"
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            let path = url.standardizedFileURL.path
+            guard path != repository, !links.contains(where: { $0.repository == path }) else { notice = "\(url.lastPathComponent) is already part of this project."; continue }
+            guard links.count < 8 else { notice = "You can link up to 8 related projects."; break }
+            links.append(ProjectLink(name: Self.linkName(url), repository: path, access: "read"))
+        }
     }
     func chooseRepository() {
         let panel = NSOpenPanel()
@@ -44,6 +66,11 @@ final class ProjectSettingsModel: ObservableObject {
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
             repository = url.path
+            // A second agent's project for the same folder usually needs the same links.
+            if links.isEmpty, let sibling = projects.first(where: { $0.repository == url.path && !($0.links ?? []).isEmpty }) {
+                links = sibling.links ?? []
+                notice = "Copied related projects from \(sibling.id). Change them below if this agent needs different access."
+            }
             if projectID.isEmpty {
                 let slug = url.lastPathComponent.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : Character("-") }
                 projectID = "project-" + String(slug.prefix(45)) + "-" + agent
@@ -72,6 +99,7 @@ final class ProjectSettingsModel: ObservableObject {
         guard canSave else { return }
         do {
             var body: [String: Any] = ["id": projectID, "repository": repository, "scope": coding ? ["*"] : scope, "peers": selectedPeers.sorted(), "agent": agent, "coding": coding]
+            if coding { body["links"] = links.map { ["repository": $0.repository ?? "", "access": $0.access] } }
             let token = claudeToken.trimmingCharacters(in: .whitespacesAndNewlines)
             if agent == "claude" && !token.isEmpty { body["claude_token"] = token }
             let data = try JSONSerialization.data(withJSONObject: body)
@@ -128,6 +156,30 @@ struct ProjectSettingsView: View {
                 if model.peers.isEmpty { Text("Connect the other Mac in Devices first. You can still save a project for local work.").foregroundStyle(.secondary) }
                 ForEach(model.peers, id: \.self) { peer in
                     Toggle(model.peerLabels[peer] ?? peer, isOn: Binding(get: { model.selectedPeers.contains(peer) }, set: { if $0 { model.selectedPeers.insert(peer) } else { model.selectedPeers.remove(peer) } }))
+                }
+                if model.coding {
+                    Text("4. Related projects (optional)").font(.bridge(.headline))
+                    Text("Does this project work with others, like a server with its Android and Mac apps? Link them so agents can look at them, and change them if you allow it, in the same task. Agents work on their own copies; your folders aren’t touched until you choose where results go.")
+                        .font(.bridge(.callout)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    ForEach($model.links) { $link in
+                        HStack(spacing: 12) {
+                            Image(systemName: "folder").foregroundStyle(.tint)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(link.name).font(.bridge(.headline))
+                                Text(link.repository ?? "").font(.bridge(.caption)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer()
+                            Picker("Access", selection: $link.access) { Text("Can read").tag("read"); Text("Can edit").tag("edit") }
+                                .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+                            Button { model.links.removeAll { $0.id == link.id } } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless).help("Remove this related project")
+                        }.padding(10).background(Color.primary.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    Button { model.addLink() } label: { Label("Add related project…", systemImage: "plus") }
+                    if !model.links.isEmpty {
+                        Text("Can read: agents may open it for context. Can edit: agents may change it, and the changes come back on the same branch name in that project, with its own pull request if you ask for one.")
+                            .font(.bridge(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }.padding(18) }
             DisclosureGroup("Advanced settings", isExpanded: $advanced) {

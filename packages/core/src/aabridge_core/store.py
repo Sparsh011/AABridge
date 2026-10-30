@@ -207,7 +207,10 @@ class Store:
             peer = config["peers"][identity]
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
-            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "model_settings": project.get("permission_profile") == "coding-v1"}, **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
+            # Peers see linked project names and access, never their local paths.
+            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "model_settings": project.get("permission_profile") == "coding-v1"},
+                           "links": [{"name": link["name"], "access": link["access"]} for link in project.get("links", [])],
+                           **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
         if request.op == "tasks":
             peer = config["peers"].get(identity, {})

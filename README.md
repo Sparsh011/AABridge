@@ -119,6 +119,21 @@ selection, local Claude discovery and disconnected-drive behavior.
 
 ## Check and build
 
+Build the universal macOS app with one command after installing the
+development dependencies and Apple's command-line tools:
+
+```sh
+make build
+```
+
+Each successful build replaces `build/AABridge.app`, which is Git-ignored.
+No ZIPs or numbered output folders are created. Override the location with
+`make build APP_PATH="build/My Apps/AABridge.app"`. It uses the existing
+local device public key for the setup payload; see [desktop build options](docs/desktop.md#build)
+to supply another public key. Run `make check` for tests alone.
+
+Individual checks and Python packaging commands:
+
 ```sh
 .venv/bin/python scripts/check.py
 .venv/bin/python scripts/verify_ssh.py

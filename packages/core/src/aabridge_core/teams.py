@@ -72,7 +72,7 @@ def public(room):
     result['earlier_messages'] = len(room['messages']) - len(messages)
     work = room.get('outputs', {}).get('work')
     result['result'] = ({k: work[k] for k in ('branch', 'worktree', 'result_commit', 'base_commit')} if work else None)
-    for key in ('approval', 'placement', 'gate', 'publication', 'verdict', 'fixes', 'max_fixes'):
+    for key in ('approval', 'placement', 'gate', 'publication', 'verdict', 'fixes', 'max_fixes', 'failure'):
         result[key] = room.get(key)
     result['notes_waiting'] = len(waiting_notes(room))
     return result
@@ -136,6 +136,7 @@ def handle(store, request, identity):
     elif op == 'team_retry':
         require(room['status'] in {'running', 'blocked'}, 'This team cannot retry its current stage.', 'invalid_state')
         room['status'], room['error'] = 'running', ''
+        room.pop('failure', None)
     elif op == 'team_guide':
         require(room['status'] in {'running', 'blocked', 'awaiting_admin'}, 'This task has finished. Send your message as a follow-up instead.', 'invalid_state')
         room.setdefault('guidance', []).append({'id': new_id('note'), 'text': body['text'], 'time': time.time(), 'delivered': False})
@@ -170,11 +171,11 @@ def handle(store, request, identity):
             room.update(status='running', gate=None, task_id=None, attempted=False)
     elif op == 'team_merge':
         publication = room.get('publication') or {}
-        require(room['status'] == 'completed' and publication.get('pull_request'), 'There is no pull request to merge yet.', 'invalid_state')
+        require(room['status'] == 'completed' and pull_requests(publication), 'There is no pull request to merge yet.', 'invalid_state')
         if publication.get('merge') not in {'requested', 'merged'}:
             publication.update(merge='requested', merge_error='')
             room['publication'] = publication
-            message(room, 'You · admin', 'Merge the pull request.')
+            message(room, 'You · admin', 'Merge the pull request' + ('s.' if len(pull_requests(publication)) > 1 else '.'))
     elif op == 'team_reply':
         require(room['status'] in TERMINAL, 'Stop or finish the current task before sending new instructions.', 'invalid_state')
         for role in ('leader', 'follower'):
@@ -186,6 +187,7 @@ def handle(store, request, identity):
             room['continuation'] = next(t for t in reversed(room['stage_tasks']) if t['stage'] == 'work')
         for key in ('stage_body', 'stage_operation', 'stage_key', 'work_reason'):
             room.pop(key, None)
+        room.pop('failure', None)
         room.update(status='running', stage='plan', round=room['round'] + 1, task_id=None,
                     attempted=False, outputs={}, error='', objective=body['text'], resume={}, fixes=0, verdict=None, gate=None)
         message(room, 'You · admin', body['text'])
@@ -193,16 +195,29 @@ def handle(store, request, identity):
     return public(save(store, room))
 
 
+def pull_requests(publication):
+    """(repository, url, label) for the main pull request and each linked one."""
+    found = [(publication['repository'], publication['pull_request'], 'this project')] if publication.get('pull_request') else []
+    return found + [(entry['repository'], entry['pull_request'], entry['name']) for entry in publication.get('linked', []) if entry.get('pull_request')]
+
+
 def finished(room, opening):
     publication = room.get('publication') or {}
-    if publication.get('pull_request'):
-        where = f'Pull request: {publication["pull_request"]}\nMerge it here or on GitHub when you’re ready. Nothing was merged.'
-    elif publication.get('branch'):
-        where = f'It’s on branch `{publication["branch"]}` in {publication["path"]}. Nothing was merged.'
+    requests = pull_requests(publication)
+    if requests:
+        where = ('Pull request: ' if len(requests) == 1 else 'Pull requests:\n') + '\n'.join(
+            (f'- {label}: ' if len(requests) > 1 else '') + url for _, url, label in requests) + '\nMerge here or on GitHub when you’re ready. Nothing was merged.'
+    elif publication.get('branch') or publication.get('linked'):
+        places = ([f'`{publication["branch"]}` in {publication["path"]}'] if publication.get('branch') else []) + \
+                 [f'`{entry["branch"]}` in {entry["path"]}' for entry in publication.get('linked', []) if entry.get('branch')]
+        where = 'It’s on branch ' + ', '.join(places) + '. Nothing was merged.'
     else:
         where = 'The result branch is saved in AABridge for your review. Nothing was pushed or merged.'
     if publication.get('error'):
         where += '\nCouldn’t deliver it to your project: ' + publication['error']
+    for entry in publication.get('linked', []):
+        if entry.get('error'):
+            where += f'\nCouldn’t deliver the {entry["name"]} changes: ' + entry['error']
     return opening + ' ' + where
 
 
@@ -329,15 +344,37 @@ class TeamRunner:
         previous = room.get('publication') or {}
         if previous.get('merge') == 'merged':
             previous = {}  # A follow-up after a merge starts a fresh branch and pull request.
-        branch = previous.get('branch') or delivery.free_branch(repo, delivery.branch_name(room['follower']['agent'], room['assignment']['objective'], room['id']))
-        placed = delivery.place(repo, source, result['result_commit'], placement['mode'], branch)
-        publication = {**previous, **placed, 'repository': str(repo), 'error': ''}
-        if placement.get('pull_request'):
-            body = ('Opened by AABridge for a team task. The leader reviews this pull request; only the admin merges it.\n\n'
-                    f'## Task\n{room["objective"]}\n\n## Leader plan\n{room["outputs"]["plan"]["summary"][:6000]}\n\n'
-                    f'## Worker report ({room["follower"]["agent"]})\n{result["summary"][:8000]}\n')
-            title = room['follower']['agent'].capitalize() + ': ' + room['assignment']['objective'].strip().splitlines()[0][:150]
-            publication.update(pull_request=delivery.pull_request(repo, placed['branch'], title, body, previous.get('pull_request'))['url'])
+        wanted = delivery.branch_name(room['follower']['agent'], room['assignment']['objective'], room['id'])
+        publication = {**previous, 'repository': str(repo), 'error': ''}
+        body = ('Opened by AABridge for a team task. The leader reviews this pull request; only the admin merges it.\n\n'
+                f'## Task\n{room["objective"]}\n\n## Leader plan\n{room["outputs"]["plan"]["summary"][:6000]}\n\n'
+                f'## Worker report ({room["follower"]["agent"]})\n{result["summary"][:8000]}\n')
+        title = room['follower']['agent'].capitalize() + ': ' + room['assignment']['objective'].strip().splitlines()[0][:150]
+        if result['result_commit'] != result['base_commit'] or previous.get('branch'):
+            placed = delivery.place(repo, source, result['result_commit'], placement['mode'], previous.get('branch') or delivery.free_branch(repo, wanted))
+            publication.update(placed)
+            if placement.get('pull_request'):
+                publication.update(pull_request=delivery.pull_request(repo, placed['branch'], title, body, previous.get('pull_request'))['url'])
+        # Each linked project with edits gets the same branch name and its own PR.
+        earlier = {entry['name']: entry for entry in previous.get('linked', [])}
+        linked = []
+        for link in result.get('linked', []):
+            if link['access'] != 'edit' or not (link['changed_paths'] or link['name'] in earlier):
+                continue
+            entry, before = {'name': link['name']}, earlier.get(link['name'], {})
+            try:
+                require(room['follower']['target'] == 'local', f'The {link["name"]} changes stay in AABridge on the worker’s Mac. Only work done on this Mac can be copied into your folders.', 'publish_blocked')
+                folder = Path(link['repository'])
+                entry.update(delivery.place(folder, Path(link['worktree']), link['result_commit'], placement['mode'], before.get('branch') or delivery.free_branch(folder, wanted)),
+                             repository=str(folder))
+                if placement.get('pull_request'):
+                    related = f'\nPart of the same task as {publication["pull_request"]}.\n' if publication.get('pull_request') else ''
+                    entry['pull_request'] = delivery.pull_request(folder, entry['branch'], title + f' ({link["name"]})', body + related, before.get('pull_request'))['url']
+            except Exception as exc:
+                entry['error'] = getattr(exc, 'message', f'Could not copy the {link["name"]} changes into its folder.')
+            linked.append(entry)
+        if linked:
+            publication['linked'] = linked
         return publication
 
     async def deliver(self, room, task):
@@ -351,20 +388,71 @@ class TeamRunner:
         after = room['publication']
         if after.get('pull_request') and after['pull_request'] != before.get('pull_request'):
             message(room, 'AABridge', f'Opened a pull request for the leader to review: {after["pull_request"]}')
-        elif after.get('branch') != before.get('branch'):
+        elif after.get('branch') and after.get('branch') != before.get('branch'):
             message(room, 'AABridge', f'Copied the work to branch `{after["branch"]}` in {after["path"]}.')
+        earlier = {entry['name']: entry for entry in before.get('linked', [])}
+        for entry in after.get('linked', []):
+            old = earlier.get(entry['name'], {})
+            if entry.get('error') and entry['error'] != old.get('error'):
+                message(room, 'AABridge', f'Couldn’t copy the {entry["name"]} changes: {entry["error"]}')
+            elif entry.get('pull_request') and entry['pull_request'] != old.get('pull_request'):
+                message(room, 'AABridge', f'Opened a pull request in {entry["name"]}: {entry["pull_request"]}')
+            elif entry.get('branch') and entry['branch'] != old.get('branch'):
+                message(room, 'AABridge', f'Copied the {entry["name"]} changes to branch `{entry["branch"]}` in {entry["path"]}.')
 
     async def merge(self, room):
         from aabridge_workspace import publish as delivery
         publication = room['publication']
-        try:
-            await asyncio.to_thread(delivery.merge, Path(publication['repository']), publication['pull_request'])
+        failed = []
+        for repository, url, label in pull_requests(publication):
+            if url in publication.get('merged', []):
+                continue  # Retrying after a partial failure skips the ones already merged.
+            try:
+                await asyncio.to_thread(delivery.merge, Path(repository), url)
+                publication.setdefault('merged', []).append(url)
+                message(room, 'AABridge', f'Merged {url} on GitHub.')
+            except Exception as exc:
+                failed.append(f'{label}: ' + getattr(exc, 'message', 'GitHub did not merge the pull request.'))
+        if failed:
+            publication.update(merge='failed', merge_error='\n'.join(failed))
+            message(room, 'AABridge', 'Not everything merged:\n' + publication['merge_error'])
+        else:
             publication['merge'] = 'merged'
-            message(room, 'AABridge', f'Merged {publication["pull_request"]} on GitHub.')
-        except Exception as exc:
-            publication.update(merge='failed', merge_error=getattr(exc, 'message', 'GitHub did not merge the pull request.'))
-            message(room, 'AABridge', 'The merge didn’t go through: ' + publication['merge_error'])
         save_runtime(self.store, room)
+
+    def machine(self, target):
+        if target == 'local':
+            return 'this Mac'
+        try:
+            from aabridge_core.config import load_config
+            return load_config(self.state)['remotes'][target].get('label') or target
+        except Exception:
+            return target
+
+    def explain(self, room, member, stage, task):
+        """Turn a failed stage task into one short problem and one concrete fix."""
+        agent = 'Claude Code' if member['agent'] == 'claude' else 'Codex'
+        mac, project = self.machine(member['target']), member['project']
+        step = {'plan': 'plan', 'work': 'build', 'review': 'review'}[stage]
+        role = 'worker' if stage == 'work' else 'leader'
+        code, detail = task.get('error_code', ''), task.get('error') or ''
+        where = f'On {mac}, open AABridge → Projects, select “{project}” and press Save.'
+        if code == 'adapter_changed' or 'was updated' in detail or 'binary changed' in detail:
+            problem, fix, retry = f'{agent} was updated on {mac}, so AABridge stopped it until the project is saved again.', where + ' Then press Try again here.', True
+        elif code == 'adapter_unavailable':
+            problem, fix, retry = (f'AABridge couldn’t start {agent} on {mac}.',
+                                   f'On {mac}, open AABridge → Settings and check {agent}’s location, sign in to {agent} there, then save “{project}” in Projects. Then press Try again here.', True)
+        elif task['status'] == 'waiting_question':
+            problem, fix, retry = f'The {role} asked a question instead of finishing: ' + ((task.get('question') or {}).get('text') or ''), 'Answer it in a follow-up message.', False
+        elif task['status'] == 'interrupted':
+            problem, fix, retry = f'AABridge restarted on {mac} while the {role} was working.', 'Press Try again to run this step again.', True
+        elif 'runtime limit' in detail:
+            problem, fix, retry = f'The {role} used up its time limit on {mac}.', 'Send a follow-up to continue from the saved work.', False
+        elif task['status'] == 'cancelled':
+            problem, fix, retry = f'The {role}’s step was cancelled on {mac}.', 'Press Try again to run it again.', True
+        else:
+            problem, fix, retry = f'The {role} ({agent} on {mac}) couldn’t {step}: {detail or "it stopped without a reason"}', 'Press Try again, or send a follow-up with more guidance.', True
+        return {'problem': problem, 'fix': fix, 'machine': mac, 'project': project, 'code': code or task['status'], 'retry': retry}
 
     def wait(self, room, kind, reason):
         room.update(status='awaiting_admin', gate={'kind': kind, 'reason': reason})
@@ -419,7 +507,7 @@ class TeamRunner:
             return
         stage = room['stage']
         member = room['follower' if stage == 'work' else 'leader']
-        target = member['target']
+        target = contact = member['target']
         try:
             if not room['task_id']:
                 if room['status'] == 'stopping' and not room['attempted']:
@@ -430,16 +518,20 @@ class TeamRunner:
                     # Freeze both identities and their baselines before any inference.
                     for role in ('leader', 'follower'):
                         peer = room[role]
+                        contact, mac = peer['target'], self.machine(peer['target'])
                         projects = await self.call('projects', {}, peer['target'])
                         project = projects.get(peer['project'])
                         require(project and project['execution_enabled'] and project['verification']['profile'] == 'repository-v1',
-                                'Choose an enabled full coding project on both Macs.', 'team_setup')
-                        require(project['adapter'] == peer['agent'], 'The chosen project uses another agent. Choose the matching project.', 'team_setup')
+                                f'The project “{peer["project"]}” on {mac} is missing or switched off. On {mac}, open AABridge → Projects, save it as a full coding project, then press Try again.', 'team_setup')
+                        require(project['adapter'] == peer['agent'], f'The project “{peer["project"]}” on {mac} is set up for a different agent. Pick the matching project when you start a task.', 'team_setup')
                         if peer.get('model_settings'):
-                            require(project.get('capabilities', {}).get('model_settings'), 'Model selection needs the new AABridge service on this participant. Finish active tasks before updating that Mac.', 'upgrade_required')
+                            require(project.get('capabilities', {}).get('model_settings'), f'{mac} runs an older AABridge that can’t choose models. Update AABridge on {mac} when it has no active tasks, or use the agent default.', 'upgrade_required')
                         room[role + '_project'] = project
-                    require(room['leader_project']['base_commit'] == room['follower_project']['base_commit'],
-                            'Both project copies need the same Git commit. Sync them and save both projects before retrying.', 'baseline_mismatch')
+                    contact = target
+                    leader, follower = room['leader_project']['base_commit'], room['follower_project']['base_commit']
+                    require(leader == follower,
+                            f'The two project copies are on different Git commits: {self.machine(room["leader"]["target"])} has {leader[:7]}, {self.machine(room["follower"]["target"])} has {follower[:7]}. '
+                            'Check out the same commit on both Macs, save the project in Projects on each, then press Try again.', 'baseline_mismatch')
                     project = room['follower_project' if stage == 'work' else 'leader_project']
                     # Within a round each role continues its own task, so an agent
                     # remembers its earlier plan, work or review.
@@ -485,9 +577,18 @@ class TeamRunner:
                 room['status'] = 'cancelled'
                 message(room, 'AABridge', 'Stopped. Partial work is preserved in the task branch.')
             elif task['status'] in {'failed', 'cancelled', 'interrupted', 'waiting_question'}:
-                room['status'] = 'failed'
-                message(room, member['agent'] + ' · ' + ('follower' if stage == 'work' else 'leader'),
-                        task.get('error') or (task.get('question') or {}).get('text') or 'The task stopped; review its saved task conversation.')
+                failure = self.explain(room, member, stage, task)
+                # A retry must start a new task: replaying the stage key would
+                # return this failed one, and a failed task can't be revised.
+                if (room.get('resume') or {}).get(stage, {}).get('task_id') == task['id']:
+                    room['resume'].pop(stage)
+                room.update(status='blocked' if failure['retry'] else 'failed', failure=failure, task_id=None, attempted=False)
+                for key in ('stage_body', 'stage_operation', 'stage_key'):
+                    room.pop(key, None)
+                message(room, 'AABridge', failure['problem'] + '\nHow to fix: ' + failure['fix'])
+                room['error'] = failure['problem']
+                save_runtime(self.store, room)
+                return
             elif task['status'] == 'completed' and room.get('live', {}).get('catching_up'):
                 save_runtime(self.store, room)
                 return
@@ -504,24 +605,38 @@ class TeamRunner:
                     else:
                         fetched = await asyncio.to_thread(fetch_result, self.state, target, task['id'])
                         room['diff'] = fetched['diff']
+                    for link in result.get('linked', []):
+                        require(not link.get('diff_truncated'), f'This change needs manual review: the {link["name"]} diff exceeds the team review context.', 'review_too_large')
+                        if link.get('diff'):
+                            room['diff'] += f'\n\n# Linked project {link["name"]} ({"can edit" if link["access"] == "edit" else "read only"})\n' + link['diff']
                     # The review stage must receive a bounded, explicit diff.
                     require(len(room['diff'].encode()) <= 64000, 'This change needs manual review: the diff exceeds the team review context.', 'review_too_large')
                     room['last_diff'] = room['diff']
                     if room.get('placement', {}).get('mode', 'sandbox') != 'sandbox':
                         await self.deliver(room, task)
-                elif stage == 'review' and (room.get('publication') or {}).get('pull_request'):
+                elif stage == 'review':
                     from aabridge_workspace.publish import comment
-                    try:
-                        await asyncio.to_thread(comment, Path(room['publication']['repository']), room['publication']['pull_request'],
-                                                f'**Leader review · {member["agent"]}**\n\n' + result['summary'])
-                    except Exception:
-                        pass  # The review is always saved in the team chat; the PR comment is a convenience.
+                    for repository, url, _ in pull_requests(room.get('publication') or {}):
+                        try:
+                            await asyncio.to_thread(comment, Path(repository), url, f'**Leader review · {member["agent"]}**\n\n' + result['summary'])
+                        except Exception:
+                            pass  # The review is always saved in the team chat; the PR comment is a convenience.
                 self.advance(room, stage, result)
             room['error'] = ''
             save_runtime(self.store, room)
         except Exception as exc:
             room = get(self.store, room_id)
-            room['error'] = getattr(exc, 'message', 'Could not reach a team member. Check the Mac connection and retry.')
+            code, mac = getattr(exc, 'code', ''), self.machine(contact)
+            if code in {'remote_unavailable', 'daemon_unavailable'}:
+                room['error'] = (f'Couldn’t reach AABridge on {mac}. Make sure it’s awake and on the same network, Remote Login is on, and AABridge is running there. Then press Try again.'
+                                 if contact != 'local' else 'AABridge’s background service on this Mac isn’t running. Open Settings → Set up this Mac, then press Try again.')
+            elif code == 'direct_unavailable':
+                room['error'] = (f'Couldn’t reach AABridge on {mac} over its direct connection. Make sure it’s awake, AABridge is running there, and its address in Devices is reachable '
+                                 '(same network or VPN). macOS may ask that Mac to allow incoming connections. Then press Try again.')
+            elif code == 'host_identity_mismatch':
+                room['error'] = f'{mac} answered with a different identity than when you connected it. If you reinstalled macOS there, reconnect it in Devices.'
+            else:
+                room['error'] = getattr(exc, 'message', f'Something went wrong talking to {mac}. Press Try again.')
             # No automatic retry storm and no duplicate model turns. The same
             # durable stage key is replayed when the admin chooses Retry.
             if room['status'] != 'stopping':

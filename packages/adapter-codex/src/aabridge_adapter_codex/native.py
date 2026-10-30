@@ -47,6 +47,8 @@ class NativeWorker:
         session = self.task.get('thread_id')
         settings = self.task.get('model_settings', {})
         selected = ['--model', settings['model']] if settings.get('model') else []
+        from aabridge_workspace import linked
+        links = linked.paths(self.state, self.task, self.project) if self.project.get('links') else []
         if agent == 'codex':
             # Global config works with both exec and exec resume. Never disable
             # the CLI sandbox or silently approve broader permissions.
@@ -54,12 +56,17 @@ class NativeWorker:
                       '-c', 'approval_policy="never"']
             if settings.get('effort'):
                 common += ['-c', 'model_reasoning_effort=' + json.dumps(settings['effort'])]
+            writable = [str(path) for link, path in links if link['access'] == 'edit']
+            if writable and not readonly:
+                # Only edit links become writable; Codex can read the others anyway.
+                common += ['-c', 'sandbox_workspace_write.writable_roots=' + json.dumps(writable)]
             if session:
                 return common + ['exec', 'resume', '--json', *selected, session, '-']
             return common + ['exec', '--json', *selected, '-']
         tools = 'Read,Glob,Grep' if readonly else 'Read,Glob,Grep,Edit,Write,Bash'
         if settings.get('effort'):
             selected += ['--effort', settings['effort']]
+        selected += [argument for _, path in links for argument in ('--add-dir', str(path))]
         return ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', *selected, '--permission-mode', 'acceptEdits',
                 '--tools', tools, '--allowedTools', tools, '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
                 *((['--resume', session]) if session else ['--session-id', str(uuid.uuid4())])]
@@ -67,11 +74,14 @@ class NativeWorker:
     async def turn(self, sources):
         workspace = self.state / 'workspaces' / self.task['id']
         mode = self.task.get('mode', 'work')
+        from aabridge_workspace import linked
+        links = linked.describe(self.state, self.task, self.project)
         prompt = ('You are working in AABridge. The human is the admin. Follow the assigned team role. '
-                  'Work only in this checkout and keep its branch. Do not push, merge, deploy, or change remotes. '
+                  'Work only in this checkout' + (' and the linked projects listed below' if links else '') + ', and keep their branch. Do not push, merge, deploy, or change remotes. '
                   'Report what changed, checks actually run, and remaining issues. '
                   'Give the human short progress updates as you work: what you are doing, files you are changing, and check results. Do not disclose private internal reasoning. '
                   + ('Inspect and respond only; do not edit files or create commits. ' if mode != 'work' else '')
+                  + ('\n' + links if links else '')
                   + '\nTask:\n' + self.task['objective'] + '\nContext:\n' + canonical(self.task.get('context', []))
                   + '\nFollow-up:\n' + canonical(self.task.get('pending')))
         environment = dict(os.environ)

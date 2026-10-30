@@ -179,6 +179,77 @@
         "minLength": 1,
         "maxLength": 4000
       }
+    },
+    "linked": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Linked projects the task could open. Edit links carry committed changes on the task branch; read links are always reset.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "access",
+          "repository",
+          "worktree",
+          "branch",
+          "base_commit",
+          "result_commit",
+          "changed_paths",
+          "diff",
+          "diff_truncated"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+          },
+          "access": {
+            "enum": [
+              "read",
+              "edit"
+            ]
+          },
+          "repository": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "worktree": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "branch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "base_commit": {
+            "type": "string",
+            "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+          },
+          "result_commit": {
+            "type": "string",
+            "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+          },
+          "changed_paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          },
+          "diff": {
+            "type": "string",
+            "maxLength": 64000
+          },
+          "diff_truncated": {
+            "type": "boolean"
+          }
+        }
+      }
     }
   },
   "required": [

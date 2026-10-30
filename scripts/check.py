@@ -4,12 +4,15 @@ from pathlib import Path
 import subprocess
 import sys
 
+from source_paths import source_environment
+
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     return subprocess.call(
         [sys.executable, "-m", "unittest", "discover", "-s", "tests/unit", "-v"],
         cwd=root,
+        env=source_environment(root),
     )
 
 

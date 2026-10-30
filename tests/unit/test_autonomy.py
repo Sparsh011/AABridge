@@ -288,6 +288,100 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
                 publish.pull_request(self.repo, 'main', 'x', 'y')
         self.assertEqual(log.read_text().count('pr create'), 1)
 
+    async def test_linked_project_changes_are_reviewed_delivered_and_merged_together(self):
+        android = self.root / 'android'
+        android.mkdir()
+        (android / 'Api.kt').write_text('v1\n')
+        git(android, 'init', '--initial-branch=main', '--template='); git(android, 'add', '--all'); git(android, 'commit', '-m', 'Base')
+        android_base = git(android, 'rev-parse', 'HEAD')
+        original = self.call
+        async def with_link(op, body, target, key=None):
+            task = await original(op, body, target, key)
+            if task.get('mode') == 'work' and op in {'submit', 'revise'}:
+                clone = self.state / 'workspaces' / (task['id'] + '.linked') / 'android'
+                if not clone.exists():
+                    clone.parent.mkdir(parents=True, exist_ok=True)
+                    git(clone.parent, 'clone', '--no-local', '--template=', str(android), str(clone))
+                (clone / 'Api.kt').write_text(f'v{task["revision"] + 1}\n')
+                git(clone, 'add', '--all'); git(clone, 'commit', '-q', '-m', 'Android change')
+                head = git(clone, 'rev-parse', 'HEAD')
+                task['result']['linked'] = [{'name': 'android', 'access': 'edit', 'repository': str(android), 'worktree': str(clone), 'branch': 'x',
+                                             'base_commit': android_base, 'result_commit': head, 'changed_paths': ['Api.kt'],
+                                             'diff': git(clone, 'diff', android_base, head), 'diff_truncated': False}]
+            return task
+        self.runner.call = with_link
+        self.reviews = ['VERDICT: CHANGES_REQUESTED', 'VERDICT: APPROVED']
+        opened, merged = [], []
+        def pull(repo, branch, title, body, existing=None):
+            opened.append((Path(repo).name, existing))
+            return {'url': 'https://github.com/o/' + Path(repo).name + '/pull/1', 'base': 'main'}
+        with patch('aabridge_workspace.publish.pull_request', side_effect=pull), patch('aabridge_workspace.publish.comment'), \
+             patch('aabridge_workspace.publish.merge', side_effect=lambda repo, url: merged.append(url)):
+            room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
+            done = await self.run_until(room['id'])
+            review = [b for op, b, _, _ in self.requests if op == 'submit' and b['mode'] == 'review'][0]
+            self.assertIn('# Linked project android (can edit)', review['context'][2])
+            entry = done['publication']['linked'][0]
+            self.assertEqual(entry['branch'], done['publication']['branch'])  # Same branch name in every repository.
+            self.assertEqual(git(android, 'rev-parse', 'refs/heads/' + entry['branch']), git(android, 'rev-parse', entry['branch']))
+            self.assertEqual(git(android, 'rev-parse', 'main'), android_base)
+            self.assertEqual(set(opened), {('android', None), ('android', 'https://github.com/o/android/pull/1'),
+                                           ('source', None), ('source', 'https://github.com/o/source/pull/1')})
+            self.assertEqual(len(opened), 4)  # Each fix round updates the same two pull requests.
+            self.assertIn('https://github.com/o/android/pull/1', done['messages'][-1]['text'])
+            self.admin('team_merge', {'team_id': room['id']})
+            await self.runner.step(room['id'])
+            self.assertEqual(sorted(merged), ['https://github.com/o/android/pull/1', 'https://github.com/o/source/pull/1'])
+            self.assertEqual(get(self.store, room['id'])['publication']['merge'], 'merged')
+
+    async def test_updated_agent_names_the_mac_and_project_and_retry_starts_fresh(self):
+        config = load_config(self.state)
+        config['remotes']['mini'] = {'label': 'Sparsh’s MBP', 'host': 'mbp.local', 'user': 'me', 'port': 22, 'identity_file': '/x', 'known_hosts': '/y'}
+        save_config(self.state, config)
+        original = self.call
+        broken = True
+        async def updated(op, body, target, key=None):
+            task = await original(op, body, target, key)
+            if op == 'submit' and broken:
+                task.update(status='failed', error_code='adapter_changed', error='The agent was updated. Save this project again to revalidate it.')
+            return task
+        self.runner.call = updated
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        blocked = await self.run_until(room['id'])
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertEqual((blocked['failure']['machine'], blocked['failure']['project']), ('Sparsh’s MBP', 'app'))
+        self.assertIn('Codex was updated on Sparsh’s MBP', blocked['messages'][-1]['text'])
+        self.assertIn('On Sparsh’s MBP, open AABridge → Projects, select “app” and press Save', blocked['messages'][-1]['text'])
+        self.assertEqual(blocked['messages'][-1]['speaker'], 'AABridge')  # Not shown as the leader talking.
+        broken = False
+        self.admin('team_retry', {'team_id': room['id']})
+        done = await self.run_until(room['id'], statuses=('completed',))
+        self.assertIsNone(done.get('failure'))
+        plan_keys = [key for op, body, _, key in self.requests if op == 'submit' and body['mode'] == 'plan']
+        self.assertEqual(len(set(plan_keys)), 2)  # The retry made a new task instead of replaying the failed one.
+
+    async def test_unreachable_mac_is_named(self):
+        async def offline(op, body, target, key=None):
+            raise BridgeError('remote_unavailable', 'SSH authentication, reachability, or restricted entry point failed; no raw SSH output returned.')
+        self.runner.call = offline
+        room = self.start(approval='auto')
+        await self.runner.step(room['id'])
+        blocked = get(self.store, room['id'])
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertIn('Couldn’t reach AABridge on mini', blocked['error'])
+        self.assertIn('Remote Login', blocked['error'])
+
+    async def test_direct_connection_failure_does_not_mention_remote_login(self):
+        async def offline(op, body, target, key=None):
+            raise BridgeError('direct_unavailable', 'Direct connection failed.')
+        self.runner.call = offline
+        room = self.start(approval='auto')
+        await self.runner.step(room['id'])
+        error = get(self.store, room['id'])['error']
+        self.assertIn('over its direct connection', error)
+        self.assertNotIn('Remote Login', error)
+
     def test_branch_names_are_short_and_valid(self):
         name = publish.branch_name('codex', 'Add a NEW screen — that takes weight as input!!! and more words here', 'team-0123456789abcdef')
         self.assertEqual(name, 'codex/add-a-new-screen-that-takes-weight-as-abcdef')
