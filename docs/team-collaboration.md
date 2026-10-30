@@ -226,3 +226,14 @@ Install this preview only after active work finishes. Update the bridge service 
 Protocol references: [Codex JSONL events](https://learn.chatgpt.com/docs/non-interactive-mode), [Codex CLI controls](https://learn.chatgpt.com/docs/developer-commands?surface=cli), [Claude CLI flags](https://code.claude.com/docs/en/cli-reference).
 
 Release checks: 194 deterministic tests passed, including public streaming before completion over two disposable supervisors, independent model choices and revision changes, privacy filtering, cursor replay, ownership, and old-service compatibility. The wheel passed offline installation and all 17 MCP tools loaded their schemas. The universal desktop passed signing/resource checks, and both model-selection and live-feed views were rendered for visual inspection. The installed native worker was separately verified to still match the previous 0.3.0.dev2 wheel.
+
+## Build runtime selection
+
+Builds discover local runtimes using existing configuration and fixed search
+locations. Missing runtimes prompt only on a terminal and can be skipped.
+Validated selections persist under ignored build/runtime-paths.json and seed
+receiver setup. Explicit CODEX_PATH/CLAUDE_PATH overrides fail early if invalid.
+This does not execute an agent, install a runtime, or change project approvals.
+App preferences with empty/missing locations fall back to bundled selections;
+existing usable user choices remain authoritative. Cross-Mac paths still need
+selection on the receiving Mac, especially when external drives differ.

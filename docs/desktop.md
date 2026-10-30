@@ -138,3 +138,26 @@ build, not a notarized public distribution. No model call is part of the build.
 `AABridge.app/Contents/MacOS/AABridge --verify-gui /absolute/preview.png` renders
 the app's own view and exercises its real diagnostic process/streaming path,
 using an isolated preferences domain without installing or granting SSH access.
+
+## Selecting runtimes when building
+
+In Settings → Set up this Mac, click Choose… beside Codex and select the existing
+ChatGPT.app, Codex.app or native codex executable, including on a connected SSD.
+Press Command–Shift–G to enter a path. Then check prerequisites and install the
+receiver. For Claude, select Claude.app or the standalone claude executable.
+
+`make build` checks both runtime locations before compiling. In a terminal it
+asks for a path if discovery fails, retries invalid paths, and allows Enter to
+skip an unused agent. Choices persist in Git-ignored `build/runtime-paths.json`
+and become setup defaults. Without a terminal, builds never wait for input;
+unavailable agents can be selected in setup. Explicit paths are validated:
+
+```sh
+make build CODEX_PATH="/Volumes/SparshT7/Downloads/ChatGPT.app"
+make build CLAUDE_PATH="$HOME/.local/bin/claude"
+```
+
+Existing usable app preferences remain selected; empty or missing locations use
+the bundled defaults. Paths belong to the build Mac: select the receiving Mac's
+own runtime when copying the app. Keep external drives mounted. After changing
+a runtime, re-save affected projects to refresh their executable approvals.
