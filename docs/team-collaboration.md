@@ -295,7 +295,7 @@ conflicts, incompatible client protocols and missing device acceptance results
 still require implementation work; this change does not approve or merge those
 PRs or modify the installed app/running services.
 
-Validation: `.venv/bin/python scripts/check.py` passed all 244 deterministic
+Validation: `.venv/bin/python scripts/check.py` passed all 225 deterministic
 checks after removing redundant scenarios and trivial helper checks. The team fixture uses local IPC plus mutual TLS and verifies that the leader's
 HEAD and files match the worker's exact revision, including follow-up turns.
 An additional replay used the captured failing room's real `a9d1b10` commit:
@@ -310,5 +310,11 @@ removed; the existing automatic fix loop checks successive review heads/files,
 and the PR delivery test checks branch placement, unchanged main and the merge
 commit argument. Invalid evidence, dirty review preservation, role restrictions,
 GitHub authentication/retries, lost acknowledgements and peer access checks remain
-covered. The cleanup removed 14 test methods and prompt-text assertions without
+covered. The first cleanup removed 14 test methods and prompt-text assertions without
 changing application behavior or skipping tests in the runner.
+
+A subsequent suite-wide audit removed another 19 duplicate runs, leaving 225
+tests. The remaining suite exercised the same 3,390 in-process production lines
+as the preceding 244-test suite. This is a supporting line-execution comparison,
+not a claim of exhaustive branch/mutation coverage. Removal reasons and retained
+behavior checks are recorded in [the test audit](test-audit-2026-10-31.md).

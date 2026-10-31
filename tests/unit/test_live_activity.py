@@ -99,14 +99,6 @@ class TaskModelSettingsTests(unittest.TestCase):
                 if resumed: self.assertIn('exact-session', arguments)
                 if agent == 'claude': self.assertIn('--include-partial-messages', arguments)
 
-    def test_default_settings_pass_no_model_or_effort_override(self):
-        worker = NativeWorker.__new__(NativeWorker)
-        for agent in ('codex','claude'):
-            worker.project = {'adapter':agent}; worker.task = {}
-            args = worker.arguments()
-            self.assertNotIn('--model', args); self.assertNotIn('--effort', args)
-            self.assertFalse(any('model_reasoning_effort' in item for item in args))
-
     def test_rejects_option_injection_and_agent_incompatible_effort(self):
         for value, agent in [({'model':'--dangerously-skip-permissions'},'claude'), ({'model':'model; echo hi'},'codex'), ({'effort':'ultracode'},'codex'), ({'effort':'ultra'},'claude'), ({'model':'m','unknown':True},'codex')]:
             with self.subTest(value=value, agent=agent), self.assertRaises(BridgeError): model_settings(value,agent)

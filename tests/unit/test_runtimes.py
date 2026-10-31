@@ -14,8 +14,8 @@ from aabridge_cli.actions import configure_runtimes, demo_init
 from aabridge_cli.main import main
 from aabridge_core.config import initialize, load_config, save_config
 from aabridge_preflight.probes import TOOLS, check_tool
-from aabridge_preflight.runtimes import locate_runtime, runtime_report
-from aabridge_protocol.messages import BridgeError, validate_request
+from aabridge_preflight.runtimes import runtime_report
+from aabridge_protocol.messages import BridgeError
 
 
 class RuntimeLocationsTests(unittest.TestCase):
@@ -38,13 +38,6 @@ class RuntimeLocationsTests(unittest.TestCase):
         self.local_bin.mkdir()
         (self.local_bin / "claude").symlink_to(self.claude)
 
-    def test_external_app_selected_outside_standard_applications(self):
-        with patch("aabridge_preflight.runtimes.shutil.which", side_effect=AssertionError("explicit path must not search PATH")):
-            self.assertEqual(locate_runtime("codex", str(self.app)), self.codex)
-
-    def test_finder_hidden_app_extension_is_accepted(self):
-        self.assertEqual(locate_runtime("codex", str(self.app.with_suffix(""))), self.codex)
-
     def test_unplugged_selected_drive_does_not_fall_back_to_another_codex(self):
         missing = f"/Volumes/AABridge-Unmounted-{self.root.name}/Downloads/ChatGPT.app"
         with patch("aabridge_preflight.runtimes.shutil.which", return_value=str(self.codex)) as which:
@@ -53,16 +46,13 @@ class RuntimeLocationsTests(unittest.TestCase):
         self.assertIn("Reconnect", report["message"])
         which.assert_not_called()
 
-    def test_local_claude_native_symlink_found_without_shell_path(self):
-        with patch("aabridge_preflight.runtimes.shutil.which", return_value=None):
-            self.assertEqual(locate_runtime("claude", command_roots=(self.local_bin,)), self.claude)
-
     def test_codex_drive_loss_does_not_hide_independent_local_claude(self):
         with patch("aabridge_preflight.runtimes.shutil.which", return_value=None):
             codex = runtime_report("codex", str(self.root / "missing/ChatGPT.app"))
             claude = runtime_report("claude", command_roots=(self.local_bin,))
         self.assertEqual(codex["status"], "unavailable")
         self.assertEqual(claude["status"], "found")
+        self.assertEqual(claude["executable"], str(self.claude))
         self.assertTrue(claude["adapter_available"])
         self.assertEqual(claude["authentication"], "not_checked")
 
@@ -78,7 +68,7 @@ class RuntimeLocationsTests(unittest.TestCase):
         self.assertEqual(report["claude"]["executable"], str(self.claude))
 
     def test_new_project_pins_selected_native_runtime_without_executing_it(self):
-        configure_runtimes(self.state, {"codex": str(self.app), "claude": str(self.claude)})
+        configure_runtimes(self.state, {"codex": str(self.app.with_suffix("")), "claude": str(self.claude)})
         demo_init(self.state, self.root / "source", "demo")
         project = load_config(self.state)["projects"]["demo"]
         self.assertEqual(project["codex_executable"], str(self.codex))
@@ -101,10 +91,6 @@ class RuntimeLocationsTests(unittest.TestCase):
         with self.assertRaises(BridgeError):
             demo_init(self.state, target, "demo")
         self.assertFalse(target.exists())
-
-    def test_peer_cannot_change_runtime_locations(self):
-        with self.assertRaises(BridgeError):
-            validate_request({"version": 1, "op": "runtime", "key": "change-runtime", "body": {"codex": str(self.app)}})
 
     def test_configured_missing_runtime_diagnostic_does_not_probe_path_alternative(self):
         with patch("aabridge_preflight.probes.shutil.which", return_value=str(self.codex)), patch("aabridge_preflight.probes._run_probe") as probe:

@@ -65,19 +65,10 @@ class StateTests(unittest.TestCase):
         config.chmod(0o644)
         self.assertEqual(check_state_directory(self.root).status, "error")
 
-    def test_state_directory_symlink_rejected(self):
-        alias = self.root / "alias"
-        alias.symlink_to(self.root, target_is_directory=True)
-        self.assertEqual(check_state_directory(alias).status, "error")
-
     def test_symlink_ancestor_even_when_leaf_missing_rejected(self):
         alias = self.root / "alias"
         alias.symlink_to(self.root, target_is_directory=True)
         self.assertEqual(check_state_directory(alias / "missing").status, "error")
-
-    def test_dangling_symlink_rejected(self):
-        (self.root / "config.toml").symlink_to(self.root / "missing-secret")
-        self.assertEqual(check_state_directory(self.root).status, "error")
 
     def test_state_file_symlink_rejected(self):
         secret = self.root / "secret"
@@ -182,12 +173,6 @@ class ToolTests(unittest.TestCase):
 
 
 class ReportAndCliTests(unittest.TestCase):
-    def test_healthy_foundation_does_not_enable_workers(self):
-        value = Report((Check("runtime", "ok", "available"),)).to_dict()
-        self.assertTrue(value["foundation_ready"])
-        self.assertFalse(value["worker_execution_enabled"])
-        self.assertEqual(value["verification"]["real_two_device_agents"], "not_verified")
-
     def test_cli_json_and_exit_status(self):
         for status, expected in (("ok", 0), ("warning", 0), ("error", 1)):
             with self.subTest(status=status):

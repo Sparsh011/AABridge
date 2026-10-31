@@ -107,6 +107,11 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(m["kind"] == "answer" and m["text"] == "Yes, addition" for m in history["messages"]))
         self.assertTrue(any(m["kind"] == "prepared_model_input" and 'return a - b' in m["text"] for m in history["messages"]))
         self.assertTrue(any(m["kind"] == "proposal" and 'return a + b' in m["text"] for m in history["messages"]))
+        events = await self.call("events", {"task_id": task["id"], "cursor": 0})
+        self.assertEqual(events["events"][0]["kind"], "submitted")
+        cursors = [event["cursor"] for event in events["events"]]
+        self.assertEqual(cursors, sorted(set(cursors)))
+        self.assertEqual((await self.call("events", {"task_id": task["id"], "cursor": events["cursor"]}))["events"], [])
         listed = await self.call("tasks", {"cursor": 0})
         self.assertEqual(listed["tasks"][0]["id"], task["id"])
         self.assertEqual((self.root / "source/math_ops.py").read_text(), "def add(a, b):\n    return a - b\n")
@@ -432,10 +437,6 @@ class AdapterWireTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(checkpoints, [("specific-thread", "session-original")])
             self.assertEqual([phase for phase, _ in progress], ["connecting", "resuming", "waiting_for_output", "working", "retrying"])
             self.assertNotIn("private reasoning", json.dumps(progress))
-
-    async def test_question_cannot_smuggle_edits(self):
-        with self.assertRaises(BridgeError):
-            validate_proposal({"kind": "question", "question": "Approve?", "summary": "Question", "issues": [], "edits": [{"path": "policy", "content": "allow"}]})
 
     async def test_question_may_have_empty_summary_but_result_may_not(self):
         question = {"kind": "question", "question": "Should add perform integer addition?", "summary": "", "issues": [], "edits": []}

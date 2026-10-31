@@ -126,24 +126,6 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(BridgeError):
             validate_request(envelope('team_decide', {'team_id': 'team-1', 'decision': 'merge'}))
 
-    async def test_auto_mode_loops_review_and_fix_until_the_leader_approves(self):
-        self.reviews = ['1. Negative weights are accepted.\nVERDICT: CHANGES_REQUESTED', 'Fixed properly.\nVERDICT: APPROVED']
-        room = self.start(approval='auto')
-        done = await self.run_until(room['id'])
-        self.assertEqual(done['status'], 'completed', done['messages'][-1])
-        self.assertEqual(self.stages(), [('submit', 'plan'), ('submit', 'work'), ('submit', 'review'), ('revise', 'work'), ('revise', 'review')])
-        fix = [b for op, b, _, _ in self.requests if op == 'revise'][0]['text']
-        self.assertIn('Negative weights are accepted', fix)
-        self.assertIn('explain why with evidence', fix)
-        rereview = [b for op, b, _, _ in self.requests if op == 'revise'][1]['text']
-        self.assertIn(done['outputs']['work']['result_commit'], rereview)  # The exact cumulative snapshot is handed off.
-        review = next(task for task in self.tasks.values() if task['mode'] == 'review')
-        review_path = Path(review['result']['worktree'])
-        self.assertEqual(git(review_path, 'rev-parse', 'HEAD'), done['outputs']['work']['result_commit'])
-        self.assertTrue((review_path / 'change-2.txt').is_file())
-        self.assertEqual(done['fixes'], 1)
-        self.assertIn('leader approved', done['messages'][-1]['text'])
-
     async def test_auto_mode_asks_the_admin_after_the_fix_limit(self):
         self.reviews = ['VERDICT: CHANGES_REQUESTED'] * 3
         room = self.start(approval='auto', max_fixes=2)
@@ -233,7 +215,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.repo / 'change-1.txt').exists())
 
     async def test_pull_request_is_opened_reviewed_and_merged_only_on_request(self):
-        self.reviews = ['VERDICT: CHANGES_REQUESTED', 'VERDICT: APPROVED']
+        self.reviews = ['1. Negative weights are accepted.\nVERDICT: CHANGES_REQUESTED', 'Fixed properly.\nVERDICT: APPROVED']
         calls = []
         def opened(repo, branch, title, body, existing=None):
             calls.append(('pr', branch, existing))
@@ -243,6 +225,16 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
              patch('aabridge_workspace.publish.merge', side_effect=lambda *a: calls.append(('merge',))) as merge:
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
+            self.assertEqual(self.stages(), [('submit', 'plan'), ('submit', 'work'), ('submit', 'review'), ('revise', 'work'), ('revise', 'review')])
+            revisions = [body for op, body, _, _ in self.requests if op == 'revise']
+            self.assertIn('Negative weights are accepted', revisions[0]['text'])
+            self.assertIn('explain why with evidence', revisions[0]['text'])
+            self.assertEqual(revisions[1]['review_snapshot']['commit'], done['outputs']['work']['result_commit'])
+            review = next(task for task in self.tasks.values() if task['mode'] == 'review')
+            review_path = Path(review['result']['worktree'])
+            self.assertEqual(git(review_path, 'rev-parse', 'HEAD'), done['outputs']['work']['result_commit'])
+            self.assertTrue((review_path / 'change-2.txt').is_file())
+            self.assertEqual(done['fixes'], 1)
             self.assertEqual(done['publication']['pull_request'], 'https://github.com/o/r/pull/7')
             self.assertEqual([c[0] for c in calls], ['pr', 'comment', 'pr', 'comment'])
             self.assertEqual(calls[2][2], 'https://github.com/o/r/pull/7')  # The fix updates the same PR.

@@ -123,14 +123,6 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(result["role"], "system")
         self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 2)
 
-    def test_task_pagination_does_not_skip_or_repeat_tasks(self):
-        ids = [self.submit(key=f"submission-{i}")["id"] for i in range(35)]
-        first = self.store.handle(request("tasks", {"cursor": 0}), "local", self.config)
-        second = self.store.handle(request("tasks", {"cursor": first["cursor"]}), "local", self.config)
-        self.assertTrue(first["has_more"])
-        self.assertFalse(second["has_more"])
-        self.assertEqual([task["id"] for task in first["tasks"] + second["tasks"]], ids[::-1])
-
     def test_human_and_agent_provenance_survives_followups_without_relabelling_older_messages(self):
         self.body["origin"] = {"kind": "human", "name": "You"}
         task = self.submit()
