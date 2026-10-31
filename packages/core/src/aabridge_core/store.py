@@ -208,7 +208,7 @@ class Store:
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
             # Peers see linked project names and access, never their local paths.
-            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "model_settings": project.get("permission_profile") == "coding-v1"},
+            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "model_settings": project.get("permission_profile") == "coding-v1"},
                            "links": [{"name": link["name"], "access": link["access"]} for link in project.get("links", [])],
                            **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
@@ -296,6 +296,10 @@ class Store:
             from aabridge_protocol.messages import model_settings
             require(task["permission_profile"] == "coding-v1", "Model selection requires a full coding project.")
             task["model_settings"] = model_settings(body["model_settings"], project["adapter"])
+        if 'review_snapshot' in body:
+            require(task['permission_profile'] == 'coding-v1' and task.get('mode') == 'review',
+                    'Snapshots require a coding review task.', 'permission_denied')
+            task['review_snapshot'] = body['review_snapshot']
         if op == "answer":
             require(task["status"] == "waiting_question" and task["question"]["id"] == body["question_id"], "Question is stale or belongs to another task.", "stale_question")
             task["pending"] = {"kind": "answer", "question_id": body["question_id"], "text": body["text"]}

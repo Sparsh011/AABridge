@@ -14,7 +14,7 @@ AABridge now treats every Mac as a peer. A room has a human admin, a leader chos
 
 - `aabridge_core.teams`: persistent room assignments, admin messages, stage checkpoints, deterministic task keys, stop/retry, and follow-up revisions.
 - `TeamRunner` runs alongside the existing supervisor and uses the same local/SSH protocol in either direction. The admin Mac holds the room; task history and workspaces stay on the Mac running each stage. Keep the admin supervisor running during orchestration.
-- A leader stage is read-only. Its plan becomes the follower’s instruction. The follower’s report and independently transferred Git diff become evidence for the leader’s review. The follower cannot reassign the room, create another delegation, or override its leader through task output. Remote identities cannot invoke room-admin operations.
+- Planning is read-only. The plan becomes the follower’s instruction. Review receives the exact implementation commit in an isolated checkout. Review can run checks using private scratch/cache directories, but must leave the checkout and HEAD unchanged; the bridge rejects source edits. The follower’s report and transferred Git evidence inform the review. The follower cannot reassign the room, create another delegation, or override its leader through task output. Remote identities cannot invoke room-admin operations.
 - `NativeWorker` starts the installed Codex or Claude coding CLI in a separate cloned checkout on `codex/task-…`. The CLI can read the whole project, add/edit/delete files and run project commands. Codex uses its workspace-write sandbox; Claude uses normal acceptEdits permissions with explicitly allowed coding tools. No bypass-permissions flags are used. The worker runs under the local signed-in user: this mode does not provide the old proposal sandbox’s OS-level isolation. Use it for projects and paired Macs you trust.
 - Native coding removes the old 16-file/16-KiB restrictions and arithmetic-only verification requirement. It uses a one-hour task budget with up to 100 turns/revisions. Application test results are agent-reported, not independently guaranteed by AABridge. Every coding result requires review.
 - Existing proposal projects, pinned agent binaries, restricted transport, task ownership, credential privacy and history remain supported. Saving a coding project revalidates the installed binary; an updated binary must be re-enabled locally.
@@ -237,3 +237,69 @@ This does not execute an agent, install a runtime, or change project approvals.
 App preferences with empty/missing locations fall back to bundled selections;
 existing usable user choices remain authoritative. Cross-Mac paths still need
 selection on the receiving Mac, especially when external drives differ.
+
+
+## GitHub delivery and exact review handoff · October 31, 2026
+
+Two saved service-room histories and the discussion on Sparshur-Service PR #1
+showed the same failure: the leader stayed at baseline `050c454` while the
+worker's newer commits lived in a different task clone. The coordinator fetched
+the real result but sent only diff text to the leader. Missing-commit and
+permission complaints then consumed review/fix rounds even when code findings
+had been addressed. The latest room also failed every GitHub push: its SSH
+origin bypassed the HTTPS credential helper despite a working `gh` login.
+
+- Team review submissions and revisions now carry `review_snapshot`, a bounded
+  base64 Git bundle plus the exact implementation commit. The receiving workspace
+  verifies the bundle, exact commit identity, and ancestry from the locally
+  approved baseline before checking out the implementation on its own task
+  branch. Successive reviews keep the leader session while refreshing its files.
+  A review result must retain that exact head and a clean checkout. Planning and
+  work cannot accept a review snapshot. Project grants, ownership and revision
+  checks still apply. MCP uses the same request schemas as desktop/CLI delivery.
+- The leader's updated receiver must advertise `review_snapshot`. Older receivers
+  stop before a review model turn with an update instruction. Both participating
+  bridge services should be updated after active work ends. Previously discarded
+  intermediate agent messages cannot be recovered by this change.
+- Review with a verified snapshot can run shell checks. Codex uses workspace-write
+  for its isolated review clone plus a private task scratch root; Claude gets
+  Bash without Edit/Write tools. Temporary files, XDG caches and Go build caches
+  use that private root. Agents are instructed to keep sources/HEAD unchanged,
+  and post-run Git validation enforces the accepted result. This is native coding
+  with the signed-in user's permissions, not a security boundary for hostile
+  repository tools. Missing dependencies or platform tools remain real limits.
+- Bundles contain only history after the baseline and are capped at 60,000 bytes
+  before base64. The full RPC is checked against the existing 128 KiB limit before
+  submission. Oversized evidence stops for manual review instead of falling back
+  to reviewing old files. Linked-project changes remain explicit diff evidence;
+  their exact working trees are not transferred to the reviewer in this version.
+- GitHub pushes rewrite GitHub SSH origins to HTTPS for that command only and use
+  `gh auth git-credential`; saved remotes are unchanged. Failed push/PR creation
+  keeps the placed branch, commit and linked delivery state, so fix rounds retry
+  the same branch rather than allocating `-2`, `-3`, etc. Normal pushes still
+  reject concurrent remote updates; there is no force push or automatic merge.
+  Admin-requested merges use `--match-head-commit` for the delivered revision
+  and reject failed delivery, so a changed PR head cannot silently be merged.
+- Agent prompts explain that the bridge owns commit capture, branch delivery
+  and PR publication. Workers may integrate a task-required target branch into
+  their isolated feature branch; the no-merge restriction applies to PRs and
+  protected/source-project branches, not that local conflict-resolution step. Review comments identify the implementation commit. Posting errors
+  are saved as `publication.review_errors` and shown in team chat. These are PR
+  conversation comments, not inline review threads that GitHub can mark resolved.
+
+These fixes do not implement simultaneous leader/follower editing or reciprocal
+cross-repository reviews. The configured workflow is still plan → implement →
+review. Merely cloning other repositories does not register linked projects.
+Existing rooms retain their assignments and baselines. Real target-branch
+conflicts, incompatible client protocols and missing device acceptance results
+still require implementation work; this change does not approve or merge those
+PRs or modify the installed app/running services.
+
+Validation: `.venv/bin/python scripts/check.py` passed all 258 deterministic
+checks. The local IPC and mutual-TLS fixture teams verified that the leader's
+HEAD and files match the worker's exact revision, including follow-up turns.
+An additional replay used the captured failing room's real `a9d1b10` commit:
+a baseline-only `050c454` reviewer imported its 21,145-byte bundle, resolved
+the exact SHA and inspected the new `accept.go` file with a clean checkout.
+No paid model calls, physical two-Mac model run, installed-app replacement or
+service restart was performed. This is a source PR, not a shipped desktop build.

@@ -33,7 +33,7 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
         git(self.repo, 'commit', '-m', 'Baseline')
         self.base = git(self.repo, 'rev-parse', 'HEAD')
         self.project = {'worker': 'codex', 'adapter': 'codex', 'base_commit': self.base,
-                        'scope': ['*'], 'execution_enabled': True, 'verification': {'profile': 'repository-v1'},
+                        'capabilities': {'review_snapshot': True}, 'scope': ['*'], 'execution_enabled': True, 'verification': {'profile': 'repository-v1'},
                         'limits': {'runtime_seconds': 3600, 'max_turns': 100, 'max_revisions': 100}}
         self.accepted, self.requests = {}, []
         self.drop = False
@@ -101,7 +101,7 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
             def fetched(state, target, task_id):
                 task = next(t for t in self.accepted.values() if t['id'] == task_id)
                 result = task['result']
-                return {'diff': git(Path(result['worktree']), 'diff', self.base, result['result_commit'])}
+                return {'review_repository': result['worktree'], 'diff': git(Path(result['worktree']), 'diff', self.base, result['result_commit'])}
             with patch('aabridge_cli.actions.fetch_result', side_effect=fetched):
                 for _ in range(3):
                     await self.runner.step(room['id'])
@@ -110,7 +110,7 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
             submits = [r for r in self.requests if r[0] == 'submit']
             self.assertEqual([r[2] for r in submits], ['mini', 'local', 'mini'] if reverse else ['local', 'mini', 'local'])
             self.assertIn('Leader plan', submits[1][1]['context'][0])
-            self.assertIn('+After', submits[2][1]['context'][2])
+            self.assertEqual(submits[2][1]['review_snapshot']['commit'], done['outputs']['work']['result_commit'])
             self.assertEqual((self.repo / 'README.md').read_text(), 'Before\n')
             replay = self.store.handle(value, 'local', load_config(self.state))
             self.assertEqual(replay['id'], room['id'])

@@ -124,6 +124,25 @@
             }
           },
           "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
+        },
+        "review_snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "commit": {
+              "type": "string",
+              "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "bundle": {
+              "type": "string",
+              "maxLength": 80000,
+              "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+            }
+          },
+          "required": [
+            "commit",
+            "bundle"
+          ]
         }
       },
       "required": [
@@ -359,6 +378,25 @@
                 }
               },
               "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
+            },
+            "review_snapshot": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "commit": {
+                  "type": "string",
+                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "bundle": {
+                  "type": "string",
+                  "maxLength": 80000,
+                  "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                }
+              },
+              "required": [
+                "commit",
+                "bundle"
+              ]
             }
           },
           "required": [
@@ -701,6 +739,25 @@
                 }
               },
               "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
+            },
+            "review_snapshot": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "commit": {
+                  "type": "string",
+                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "bundle": {
+                  "type": "string",
+                  "maxLength": 80000,
+                  "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                }
+              },
+              "required": [
+                "commit",
+                "bundle"
+              ]
             }
           },
           "required": [

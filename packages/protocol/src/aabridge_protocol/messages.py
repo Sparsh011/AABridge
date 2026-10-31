@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -42,6 +44,18 @@ def text(value: object, maximum: int = 4000, *, empty: bool = False) -> str:
     require(isinstance(value, str), "Expected text.")
     require((empty or bool(value.strip())) and len(value) <= maximum, "Text is empty or too long.")
     require(not any(ord(c) < 32 and c not in "\n\t\r" for c in value), "Control characters are not permitted.")
+    return value
+
+
+def review_snapshot(value: object) -> dict:
+    value = fields(value, {'commit', 'bundle'})
+    require(isinstance(value['commit'], str) and SHA.fullmatch(value['commit']), 'An exact review commit is required.')
+    require(isinstance(value['bundle'], str) and len(value['bundle']) <= 80000, 'Review bundle exceeds bounds.')
+    try:
+        decoded = base64.b64decode(value['bundle'], validate=True)
+    except (ValueError, binascii.Error):
+        raise BridgeError('invalid_request', 'Review bundle must be base64.') from None
+    require(not decoded or decoded.startswith((b'# v2 git bundle\n', b'# v3 git bundle\n')), 'Invalid Git review bundle.')
     return value
 
 
@@ -186,7 +200,7 @@ def validate_request(value: object) -> Request:
                 if role + "_settings" in body:
                     fields(body[role + "_settings"], set(), {"model", "effort"})
     elif op == "submit":
-        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin", "mode", "model_settings"})
+        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin", "mode", "model_settings", "review_snapshot"})
         identifier(body["project_id"])
         identifier(body["recipient"])
         require(isinstance(body["base_commit"], str) and SHA.fullmatch(body["base_commit"]) is not None, "An exact base commit is required.")
@@ -194,6 +208,9 @@ def validate_request(value: object) -> Request:
         coding = body["permission_profile"] == "coding-v1"
         require(body.get("mode", "work") in {"work", "plan", "review"}, "Invalid coding role.")
         require(coding or "mode" not in body, "Roles require coding mode.")
+        if 'review_snapshot' in body:
+            require(coding and body.get('mode') == 'review', 'Snapshots require a coding review task.')
+            review_snapshot(body['review_snapshot'])
         if "model_settings" in body:
             require(coding, "Model selection requires a full coding project.")
             model_settings(body["model_settings"], body["recipient"])
@@ -220,12 +237,15 @@ def validate_request(value: object) -> Request:
         fields(body, {"cursor"}, {'shared'})
         integer(body["cursor"], 0, 2**63 - 1)
     elif op in {"answer", "revise"}:
-        fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin", "mode", "model_settings"})
+        fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin", "mode", "model_settings", "review_snapshot"})
         identifier(body["task_id"])
         integer(body["revision"], 1, 101)
         text(body["text"], 100000)
         if "model_settings" in body:
             fields(body["model_settings"], set(), {"model", "effort"})
+        if 'review_snapshot' in body:
+            require(op == 'revise', 'Snapshots require a review revision.')
+            review_snapshot(body['review_snapshot'])
         if op == "answer":
             identifier(body["question_id"])
     else:

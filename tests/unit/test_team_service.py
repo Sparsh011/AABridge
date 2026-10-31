@@ -38,7 +38,7 @@ if '--version' in sys.argv:
     print('Fixture version'); raise SystemExit(0)
 prompt=sys.stdin.read()
 is_claude='-p' in sys.argv
-readonly=('Read,Glob,Grep' in sys.argv if is_claude else 'sandbox_mode="read-only"' in sys.argv)
+readonly='Inspect and respond only; do not edit files or create commits.' in prompt
 if not readonly:
     path=Path('built.txt')
     path.write_text((path.read_text() if path.exists() else '')+'Feature delivered\\n')
@@ -76,7 +76,7 @@ else:
             def fetch(state, remote, task_id):
                 task = call(nodes['mini'][0], request('status', {'task_id':task_id}))
                 r = task['result']
-                return {'diff':git(Path(r['worktree']), 'diff', r['base_commit'], r['result_commit'])}
+                return {'review_repository':r['worktree'], 'diff':git(Path(r['worktree']), 'diff', r['base_commit'], r['result_commit'])}
             async def operation(op, body, key=None):
                 return await asyncio.to_thread(call, nodes['book'][0], request(op, body, key))
             async def completed(room_id):
@@ -130,6 +130,15 @@ else:
                     self.assertIn('codex-test', json.dumps(page))
                     work = Path(done['result']['worktree'])
                     self.assertEqual((work / 'built.txt').read_text(), 'Feature delivered\n')
+                    # The leader must inspect the same Git object and files as
+                    # the worker, over both IPC and real mutual TLS fixtures.
+                    room_state = nodes['book'][1].store.db.execute('SELECT document FROM teams WHERE id=?', (room['id'],)).fetchone()
+                    saved = json.loads(room_state[0])
+                    leader_task = saved['resume']['review']['task_id']
+                    leader_state = nodes['book' if saved['leader']['target'] == 'local' else saved['leader']['target']][0]
+                    review_path = leader_state / 'workspaces' / leader_task
+                    self.assertEqual(git(review_path, 'rev-parse', 'HEAD'), done['result']['result_commit'])
+                    self.assertEqual((review_path / 'built.txt').read_text(), 'Feature delivered\n')
                     await operation('team_reply', {'team_id':room['id'],'text':'Add another feature'}, 'team-ipc-two')
                     done = await completed(room['id'])
                     self.assertEqual(done['result']['worktree'], str(work))
