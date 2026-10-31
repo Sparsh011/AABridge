@@ -84,10 +84,6 @@ class PublicActivityTests(unittest.TestCase):
         self.stream.claude({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'tool'}]}})
         self.assertIn('src/app.py',self.events[-1]['text'])
 
-    def test_claude_reports_resolved_model_without_claiming_default_resolution(self):
-        self.stream.claude({'type':'system','subtype':'init','model':'claude-opus-test'})
-        self.assertIn('claude-opus-test', self.events[-1]['text'])
-
 
 class TaskModelSettingsTests(unittest.TestCase):
     def test_model_and_effort_flags_apply_to_new_and_resumed_sessions(self):

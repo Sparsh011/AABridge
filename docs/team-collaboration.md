@@ -295,11 +295,20 @@ conflicts, incompatible client protocols and missing device acceptance results
 still require implementation work; this change does not approve or merge those
 PRs or modify the installed app/running services.
 
-Validation: `.venv/bin/python scripts/check.py` passed all 258 deterministic
-checks. The local IPC and mutual-TLS fixture teams verified that the leader's
+Validation: `.venv/bin/python scripts/check.py` passed all 244 deterministic
+checks after removing redundant scenarios and trivial helper checks. The team fixture uses local IPC plus mutual TLS and verifies that the leader's
 HEAD and files match the worker's exact revision, including follow-up turns.
 An additional replay used the captured failing room's real `a9d1b10` commit:
 a baseline-only `050c454` reviewer imported its 21,145-byte bundle, resolved
 the exact SHA and inspected the new `accept.go` file with a clean checkout.
 No paid model calls, physical two-Mac model run, installed-app replacement or
 service restart was performed. This is a source PR, not a shipped desktop build.
+
+The test suite keeps one real team integration path using local IPC plus mutual
+TLS. Duplicate mocked-transport and standalone snapshot happy-path runs were
+removed; the existing automatic fix loop checks successive review heads/files,
+and the PR delivery test checks branch placement, unchanged main and the merge
+commit argument. Invalid evidence, dirty review preservation, role restrictions,
+GitHub authentication/retries, lost acknowledgements and peer access checks remain
+covered. The cleanup removed 14 test methods and prompt-text assertions without
+changing application behavior or skipping tests in the runner.

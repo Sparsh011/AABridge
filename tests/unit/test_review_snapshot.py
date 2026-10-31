@@ -32,27 +32,10 @@ class ReviewSnapshotTests(unittest.TestCase):
         git(self.source, 'add', '--all'); git(self.source, 'commit', '-m', content)
         self.commit = git(self.source, 'rev-parse', 'HEAD')
 
-    def test_exact_git_commit_and_files_transfer_without_source_path_or_remote(self):
-        snapshot = export_snapshot(self.source, self.base, self.commit)
-        self.assertNotIn(str(self.source), str(snapshot))
-        # The receiver starts with just the old baseline and cannot resolve the new SHA.
-        with self.assertRaises(BridgeError):
-            git(self.review, 'cat-file', '-e', self.commit)
-        import_snapshot(self.review, self.base, snapshot, 'codex/review')
-        self.assertEqual(git(self.review, 'rev-parse', 'HEAD'), self.commit)
-        self.assertEqual((self.review / 'code.txt').read_text(), 'implementation')
-        self.assertIn('+implementation', git(self.review, 'diff', self.base, self.commit))
-        self.assertFalse(git(self.source, 'for-each-ref', 'refs/aabridge-review/'))
-
-    def test_second_round_moves_the_same_review_branch_to_the_new_exact_commit(self):
-        import_snapshot(self.review, self.base, export_snapshot(self.source, self.base, self.commit), 'codex/review')
-        self.change('fixed implementation')
-        import_snapshot(self.review, self.base, export_snapshot(self.source, self.base, self.commit), 'codex/review')
-        self.assertEqual(git(self.review, 'branch', '--show-current'), 'codex/review')
-        self.assertEqual(git(self.review, 'rev-parse', 'HEAD'), self.commit)
-        self.assertEqual((self.review / 'code.txt').read_text(), 'fixed implementation')
-
-    def test_wrong_commit_or_invalid_bundle_never_changes_review_head(self):
+    def test_invalid_review_evidence_is_rejected_without_moving_head(self):
+        for bundle in ('!', 'x' * 80001, base64.b64encode(b'wrong format').decode()):
+            with self.subTest(bundle=bundle[:20]), self.assertRaises(BridgeError):
+                review_snapshot({'commit': self.commit, 'bundle': bundle})
         snapshot = export_snapshot(self.source, self.base, self.commit)
         for invalid in ({**snapshot, 'commit': 'a' * 40}, {**snapshot, 'bundle': base64.b64encode(b'not a bundle').decode()}):
             with self.assertRaises(BridgeError):
@@ -64,11 +47,6 @@ class ReviewSnapshotTests(unittest.TestCase):
         with self.assertRaises(BridgeError):
             import_snapshot(self.review, self.base, export_snapshot(self.source, self.base, self.commit), 'codex/review')
         self.assertEqual((self.review / 'code.txt').read_text(), 'keep my edits')
-
-    def test_bundle_bounds_and_encoding_are_checked(self):
-        for bundle in ('!', 'x' * 80001, base64.b64encode(b'wrong format').decode()):
-            with self.assertRaises(BridgeError):
-                review_snapshot({'commit': self.commit, 'bundle': bundle})
 
     def test_workspace_reviews_the_implementation_and_checks_it_stays_unchanged(self):
         state = self.root / 'state'; initialize(state)

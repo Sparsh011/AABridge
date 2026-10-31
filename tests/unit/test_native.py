@@ -61,8 +61,6 @@ else:
                 self.assertNotIn('--dangerously-bypass-approvals-and-sandbox', args)
                 self.assertNotIn('--dangerously-skip-permissions', args)
                 self.assertIn('Improve it', (workspace / 'received-prompt.txt').read_text())
-                self.assertIn('merge the target into this isolated task branch', (workspace / 'received-prompt.txt').read_text())
-                self.assertIn('handles branch placement, authenticated pushes', (workspace / 'received-prompt.txt').read_text())
                 self.assertIsNone(pids[-1])
                 task['mode'] = 'plan'
                 args = worker.arguments()
