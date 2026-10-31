@@ -119,6 +119,13 @@ class DirectTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('return a - b', (self.root / 'source/math_ops.py').read_text())
         # The same submission key/body replays instead of creating another task.
         self.assertEqual((await self.submit())['id'], task['id'])
+        preview = await self.rpc('task_work', {'task_id': task['id']})
+        self.assertTrue(preview['can_delete_work'])
+        self.assertIn('math_ops.py', [file['path'] for file in preview['repositories'][0]['files']])
+        deleted = await self.rpc('task_forget', {'task_id': task['id'], 'delete_work': True, 'work_snapshot': preview['snapshot']})
+        self.assertTrue(deleted['work_deleted'])
+        self.assertFalse(Path(task['result']['worktree']).exists())
+        self.assertEqual(git(Path(review['review_repository']), 'rev-parse', 'FETCH_HEAD'), task['result']['result_commit'])
 
     async def test_mcp_routes_to_tls_and_remote_admin_operations_stay_denied(self):
         cli = await asyncio.to_thread(subprocess.run, [sys.executable, '-m', 'aabridge_cli', 'project', 'list',
@@ -161,6 +168,13 @@ class DirectTransportTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(BridgeError) as denied:
             await self.rpc('cancel', {'task_id': task['id']})
         self.assertEqual(denied.exception.code, 'permission_denied')
+        await self.rpc('task_rename', {'task_id': task['id'], 'title': 'Compact shared title'})
+        page = await self.rpc('tasks', {'cursor': 0, 'shared': True})
+        self.assertEqual(page['tasks'][0]['title'], 'Compact shared title')
+        await self.rpc('task_forget', {'task_id': task['id']})
+        self.assertEqual((await self.rpc('tasks', {'cursor': 0, 'shared': True}))['tasks'], [])
+        local = self.supervisors[1].store.handle(request('tasks', {'cursor': 0}), 'local', load_config(self.mini))
+        self.assertIn(task['id'], [item['id'] for item in local['tasks']])
 
     async def test_project_grants_and_revocation_apply_to_rpc_and_result_reads(self):
         task = await self.completed()

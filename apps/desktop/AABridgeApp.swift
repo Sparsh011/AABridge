@@ -273,7 +273,7 @@ struct SetupView: View {
             Divider()
             VStack(alignment: .leading, spacing: 5) {
                 Text("Connect directly in Devices").font(.bridge(.headline))
-                Text("Exchange connection cards to use AABridge’s encrypted app connection. Remote Login is not required. Keep both Macs reachable on the same network or a VPN.")
+                Text("Exchange connection cards to use AABridge’s encrypted app connection. Keep both Macs reachable on the same network or a VPN.")
                     .font(.bridge(.callout)).foregroundStyle(.secondary)
             }
             DisclosureGroup("Details", isExpanded: $expanded) {
@@ -302,6 +302,11 @@ struct AABridgeDesktop: App {
 
     init() {
         let payload = Bundle.main.resourceURL!.appendingPathComponent("SetupPayload")
+        for (flag, panel) in [("--preview-task-info", "info"), ("--preview-task-edit", "edit")] {
+            if let index = CommandLine.arguments.firstIndex(of: flag), CommandLine.arguments.count > index + 1 {
+                exit(verifySharedHistoryView(resources: Bundle.main.resourceURL!, output: CommandLine.arguments[index + 1], panel: panel) ? 0 : 1)
+            }
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--verify-shared-history"), CommandLine.arguments.count > index + 1 {
             exit(verifySharedHistoryView(resources: Bundle.main.resourceURL!, output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }

@@ -12,7 +12,7 @@ TOOL_OPS = {"bridge_projects": "projects", "bridge_submit": "submit", "bridge_st
             "bridge_teams": "teams", "bridge_team_start": "team_start", "bridge_team_status": "team_status", "bridge_team_activity": "team_activity", "bridge_activity": "activity",
             "bridge_team_reply": "team_reply", "bridge_team_cancel": "team_cancel", "bridge_team_retry": "team_retry",
             "bridge_team_guide": "team_guide", "bridge_team_decide": "team_decide", "bridge_team_merge": "team_merge",
-            "bridge_events": "events", "bridge_answer": "answer", "bridge_revise": "revise", "bridge_cancel": "cancel"}
+            "bridge_events": "events", "bridge_answer": "answer", "bridge_revise": "revise", "bridge_cancel": "cancel", "bridge_task_rename": "task_rename", "bridge_task_forget": "task_forget", "bridge_task_work": "task_work"}
 
 
 def tools() -> list[dict]:
@@ -27,6 +27,9 @@ def tools() -> list[dict]:
         "conversation": "Read saved messages and supplied context after body.cursor, initially 0. shared=true permits granted receiver-local coding history, without task controls. Follow has_more and cursor.",
         "answer": "Answer body.question_id at body.revision for body.task_id. Stale/cross-task answers are rejected.",
         "revise": "Request a revision of a completed task at its current revision, subject to local limits.",
+        "task_rename": "Set your own task-history display title. Requires current read access; does not change instructions or start model work.",
+        "task_work": "Preview the exact isolated workspace copies and changed files before deleting saved work. Read-only; returns a snapshot token and deletion blockers.",
+        "task_forget": "Remove an entry from your own history list. By default keep all work. To delete stopped isolated task copies, explicitly set delete_work=true and supply a current task_work work_snapshot. Original projects, published branches and conversation records remain; removed copies cannot be resumed. Does not cancel running tasks.",
         "cancel": "Cancel only the identified task; preserve its partial workspace. Closing MCP does not cancel tasks.",
     }
     descriptions["activity"] = "Read public agent activity after body.cursor. Includes tools, file changes, and progress messages; excludes private reasoning and raw tool output."

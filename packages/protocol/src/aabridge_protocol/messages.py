@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -9,13 +11,13 @@ from pathlib import PurePosixPath
 MAX_MESSAGE = 131_072
 ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,79}\Z")
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
-OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity"})
+OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity", "task_rename", "task_forget", "task_work"})
 TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry", "team_activity",
                       "team_guide", "team_decide", "team_merge"})
 OPERATIONS = OPERATIONS | TEAM_OPS
-HISTORY_READS = frozenset({'tasks', 'status', 'conversation', 'events', 'activity'})
+HISTORY_READS = frozenset({'tasks', 'status', 'conversation', 'events', 'activity', 'task_work'})
 MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry",
-                       "team_guide", "team_decide", "team_merge"})
+                       "team_guide", "team_decide", "team_merge", "task_rename", "task_forget"})
 APPROVALS = ("ask", "auto")
 PLACEMENTS = ("sandbox", "branch", "worktree", "current")
 DECISIONS = ("continue", "replan", "finish")
@@ -42,6 +44,24 @@ def text(value: object, maximum: int = 4000, *, empty: bool = False) -> str:
     require(isinstance(value, str), "Expected text.")
     require((empty or bool(value.strip())) and len(value) <= maximum, "Text is empty or too long.")
     require(not any(ord(c) < 32 and c not in "\n\t\r" for c in value), "Control characters are not permitted.")
+    return value
+
+
+def task_title(value: object) -> str:
+    value = text(value, 80)
+    require(not any(character in value for character in '\n\r\t\x85\u2028\u2029'), 'A task title must be a single line.')
+    return value.strip()
+
+
+def review_snapshot(value: object) -> dict:
+    value = fields(value, {'commit', 'bundle'})
+    require(isinstance(value['commit'], str) and SHA.fullmatch(value['commit']), 'An exact review commit is required.')
+    require(isinstance(value['bundle'], str) and len(value['bundle']) <= 80000, 'Review bundle exceeds bounds.')
+    try:
+        decoded = base64.b64decode(value['bundle'], validate=True)
+    except (ValueError, binascii.Error):
+        raise BridgeError('invalid_request', 'Review bundle must be base64.') from None
+    require(not decoded or decoded.startswith((b'# v2 git bundle\n', b'# v3 git bundle\n')), 'Invalid Git review bundle.')
     return value
 
 
@@ -186,14 +206,19 @@ def validate_request(value: object) -> Request:
                 if role + "_settings" in body:
                     fields(body[role + "_settings"], set(), {"model", "effort"})
     elif op == "submit":
-        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin", "mode", "model_settings"})
+        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin", "mode", "model_settings", "review_snapshot", "title"})
         identifier(body["project_id"])
         identifier(body["recipient"])
         require(isinstance(body["base_commit"], str) and SHA.fullmatch(body["base_commit"]) is not None, "An exact base commit is required.")
         text(body["objective"])
+        if "title" in body:
+            task_title(body["title"])
         coding = body["permission_profile"] == "coding-v1"
         require(body.get("mode", "work") in {"work", "plan", "review"}, "Invalid coding role.")
         require(coding or "mode" not in body, "Roles require coding mode.")
+        if 'review_snapshot' in body:
+            require(coding and body.get('mode') == 'review', 'Snapshots require a coding review task.')
+            review_snapshot(body['review_snapshot'])
         if "model_settings" in body:
             require(coding, "Model selection requires a full coding project.")
             model_settings(body["model_settings"], body["recipient"])
@@ -209,8 +234,18 @@ def validate_request(value: object) -> Request:
         integer(limits["max_turns"], 1, 100 if coding else 6)
         integer(limits["max_revisions"], 0, 100 if coding else 3)
         require(body["permission_profile"] in {"proposal-v1", "coding-v1"}, "Unknown permission profile.", "permission_denied")
-    elif op in {"status", "cancel"}:
-        fields(body, {"task_id"}, {'shared'} if op == 'status' else set())
+    elif op in {'task_rename', 'task_forget'}:
+        fields(body, {'task_id'} | ({'title'} if op == 'task_rename' else set()), {'delete_work', 'work_snapshot'} if op == 'task_forget' else set())
+        identifier(body['task_id'])
+        if op == 'task_rename':
+            task_title(body['title'])
+        if op == 'task_forget':
+            require(type(body.get('delete_work', False)) is bool, 'Choose whether to delete the task workspace.')
+            require(('work_snapshot' in body) == body.get('delete_work', False), 'Work deletion requires its reviewed snapshot.')
+            if 'work_snapshot' in body:
+                require(isinstance(body['work_snapshot'], str) and re.fullmatch(r'[0-9a-f]{64}', body['work_snapshot']), 'Invalid work review snapshot.')
+    elif op in {"status", "cancel", "task_work"}:
+        fields(body, {"task_id"}, {'shared'} if op in {'status', 'task_work'} else set())
         identifier(body["task_id"])
     elif op in {"events", "conversation", "activity"}:
         fields(body, {"task_id", "cursor"}, {'shared'})
@@ -220,12 +255,15 @@ def validate_request(value: object) -> Request:
         fields(body, {"cursor"}, {'shared'})
         integer(body["cursor"], 0, 2**63 - 1)
     elif op in {"answer", "revise"}:
-        fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin", "mode", "model_settings"})
+        fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin", "mode", "model_settings", "review_snapshot"})
         identifier(body["task_id"])
         integer(body["revision"], 1, 101)
         text(body["text"], 100000)
         if "model_settings" in body:
             fields(body["model_settings"], set(), {"model", "effort"})
+        if 'review_snapshot' in body:
+            require(op == 'revise', 'Snapshots require a review revision.')
+            review_snapshot(body['review_snapshot'])
         if op == "answer":
             identifier(body["question_id"])
     else:
