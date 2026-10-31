@@ -387,6 +387,15 @@
       "minLength": 1,
       "maxLength": 80,
       "pattern": "^[^\\r\\n\\t\\u0085\\u2028\\u2029]+$"
+    },
+    "work_deleted": {
+      "type": "boolean"
+    },
+    "work_cleanup": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

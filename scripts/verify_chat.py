@@ -41,6 +41,10 @@ async def verify(args):
     store.update(completed["id"], "result", status="completed", result={"summary": "Verification fixture result; no model inference."})
     running = store.handle(request("submit", {**body, "objective": "Activity display verification fixture; no model worker runs."}), "local", config)
     store.update(running["id"], "worker_started", status="running", activity={"phase": "waiting_for_output", "message": "Verification fixture for the active indicator; no actual worker is running.", "time": __import__("time").time()})
+    from aabridge_workspace.git import Workspace
+    workspace = Workspace(state, waiting, project)
+    workspace.prepare()
+    (workspace.path / 'pending.txt').write_text('Pending notes that only exist in this task copy.\n')
     store.close()
     supervisor = Supervisor(state)
     dropped = []
@@ -81,6 +85,9 @@ async def verify(args):
         assert len(dropped) == 1
         preference = supervisor.store.db.execute('SELECT title,hidden FROM task_preferences WHERE task_id=? AND viewer=?', (waiting['id'], 'local')).fetchone()
         assert preference == ('Fix addition', 1), 'Native rename/removal was not persisted'
+        assert supervisor.store.get(waiting['id'])['work_deleted'], 'Native work deletion did not persist'
+        assert not workspace.path.exists(), 'The reviewed task copy was not removed'
+        assert (root / 'source/math_ops.py').exists(), 'Original project was removed'
         assert supervisor.store.history_page(waiting['id'], 0)['messages'], 'History removal erased durable task records'
 
         tasks = [json.loads(row[0]) for row in supervisor.store.db.execute("SELECT document FROM tasks")]
@@ -94,7 +101,7 @@ async def verify(args):
         assert answer["actor"] == {"kind": "human", "name": "You"}
         assert not (root / "desktop-outbox/pending-action.json").exists()
         print(json.dumps({"passed": True, "category": "native GUI controls and authenticated IPC without a worker scheduler",
-            "checks": ["title edit", "history removal preserves task records", "human sender persisted", "answer", "revision", "cancel", "new task", "editable scope subset", "immediate pending bubble", "activity display", "local project GUI model", "dropped acknowledgement", "restored private outbox", "same-key retry without duplicate", "silent refresh and draft preservation"],
+            "checks": ["title edit", "interactive work preview", "confirmed work deletion preserves originals", "history removal preserves task records", "human sender persisted", "answer", "revision", "cancel", "new task", "editable scope subset", "immediate pending bubble", "activity display", "local project GUI model", "dropped acknowledgement", "restored private outbox", "same-key retry without duplicate", "silent refresh and draft preservation"],
             "state": str(state), "preview": str(args.preview.resolve()), "model_inference_started": False}, indent=2))
     finally:
         # Leave no runnable fixture tasks or enabled execution behind.

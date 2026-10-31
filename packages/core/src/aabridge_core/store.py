@@ -28,6 +28,8 @@ class Store:
         return {'can_control': identity == 'local' or task['sender'] == identity}
 
     def __init__(self, state: Path):
+        self.state = state
+        self._staged_work = None
         path = state / "bridge.sqlite3"
         if not path.exists():
             write_private(path, b"", exclusive=True)
@@ -65,6 +67,16 @@ class Store:
         self._migrate_history()
         from .teams import setup
         setup(self.db)
+        from .task_work import reconcile
+        # Never recover another live connection's uncommitted filesystem move.
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            reconcile(self)
+            self.db.execute("COMMIT")
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            self.db.close()
+            raise
 
     def _migrate_history(self):
         self.db.execute("BEGIN IMMEDIATE")
@@ -233,13 +245,14 @@ class Store:
                 if hidden:
                     continue
                 if len(output) == 32:
-                    return {"tasks": output, "cursor": output[-1]["cursor"], "has_more": True, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True}}
+                    return {"tasks": output, "cursor": output[-1]["cursor"], "has_more": True, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True, 'history_work_review': True}}
                 summary = {key: task[key] for key in ("id", "project_id", "status", "recipient", "sender", "revision", "created_at", "updated_at")}
                 output.append({**summary, 'title': title or task.get('title') or compact_title(task['objective']), 'mode': task.get('mode'), "objective": task["objective"][:300], "cursor": seq, 'permissions': self.permissions(task, identity)})
-            return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True}}
+            return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True, 'history_work_review': True}}
         require(request.op != "shutdown" or identity == "local", "Only the local operator may stop the daemon.", "permission_denied")
         if request.op == "shutdown":
             return {"stopping": True}
+        self._staged_work = None
         self.db.execute("BEGIN IMMEDIATE")
         try:
             # Authorize even an idempotency-cache hit, so revocation takes effect.
@@ -259,10 +272,17 @@ class Store:
                 if request.op in MUTATIONS:
                     self.db.execute("INSERT INTO requests VALUES (?,?,?,?)", (identity, request.key, request.digest, canonical(result)))
             self.db.execute("COMMIT")
-            return result
         except BaseException:
             self.db.execute("ROLLBACK")
+            from .task_work import rollback
+            rollback(self)
             raise
+        self._staged_work = None
+        if request.op == 'task_forget' and request.body.get('delete_work'):
+            from .task_work import finish
+            # A cached request also retries any durably staged disk cleanup.
+            result = {**result, 'cleanup_pending': finish(self, self.get(request.body['task_id']))}
+        return result
 
     def _apply(self, request: Request, identity: str, project: dict, config: dict) -> dict:
         body, op = request.body, request.op
@@ -289,8 +309,15 @@ class Store:
                 title = task_title(body['title'])
                 self.db.execute('INSERT INTO task_preferences(task_id,viewer,title) VALUES (?,?,?) ON CONFLICT(task_id,viewer) DO UPDATE SET title=excluded.title', (task['id'], identity, title))
                 return {'task_id': task['id'], 'title': title}
+            if body.get('delete_work'):
+                require(identity == 'local' or task['sender'] == identity, 'Only the task owner can delete its saved work.', 'permission_denied')
+                from .task_work import stage
+                stage(self, task, project, identity, body['work_snapshot'])
             self.db.execute('INSERT INTO task_preferences(task_id,viewer,hidden) VALUES (?,?,1) ON CONFLICT(task_id,viewer) DO UPDATE SET hidden=1', (task['id'], identity))
-            return {'task_id': task['id'], 'deleted_from_history': True}
+            return {'task_id': task['id'], 'deleted_from_history': True, 'work_deleted': bool(task.get('work_deleted'))}
+        if op == 'task_work':
+            from .task_work import preview
+            return preview(self, task, project, identity)
         if op == "status":
             return {**task, 'permissions': self.permissions(task, identity)} if body.get('shared') else task
         if op == "activity":
@@ -306,6 +333,7 @@ class Store:
                 task["status"] = "cancelling" if task["status"] == "running" else "cancelled"
                 self.save(task, "cancellation_requested")
             return task
+        require(not task.get("work_deleted"), "This task’s saved workspace was deleted. Start a new task to continue.", "work_deleted")
         require(body["revision"] == task["revision"], "Stale task revision.", "stale_revision")
         task["last_actor"] = body.get("origin", {"kind": "coordinator", "name": identity})
         task["last_sender_identity"] = identity

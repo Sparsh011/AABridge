@@ -49,6 +49,7 @@ struct TaskState: Decodable {
     var permissions: TaskPermissions? = nil
     var thread_id: String? = nil
     var objective: String? = nil
+    var work_deleted: Bool? = nil
 }
 
 struct PendingChatAction: Codable {
@@ -169,7 +170,7 @@ final class TaskBrowserModel: ObservableObject {
         var args = ["-f", resources.appendingPathComponent("Activity.command").path, "--action", action]
         if let stateDirectory = stateDirectory { args += ["--state-dir", stateDirectory] }
         if target != "local" { args += ["--remote", target] }
-        if target != "local" && ["tasks", "conversation", "events", "status"].contains(action) { args.append("--shared") }
+        if target != "local" && ["tasks", "conversation", "events", "status", "task_work"].contains(action) { args.append("--shared") }
         if let task = task { args += ["--task-id", task] }
         if ["tasks", "conversation", "events"].contains(action) { args.append("--all") }
         process.arguments = args
@@ -394,7 +395,7 @@ extension TaskBrowserModel {
     var canControlSelectedTask: Bool { taskState?.permissions?.can_control ?? selectedTask?.permissions?.can_control ?? true }
     var canReply: Bool {
         guard canAct, canControlSelectedTask, let state = taskState, state.id == selection else { return false }
-        return state.status == "waiting_question" || (state.status == "completed" && state.revision <= state.limits.max_revisions)
+        return state.work_deleted != true && (state.status == "waiting_question" || (state.status == "completed" && state.revision <= state.limits.max_revisions))
     }
     var replyLabel: String {
         if taskState?.status == "waiting_question" { return "Send answer" }
@@ -423,6 +424,7 @@ extension TaskBrowserModel {
     var pendingNewTask: Bool { pendingAction?.action == "submit" && pendingAction?.target == target && selection == nil }
     var composerHint: String {
         if !canControlSelectedTask { return "This task was created on the selected Mac. Open AABridge there to continue it; its shared history is read-only here." }
+        if taskState?.work_deleted == true { return "Saved work was deleted. Start a new task to continue." }
         switch taskState?.status {
         case "waiting_question": return "Reply to \(workerName)'s question…"
         case "completed": return canReply ? "Ask \(workerName) for a revision…" : "Revision limit reached. Start a new task to continue."
@@ -601,7 +603,6 @@ struct TaskBrowserView: View {
     @State private var editingTask: BridgeTask?
     @State private var infoTask: BridgeTask?
     @State private var deletingTask: BridgeTask?
-    @State private var showDeleteConfirmation = false
     let active: Bool
     private let timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
@@ -649,7 +650,7 @@ struct TaskBrowserView: View {
     @ViewBuilder private func taskActions(_ task: BridgeTask) -> some View {
         Button { editingTask = task } label: { Label("Edit title", systemImage: "pencil") }
             .disabled(!model.canAct || !model.historyManagement)
-        Button(role: .destructive) { deletingTask = task; showDeleteConfirmation = true } label: { Label("Delete from history", systemImage: "trash") }
+        Button(role: .destructive) { deletingTask = task } label: { Label("Delete from history", systemImage: "trash") }
             .disabled(!model.canAct || !model.historyManagement)
         Divider()
         Button { model.selection = task.id; if model.taskState?.id != task.id { model.loadDetail() }; infoTask = task } label: { Label("Info", systemImage: "info.circle") }
@@ -753,12 +754,7 @@ struct TaskBrowserView: View {
                 TaskInfoSheet(task: task, state: model.taskState?.id == task.id ? model.taskState : nil,
                               messages: model.selection == task.id ? model.messages : [], events: model.selection == task.id ? model.events : "")
             }
-            .confirmationDialog("Delete from your history?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
-                Button("Delete from history", role: .destructive) { if let task = deletingTask { model.updateHistory(task) } }
-                Button("Cancel", role: .cancel) { deletingTask = nil }
-            } message: {
-                Text("Removes this task from your history view. Work continues, and saved records, files and team references are preserved.")
-            }
+            .sheet(item: $deletingTask) { task in TaskDeletionSheet(browser: model, task: task) }
     }
 }
 
@@ -940,8 +936,15 @@ func verifyChatControls(resources: URL, stateDirectory: String, output: String) 
     guard wait({ !model.loadingDetail && model.taskState?.id == questionTask.id }) else { return false }
     model.updateHistory(questionTask, title: "Fix addition")
     guard wait({ !model.actionBusy && !model.loading && !model.loadingDetail && model.tasks.first(where: { $0.id == questionTask.id })?.displayTitle == "Fix addition" }) else { return false }
-    model.updateHistory(questionTask)
-    guard wait({ !model.actionBusy && !model.loading && !model.loadingDetail && !model.tasks.contains(where: { $0.id == questionTask.id }) }) else { return false }
+    let deletion = TaskDeletionModel(browser: model, task: questionTask)
+    deletion.load()
+    guard wait({ !deletion.loading && deletion.review != nil }),
+          deletion.review?.can_delete_work == true,
+          let repository = deletion.review?.repositories.first,
+          let file = repository.files.first(where: { $0.path == "pending.txt" }) else { return false }
+    guard renderOwnView(TaskDeletionSheet(model: deletion, selectedFile: repository.id + file.id), output: output + ".delete.png") else { return false }
+    deletion.deleteWork = true; deletion.acknowledgedLoss = true; deletion.remove()
+    guard wait({ deletion.finished && !model.actionBusy && !model.loading && !model.loadingDetail && !model.tasks.contains(where: { $0.id == questionTask.id }) }) else { return false }
     guard renderTaskBrowser(model: model, output: output) else { return false }
     print("Native chat controls verified over IPC: local project settings, scope subset, immediate pending bubble, active status, answer, revision, cancel, new task, durable retry after lost acknowledgement, and silent refresh preserving drafts. No model inference started.")
     return true

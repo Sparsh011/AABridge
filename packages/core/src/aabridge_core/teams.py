@@ -683,7 +683,7 @@ class TeamRunner:
             room = get(self.store, room_id)
             code, mac = getattr(exc, 'code', ''), self.machine(contact)
             if code in {'remote_unavailable', 'daemon_unavailable'}:
-                room['error'] = (f'Couldn’t reach AABridge on {mac}. Make sure it’s awake and on the same network, Remote Login is on, and AABridge is running there. Then press Try again.'
+                room['error'] = (f'Couldn’t reach AABridge on {mac}. Make sure it’s awake, its saved connection settings are correct, and AABridge is running there. Then press Try again.'
                                  if contact != 'local' else 'AABridge’s background service on this Mac isn’t running. Open Settings → Set up this Mac, then press Try again.')
             elif code == 'direct_unavailable':
                 room['error'] = (f'Couldn’t reach AABridge on {mac} over its direct connection. Make sure it’s awake, AABridge is running there, and its address in Devices is reachable '

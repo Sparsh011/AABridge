@@ -273,7 +273,7 @@ struct SetupView: View {
             Divider()
             VStack(alignment: .leading, spacing: 5) {
                 Text("Connect directly in Devices").font(.bridge(.headline))
-                Text("Exchange connection cards to use AABridge’s encrypted app connection. Remote Login is not required. Keep both Macs reachable on the same network or a VPN.")
+                Text("Exchange connection cards to use AABridge’s encrypted app connection. Keep both Macs reachable on the same network or a VPN.")
                     .font(.bridge(.callout)).foregroundStyle(.secondary)
             }
             DisclosureGroup("Details", isExpanded: $expanded) {

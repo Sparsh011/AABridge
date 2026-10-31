@@ -337,12 +337,12 @@ IDs, agent-thread identifiers and raw supplied context/verification/events are
 shown inside Info. Conversation messages and diagnostic exports keep their
 original content; the application does not rewrite historical agent messages.
 
-`task_rename` and `task_forget` are display-only mutations. Their preferences
+`task_rename` and the default `task_forget` action are display-only mutations. Their preferences
 live on the receiver in an additive `task_preferences(task_id,viewer,...)` table,
 keyed by the authenticated viewer identity. Editing a title affects only that
-viewer's history. Deletion hides the row from that viewer's list, including
-pagination/search, without cancelling work, purging conversation records,
-removing Git files or breaking team/idempotency references. It is not a private
+viewer's history. Keeping work hides the row from that viewer's list, including pagination/search,
+without cancelling work or changing saved records. The deletion sheet also
+offers explicit removal of stopped isolated task copies, described below. It is not a private
 record-erasure operation. The confirmation dialog explicitly describes this.
 
 These controls require current project/read access even on idempotency-cache
@@ -362,3 +362,58 @@ checks. The native control fixture renamed and removed an item over real local
 IPC, then verified its saved records survived. History, Info and Edit views were
 rendered and visually inspected. No paid model call, physical two-Mac model run,
 installed-app replacement or running-service update was performed.
+
+
+## Interactive saved-work deletion · October 31, 2026
+
+Deleting a history entry now opens a review sheet rather than a generic
+confirmation. `task_work` inspects the selected receiver's isolated main/linked
+copies and returns saved commit counts, changed/new filenames, bounded text
+previews, known local team usage, deletion blockers and a snapshot fingerprint.
+The sheet supports expanding a file, refreshing changes and stopping an owned
+active task. **Keep saved work** is the default. **Delete saved work** requires
+an explicit acknowledgement; it never deletes original projects or copies
+already delivered into project branches/PRs. Task/session IDs stay under Info.
+
+Work deletion requires owner/local-admin authorization, a terminal task with no
+remaining worker PID, no known active local team dependency, and a matching
+review snapshot. Shared-history read access alone cannot delete work. Local
+completed team links remain visible as a warning; remote team usage is not
+fully discoverable, so remotely managed work carries a separate warning about
+losing fetch/resume access. Deleted work rejects revisions and Git-result
+exports with a specific error rather than recreating a baseline checkout.
+
+Only server-derived task directories under `state/workspaces` are targets;
+requests contain a task ID and fingerprint, never a received path. Inspection
+disables Git external diff/textconv helpers and does not follow file symlinks.
+Incomplete/unsafe/oversized previews do not authorize deletion. Limits are
+30,000 directory entries, 200 changed paths per repository, a bounded text
+preview budget and a 180 KB response ceiling; file previews show the current
+checkout, and the sheet explicitly states that all branches/history/build
+files in these isolated copies are included in deletion.
+
+Confirmed directories are renamed into a private cleanup area with a durable
+move journal. SQLite failure restores the moves. Startup also restores an
+uncommitted move after interruption; committed cleanup failures retain their
+location for an authorized retry. The original task/conversation records and
+per-viewer history preferences are retained. This is workspace cleanup plus
+history-list removal, not permanent conversation erasure. CLI `task work` and
+`task forget --delete-work --work-snapshot …` and MCP use the same contract.
+
+Current desktop setup/device wording and connection-error copy no longer refer
+to Remote Login. Legacy SSH support remains available.
+
+Validation includes real linked-repository deletion, unchanged originals,
+stale-preview rejection, active-task/team blockers, shared-reader denial,
+symlink rejection, suppressed external diff helpers, SQLite rollback, process-
+interruption recovery and retry after disk cleanup failure. The native control
+fixture renders a pending file's contents, confirms work deletion over IPC and
+checks that the source repository and saved conversation survived.
+
+The required suite passes all 229 deterministic tests; three focused deletion
+lifecycle tests cover the new destructive behavior, including a file changing
+between preview and staging. The final universal app was compiled through
+`scripts/build_desktop.py` for arm64 and x86_64 and passed signature/resource
+smoke checks. The native sheet was rendered and visually inspected. These
+checks use disposable local fixtures, without paid model calls or a physical
+two-Mac model run. The installed app and running services were not replaced.

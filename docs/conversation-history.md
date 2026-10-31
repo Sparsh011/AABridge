@@ -177,11 +177,24 @@ Use the ellipsis menu (or right-click a task) for **Edit title**, **Delete from
 history**, and **Info**. Rename and removal are personal history preferences on
 the selected receiver, associated with this connection's authenticated identity.
 They persist across refresh/restart but do not rename the other Mac's own view.
-Deleting removes the task from your visible list. It preserves saved records,
-active work, Git results and team references; it does not erase a conversation.
+Deletion opens an interactive review of saved commits, changed/new files,
+linked-project copies and known team usage. Expand a file to inspect its text
+preview. **Keep saved work** removes only the history entry. **Delete saved
+work** additionally removes the stopped task's isolated copies after explicit
+acknowledgement; original projects and published branches/PRs remain. An active
+task or locally known active team blocks work deletion. If the files change,
+the deletion review must be refreshed. Saved conversation records remain.
 Shared task work controls remain read-only even when these personal controls are
 available. A current project grant is required for either operation.
 
 Task IDs, session/thread identifiers, raw context, verification records and task
 events are available under **Info**. Full instructions remain available there
 and in the saved conversation. Diagnostic exports retain their complete data.
+
+The selected receiver inspects its own task directories; the client never sends
+an arbitrary deletion path. A deletion snapshot binds the decision to the
+reviewed files and task state. Cross-Mac team usage cannot be known completely,
+so a remotely managed result also carries an explicit warning that deleting its
+copies prevents other Macs from fetching or resuming them. Committed deletion
+is recorded durably; interrupted uncommitted moves are restored at startup, and
+failed disk cleanup can be retried.

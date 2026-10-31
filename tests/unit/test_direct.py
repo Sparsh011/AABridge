@@ -119,6 +119,13 @@ class DirectTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('return a - b', (self.root / 'source/math_ops.py').read_text())
         # The same submission key/body replays instead of creating another task.
         self.assertEqual((await self.submit())['id'], task['id'])
+        preview = await self.rpc('task_work', {'task_id': task['id']})
+        self.assertTrue(preview['can_delete_work'])
+        self.assertIn('math_ops.py', [file['path'] for file in preview['repositories'][0]['files']])
+        deleted = await self.rpc('task_forget', {'task_id': task['id'], 'delete_work': True, 'work_snapshot': preview['snapshot']})
+        self.assertTrue(deleted['work_deleted'])
+        self.assertFalse(Path(task['result']['worktree']).exists())
+        self.assertEqual(git(Path(review['review_repository']), 'rev-parse', 'FETCH_HEAD'), task['result']['result_commit'])
 
     async def test_mcp_routes_to_tls_and_remote_admin_operations_stay_denied(self):
         cli = await asyncio.to_thread(subprocess.run, [sys.executable, '-m', 'aabridge_cli', 'project', 'list',

@@ -56,6 +56,7 @@ class DirectListener:
                                                             'body': {'task_id': task_id}}), identity, config)
         require(task['status'] == 'completed' and task['result']['result_commit'] == commit,
                 'No completed authorized result is available.', 'permission_denied')
+        require(not task.get('work_deleted'), 'The owner deleted this task’s saved workspace.', 'work_deleted')
         path = self.state / 'workspaces' / task_id
         require(path.resolve() == path and (path / '.git').is_dir() and not (path / '.git').is_symlink(),
                 'Unexpected result workspace.', 'unsafe_workspace')

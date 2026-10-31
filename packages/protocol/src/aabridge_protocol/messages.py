@@ -11,11 +11,11 @@ from pathlib import PurePosixPath
 MAX_MESSAGE = 131_072
 ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,79}\Z")
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
-OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity", "task_rename", "task_forget"})
+OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity", "task_rename", "task_forget", "task_work"})
 TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry", "team_activity",
                       "team_guide", "team_decide", "team_merge"})
 OPERATIONS = OPERATIONS | TEAM_OPS
-HISTORY_READS = frozenset({'tasks', 'status', 'conversation', 'events', 'activity'})
+HISTORY_READS = frozenset({'tasks', 'status', 'conversation', 'events', 'activity', 'task_work'})
 MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry",
                        "team_guide", "team_decide", "team_merge", "task_rename", "task_forget"})
 APPROVALS = ("ask", "auto")
@@ -235,12 +235,17 @@ def validate_request(value: object) -> Request:
         integer(limits["max_revisions"], 0, 100 if coding else 3)
         require(body["permission_profile"] in {"proposal-v1", "coding-v1"}, "Unknown permission profile.", "permission_denied")
     elif op in {'task_rename', 'task_forget'}:
-        fields(body, {'task_id'} | ({'title'} if op == 'task_rename' else set()))
+        fields(body, {'task_id'} | ({'title'} if op == 'task_rename' else set()), {'delete_work', 'work_snapshot'} if op == 'task_forget' else set())
         identifier(body['task_id'])
         if op == 'task_rename':
             task_title(body['title'])
-    elif op in {"status", "cancel"}:
-        fields(body, {"task_id"}, {'shared'} if op == 'status' else set())
+        if op == 'task_forget':
+            require(type(body.get('delete_work', False)) is bool, 'Choose whether to delete the task workspace.')
+            require(('work_snapshot' in body) == body.get('delete_work', False), 'Work deletion requires its reviewed snapshot.')
+            if 'work_snapshot' in body:
+                require(isinstance(body['work_snapshot'], str) and re.fullmatch(r'[0-9a-f]{64}', body['work_snapshot']), 'Invalid work review snapshot.')
+    elif op in {"status", "cancel", "task_work"}:
+        fields(body, {"task_id"}, {'shared'} if op in {'status', 'task_work'} else set())
         identifier(body["task_id"])
     elif op in {"events", "conversation", "activity"}:
         fields(body, {"task_id", "cursor"}, {'shared'})

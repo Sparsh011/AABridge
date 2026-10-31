@@ -416,7 +416,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         blocked = get(self.store, room['id'])
         self.assertEqual(blocked['status'], 'blocked')
         self.assertIn('Couldn’t reach AABridge on mini', blocked['error'])
-        self.assertIn('Remote Login', blocked['error'])
+        self.assertIn('saved connection settings', blocked['error'])
 
     async def test_direct_connection_failure_does_not_mention_remote_login(self):
         async def offline(op, body, target, key=None):

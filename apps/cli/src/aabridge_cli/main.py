@@ -78,7 +78,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     remote.add_argument("--identity-file", type=Path, required=True)
     remote.add_argument("--known-hosts", type=Path, required=True)
     task = commands.add_parser("task")
-    task.add_argument("action", choices=("list", "conversation", "submit", "status", "events", "wait", "answer", "revise", "cancel", "fetch", "rename", "forget"))
+    task.add_argument("action", choices=("list", "conversation", "submit", "status", "events", "wait", "answer", "revise", "cancel", "fetch", "rename", "forget", "work"))
     task.add_argument("--state-dir", type=Path, default=default_state_directory())
     task.add_argument("--remote")
     task.add_argument('--shared', action='store_true', help='Read local coding history in receiver-approved projects; does not grant task controls.')
@@ -88,6 +88,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     task.add_argument("--project")
     task.add_argument("--objective")
     task.add_argument("--title")
+    task.add_argument("--delete-work", action="store_true")
+    task.add_argument("--work-snapshot")
     task.add_argument("--acceptance", action="append", default=[])
     task.add_argument("--revision", type=int)
     task.add_argument("--question-id")
@@ -215,7 +217,7 @@ def dispatch(args):
         finally:
             store.close()
     if args.command == "task":
-        require(not args.shared or args.action in {'list', 'conversation', 'status', 'events', 'wait'},
+        require(not args.shared or args.action in {'list', 'conversation', 'status', 'events', 'wait', 'work'},
                 '--shared is only available for task-history reads.')
         if args.action == "list":
             return actions.send(state, actions.request("tasks", {"cursor": args.cursor, **({'shared': True} if args.shared else {})}), args.remote)
@@ -233,8 +235,14 @@ def dispatch(args):
                         "context": [], "limits": project["limits"], "permission_profile": "proposal-v1"}
             return actions.send(state, actions.request("submit", body, args.key), args.remote)
         identifier(args.id)
+        require(not args.delete_work or args.action == 'forget', '--delete-work is only valid with task forget.')
+        require(args.work_snapshot is None or args.delete_work, '--work-snapshot requires --delete-work.')
+        if args.action == 'work':
+            return actions.send(state, actions.request('task_work', {'task_id': args.id, **({'shared': True} if args.shared else {})}), args.remote)
         if args.action in {'rename', 'forget'}:
             body = {'task_id': args.id, **({'title': args.title} if args.action == 'rename' else {})}
+            if args.delete_work:
+                body.update(delete_work=True, work_snapshot=args.work_snapshot)
             return actions.send(state, actions.request('task_rename' if args.action == 'rename' else 'task_forget', body, args.key), args.remote)
         if args.action == "fetch":
             require(args.remote is not None, "Select an enrolled --remote for Git result transfer.")
