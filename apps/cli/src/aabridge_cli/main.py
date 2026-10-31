@@ -78,7 +78,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     remote.add_argument("--identity-file", type=Path, required=True)
     remote.add_argument("--known-hosts", type=Path, required=True)
     task = commands.add_parser("task")
-    task.add_argument("action", choices=("list", "conversation", "submit", "status", "events", "wait", "answer", "revise", "cancel", "fetch"))
+    task.add_argument("action", choices=("list", "conversation", "submit", "status", "events", "wait", "answer", "revise", "cancel", "fetch", "rename", "forget"))
     task.add_argument("--state-dir", type=Path, default=default_state_directory())
     task.add_argument("--remote")
     task.add_argument('--shared', action='store_true', help='Read local coding history in receiver-approved projects; does not grant task controls.')
@@ -87,6 +87,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     task.add_argument("--file", type=Path)
     task.add_argument("--project")
     task.add_argument("--objective")
+    task.add_argument("--title")
     task.add_argument("--acceptance", action="append", default=[])
     task.add_argument("--revision", type=int)
     task.add_argument("--question-id")
@@ -232,6 +233,9 @@ def dispatch(args):
                         "context": [], "limits": project["limits"], "permission_profile": "proposal-v1"}
             return actions.send(state, actions.request("submit", body, args.key), args.remote)
         identifier(args.id)
+        if args.action in {'rename', 'forget'}:
+            body = {'task_id': args.id, **({'title': args.title} if args.action == 'rename' else {})}
+            return actions.send(state, actions.request('task_rename' if args.action == 'rename' else 'task_forget', body, args.key), args.remote)
         if args.action == "fetch":
             require(args.remote is not None, "Select an enrolled --remote for Git result transfer.")
             return actions.fetch_result(state, args.remote, args.id)

@@ -17,7 +17,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--state-dir", type=Path)
-    parser.add_argument("--action", choices=("connection-card", "connect", "teams", "team_start", "team_status", "team_activity", "team_reply", "team_cancel", "team_retry", "team_guide", "team_decide", "team_merge", "targets", "projects", "projects-local", "project-save", "tasks", "conversation", "status", "events", "submit", "answer", "revise", "cancel"), required=True)
+    parser.add_argument("--action", choices=("connection-card", "connect", "teams", "team_start", "team_status", "team_activity", "team_reply", "team_cancel", "team_retry", "team_guide", "team_decide", "team_merge", "targets", "projects", "projects-local", "project-save", "tasks", "conversation", "status", "events", "submit", "answer", "revise", "cancel", "task_rename", "task_forget"), required=True)
     parser.add_argument("--remote")
     parser.add_argument("--task-id")
     parser.add_argument("--cursor", type=int, default=0)
@@ -102,12 +102,12 @@ def main():
     if args.remote:
         identifier(args.remote)
     key = None
-    if args.action in {"submit", "answer", "revise", "cancel"}:
+    if args.action in {"submit", "answer", "revise", "cancel", "task_rename", "task_forget"}:
         envelope = fields(decode(sys.stdin.buffer.read(MAX_MESSAGE + 1)), {"key", "body"})
         key = identifier(envelope["key"])
         require(isinstance(envelope["body"], dict), "Expected a task action body.")
         body = dict(envelope["body"])
-        if args.action != "cancel":
+        if args.action in {"submit", "answer", "revise"}:
             body["origin"] = {"kind": "human", "name": "You"}
     else:
         body = {"cursor": args.cursor} if args.action in {"tasks", "conversation", "events"} else {}

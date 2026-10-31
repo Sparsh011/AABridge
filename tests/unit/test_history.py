@@ -65,6 +65,30 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual([m["cursor"] for m in after], sorted(m["cursor"] for m in after))
         self.assertFalse(any(m["recovered"] for m in after))
 
+    def test_title_edits_and_history_removal_preserve_work_and_authorization(self):
+        self.coding()
+        self.body['objective'] = 'You are the follower. Admin task: Fix relay shutdown. Full instructions remain here.'
+        task = self.submit()
+        self.assertEqual(task['title'], 'Fix relay shutdown')
+        rename = request('task_rename', {'task_id': task['id'], 'title': 'Handle shutdown safely'}, 'rename-once')
+        self.store.handle(rename, 'paired', self.config)
+        self.store.handle(rename, 'paired', self.config)
+        self.assertEqual(self.store.get(task['id']), task)
+        shared = self.store.handle(request('tasks', {'cursor': 0, 'shared': True}), 'paired', self.config)
+        self.assertEqual(shared['tasks'][0]['title'], 'Handle shutdown safely')
+        self.assertEqual(self.store.handle(request('tasks', {'cursor': 0}), 'local', self.config)['tasks'][0]['title'], 'Fix relay shutdown')
+        self.store.handle(request('task_forget', {'task_id': task['id']}, 'forget-once'), 'paired', self.config)
+        self.store.close(); self.store = Store(self.state)
+        self.assertEqual(self.store.handle(request('tasks', {'cursor': 0, 'shared': True}), 'paired', self.config)['tasks'], [])
+        self.assertEqual(self.store.get(task['id']), task)
+        self.assertTrue(self.messages(task['id']))
+        self.config['peers']['paired']['projects'] = []
+        with self.assertRaises(BridgeError):
+            self.store.handle(rename, 'paired', self.config)  # Recheck grants even on cached mutations.
+        for title in ('', 'x' * 81, 'two\nlines', 'ending\n', 'unicode\u2028line', 'tab\there'):
+            with self.subTest(title=title), self.assertRaises(BridgeError):
+                request('task_rename', {'task_id': task['id'], 'title': title})
+
     def test_history_write_failure_rolls_back_task_and_idempotency_record(self):
         self.store.db.execute("CREATE TRIGGER reject_history BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'fixture storage failure'); END")
         with self.assertRaises(sqlite3.IntegrityError):
@@ -227,6 +251,8 @@ class HistoryTests(unittest.TestCase):
         expected = []
         for index in range(66):
             expected.append(self.submit('page-' + str(index), owner='local' if index % 2 else 'paired')['id'])
+        self.store.handle(request('task_forget', {'task_id': expected[1]}), 'paired', self.config)
+        expected.pop(1)
         cursor, seen = 0, []
         while True:
             page = self.store.handle(request('tasks', {'cursor': cursor, 'shared': True}), 'paired', self.config)

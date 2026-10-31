@@ -302,6 +302,11 @@ struct AABridgeDesktop: App {
 
     init() {
         let payload = Bundle.main.resourceURL!.appendingPathComponent("SetupPayload")
+        for (flag, panel) in [("--preview-task-info", "info"), ("--preview-task-edit", "edit")] {
+            if let index = CommandLine.arguments.firstIndex(of: flag), CommandLine.arguments.count > index + 1 {
+                exit(verifySharedHistoryView(resources: Bundle.main.resourceURL!, output: CommandLine.arguments[index + 1], panel: panel) ? 0 : 1)
+            }
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--verify-shared-history"), CommandLine.arguments.count > index + 1 {
             exit(verifySharedHistoryView(resources: Bundle.main.resourceURL!, output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }

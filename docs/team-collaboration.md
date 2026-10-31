@@ -318,3 +318,47 @@ tests. The remaining suite exercised the same 3,390 in-process production lines
 as the preceding 244-test suite. This is a supporting line-execution comparison,
 not a claim of exhaustive branch/mutation coverage. Removal reasons and retained
 behavior checks are recorded in [the test audit](test-audit-2026-10-31.md).
+
+## Compact task titles and personal history controls · October 31, 2026
+
+Task labels are now separate from execution instructions. The leader's existing
+planning turn is asked for one plain `TASK_TITLE:` line (4–8 words, at most 80
+characters). The coordinator stores that label and sends optional `title`
+metadata to receivers advertising `task_titles`. The full objective, plan and
+context remain intact. Retries, repair rounds and continuation of the same
+worker task keep its title. Missing/invalid leader titles and older task records
+use a compact label derived from the original admin request, without inference.
+Older receivers receive the original compatible request body.
+
+The history list and detail header use a two-line title, with a separate
+Plan/Implementation/Review label. The ellipsis menu and row context menu contain
+**Edit title**, **Delete from history**, and **Info**. App-generated task/session
+IDs, agent-thread identifiers and raw supplied context/verification/events are
+shown inside Info. Conversation messages and diagnostic exports keep their
+original content; the application does not rewrite historical agent messages.
+
+`task_rename` and `task_forget` are display-only mutations. Their preferences
+live on the receiver in an additive `task_preferences(task_id,viewer,...)` table,
+keyed by the authenticated viewer identity. Editing a title affects only that
+viewer's history. Deletion hides the row from that viewer's list, including
+pagination/search, without cancelling work, purging conversation records,
+removing Git files or breaking team/idempotency references. It is not a private
+record-erasure operation. The confirmation dialog explicitly describes this.
+
+These controls require current project/read access even on idempotency-cache
+hits. They do not grant answer/revise/cancel rights over shared tasks. One peer
+cannot rename or hide another viewer's history. The desktop enables these menu
+items only when the receiver advertises `history_management`; update its bridge
+service to enable them. The CLI exposes `task rename --id … --title …` and
+`task forget --id …`; MCP exposes the same bounded, authenticated operations.
+
+Validation: all 226 deterministic tests passed. Existing handoff/TLS fixtures
+check separate title transmission, unchanged instructions, per-viewer metadata
+and shared-task control restrictions. One focused lifecycle test covers restart
+persistence, malformed titles, revocation and retained work; the pagination test
+now skips a hidden row. The universal app was built through
+`scripts/build_desktop.py` for arm64 and x86_64, with signature/resource smoke
+checks. The native control fixture renamed and removed an item over real local
+IPC, then verified its saved records survived. History, Info and Edit views were
+rendered and visually inspected. No paid model call, physical two-Mac model run,
+installed-app replacement or running-service update was performed.

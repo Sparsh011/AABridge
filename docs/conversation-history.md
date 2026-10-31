@@ -165,3 +165,23 @@ test messages; no new model is launched. Its own view is rendered for visual
 inspection. Interactive desktop automation remains unavailable because Computer
 Use access is not enabled. The updated physical mini still needs local upgrade
 before a new end-to-end model result test can run.
+
+## Titles and the task menu
+
+Task titles are short display labels, distinct from the complete objective. A
+team leader supplies the label in its existing planning turn; task submission
+carries optional `title` metadata, and old records receive a compact fallback.
+The task card/header shows at most two lines and a separate stage label.
+
+Use the ellipsis menu (or right-click a task) for **Edit title**, **Delete from
+history**, and **Info**. Rename and removal are personal history preferences on
+the selected receiver, associated with this connection's authenticated identity.
+They persist across refresh/restart but do not rename the other Mac's own view.
+Deleting removes the task from your visible list. It preserves saved records,
+active work, Git results and team references; it does not erase a conversation.
+Shared task work controls remain read-only even when these personal controls are
+available. A current project grant is required for either operation.
+
+Task IDs, session/thread identifiers, raw context, verification records and task
+events are available under **Info**. Full instructions remain available there
+and in the saved conversation. Diagnostic exports retain their complete data.

@@ -288,6 +288,9 @@ class TeamRunner:
             context = ['Your plan:\n' + room['outputs']['plan']['summary'][:12000],
                        'Follower report:\n' + room['outputs']['work']['summary'][:24000],
                        'Follower diff:\n' + room.get('diff', '')[:64000]] + noted
+        if stage == 'plan':
+            objective += ('\nInclude one plain line TASK_TITLE: followed by a descriptive 4–8 word task title, at most 80 characters. '
+                          'Describe the work, without role instructions, device IDs or paths. This is display metadata, not a replacement for your implementation plan.')
         snapshot = None
         if stage == 'review':
             require(project.get('capabilities', {}).get('review_snapshot'),
@@ -313,7 +316,9 @@ class TeamRunner:
                 context.append('\n\n'.join(linked_evidence))
         member = room['follower' if stage == 'work' else 'leader']
         selected = member.get('model_settings', {})
-        return {**({'review_snapshot': snapshot} if snapshot else {}), **({'model_settings': selected} if selected else {}), 'project_id': member['project'],
+        from aabridge_protocol.titles import compact_title
+        title = room.get('title') or compact_title(room['objective'])
+        return {**({'title': title} if project.get('capabilities', {}).get('task_titles') else {}), **({'review_snapshot': snapshot} if snapshot else {}), **({'model_settings': selected} if selected else {}), 'project_id': member['project'],
                 'recipient': project['worker'], 'base_commit': project['base_commit'],
                 'objective': objective, 'scope': ['*'], 'acceptance': ['Follow the admin task and assigned team role.'],
                 'context': context, 'limits': project['limits'], 'permission_profile': 'coding-v1',
@@ -498,6 +503,8 @@ class TeamRunner:
             room.pop(key, None)
         approval, notes = room.get('approval'), bool(waiting_notes(room))
         if stage == 'plan':
+            from aabridge_protocol.titles import leader_title
+            room.setdefault('title', leader_title(result['summary'], room['objective']))
             if notes:
                 room['stage'] = 'plan'  # The leader folds the admin's note into its plan first.
             elif approval == 'ask':

@@ -11,13 +11,13 @@ from pathlib import PurePosixPath
 MAX_MESSAGE = 131_072
 ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,79}\Z")
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
-OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity"})
+OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity", "task_rename", "task_forget"})
 TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry", "team_activity",
                       "team_guide", "team_decide", "team_merge"})
 OPERATIONS = OPERATIONS | TEAM_OPS
 HISTORY_READS = frozenset({'tasks', 'status', 'conversation', 'events', 'activity'})
 MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry",
-                       "team_guide", "team_decide", "team_merge"})
+                       "team_guide", "team_decide", "team_merge", "task_rename", "task_forget"})
 APPROVALS = ("ask", "auto")
 PLACEMENTS = ("sandbox", "branch", "worktree", "current")
 DECISIONS = ("continue", "replan", "finish")
@@ -45,6 +45,12 @@ def text(value: object, maximum: int = 4000, *, empty: bool = False) -> str:
     require((empty or bool(value.strip())) and len(value) <= maximum, "Text is empty or too long.")
     require(not any(ord(c) < 32 and c not in "\n\t\r" for c in value), "Control characters are not permitted.")
     return value
+
+
+def task_title(value: object) -> str:
+    value = text(value, 80)
+    require(not any(character in value for character in '\n\r\t\x85\u2028\u2029'), 'A task title must be a single line.')
+    return value.strip()
 
 
 def review_snapshot(value: object) -> dict:
@@ -200,11 +206,13 @@ def validate_request(value: object) -> Request:
                 if role + "_settings" in body:
                     fields(body[role + "_settings"], set(), {"model", "effort"})
     elif op == "submit":
-        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin", "mode", "model_settings", "review_snapshot"})
+        fields(body, {"project_id", "recipient", "base_commit", "objective", "scope", "acceptance", "context", "limits", "permission_profile"}, {"origin", "mode", "model_settings", "review_snapshot", "title"})
         identifier(body["project_id"])
         identifier(body["recipient"])
         require(isinstance(body["base_commit"], str) and SHA.fullmatch(body["base_commit"]) is not None, "An exact base commit is required.")
         text(body["objective"])
+        if "title" in body:
+            task_title(body["title"])
         coding = body["permission_profile"] == "coding-v1"
         require(body.get("mode", "work") in {"work", "plan", "review"}, "Invalid coding role.")
         require(coding or "mode" not in body, "Roles require coding mode.")
@@ -226,6 +234,11 @@ def validate_request(value: object) -> Request:
         integer(limits["max_turns"], 1, 100 if coding else 6)
         integer(limits["max_revisions"], 0, 100 if coding else 3)
         require(body["permission_profile"] in {"proposal-v1", "coding-v1"}, "Unknown permission profile.", "permission_denied")
+    elif op in {'task_rename', 'task_forget'}:
+        fields(body, {'task_id'} | ({'title'} if op == 'task_rename' else set()))
+        identifier(body['task_id'])
+        if op == 'task_rename':
+            task_title(body['title'])
     elif op in {"status", "cancel"}:
         fields(body, {"task_id"}, {'shared'} if op == 'status' else set())
         identifier(body["task_id"])

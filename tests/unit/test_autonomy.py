@@ -36,7 +36,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         config['projects']['app'] = {'repository': str(self.repo)}
         save_config(self.state, config)
         self.project = {'worker': 'codex', 'adapter': 'codex', 'base_commit': self.base,
-                        'capabilities': {'review_snapshot': True}, 'scope': ['*'], 'execution_enabled': True, 'verification': {'profile': 'repository-v1'},
+                        'capabilities': {'review_snapshot': True, 'task_titles': True}, 'scope': ['*'], 'execution_enabled': True, 'verification': {'profile': 'repository-v1'},
                         'limits': {'runtime_seconds': 3600, 'max_turns': 100, 'max_revisions': 100}}
         self.tasks, self.requests = {}, []
         self.reviews = []  # Summaries the leader returns, one per review turn.
@@ -58,7 +58,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         if mode == 'work':
             (path / f'change-{task["revision"]}.txt').write_text('work')
             git(path, 'add', '--all'); git(path, 'commit', '-m', 'Work ' + str(task['revision']))
-        summary = {'plan': 'Plan v' + str(task['revision']), 'work': 'Implemented v' + str(task['revision'])}.get(mode)
+        summary = {'plan': 'TASK_TITLE: Fix weight validation\nPlan v' + str(task['revision']), 'work': 'Implemented v' + str(task['revision'])}.get(mode)
         task['result'].update(summary=summary or (self.reviews.pop(0) if self.reviews else 'Looks fine'),
                               result_commit=git(path, 'rev-parse', 'HEAD'))
 
@@ -113,6 +113,10 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(verdict('Fine.\nVERDICT: APPROVED'), 'approved')
         self.assertEqual(verdict('VERDICT: APPROVED\n...\n**VERDICT: CHANGES_REQUESTED**\n1. Fix the bug'), 'changes')
         self.assertIsNone(verdict('Looks good to me'))
+        from aabridge_protocol.titles import compact_title, leader_title
+        self.assertEqual(leader_title('TASK_TITLE: Fix relay shutdown', 'Long instructions'), 'Fix relay shutdown')
+        self.assertEqual(leader_title('TASK_TITLE: ' + 'x' * 81, 'Fix relay shutdown'), 'Fix relay shutdown')
+        self.assertEqual(compact_title('You are the follower. Admin task: Fix relay shutdown. Then test it.'), 'Fix relay shutdown')
 
     def test_new_options_are_validated(self):
         base = {'objective': 'x', 'leader': {'target': 'local', 'project': 'a', 'agent': 'codex'}, 'follower': {'target': 'mini', 'project': 'a', 'agent': 'claude'}}
@@ -226,6 +230,10 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
             self.assertEqual(self.stages(), [('submit', 'plan'), ('submit', 'work'), ('submit', 'review'), ('revise', 'work'), ('revise', 'review')])
+            work = next(body for op, body, _, _ in self.requests if op == 'submit' and body['mode'] == 'work')
+            self.assertEqual(work['title'], 'Fix weight validation')
+            self.assertIn('You are the follower.', work['objective'])
+            self.assertEqual(done['title'], work['title'])
             revisions = [body for op, body, _, _ in self.requests if op == 'revise']
             self.assertIn('Negative weights are accepted', revisions[0]['text'])
             self.assertIn('explain why with evidence', revisions[0]['text'])

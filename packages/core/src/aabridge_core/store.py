@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from aabridge_protocol.messages import BridgeError, HISTORY_READS, MUTATIONS, Request, canonical, require
+from aabridge_protocol.titles import compact_title
 from .config import authorize, read_private, write_private
 
 
@@ -50,6 +51,9 @@ class Store:
                 team_id TEXT NOT NULL, source TEXT NOT NULL, source_cursor INTEGER NOT NULL, document TEXT NOT NULL,
                 UNIQUE(team_id,source,source_cursor));
             CREATE INDEX IF NOT EXISTS activity_team ON team_activity(team_id,seq);
+            CREATE TABLE IF NOT EXISTS task_preferences (task_id TEXT NOT NULL,
+                viewer TEXT NOT NULL, title TEXT, hidden INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(task_id, viewer));
             CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, project TEXT NOT NULL,
                 owner TEXT NOT NULL, status TEXT NOT NULL, document TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,7 +212,7 @@ class Store:
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
             # Peers see linked project names and access, never their local paths.
-            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "model_settings": project.get("permission_profile") == "coding-v1"},
+            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "task_titles": True, "model_settings": project.get("permission_profile") == "coding-v1"},
                            "links": [{"name": link["name"], "access": link["access"]} for link in project.get("links", [])],
                            **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
@@ -218,17 +222,21 @@ class Store:
             cursor, output = request.body["cursor"], []
             shared = request.body.get('shared', False)
             query = "SELECT rowid,document FROM tasks WHERE (?=0 OR rowid<?) AND (?='local' OR owner=? OR (? AND owner='local')) ORDER BY rowid DESC"
+            preferences = {row[0]: (row[1], row[2]) for row in self.db.execute('SELECT task_id,title,hidden FROM task_preferences WHERE viewer=?', (identity,))}
             for seq, document in self.db.execute(query, (cursor, cursor, identity, identity, shared)):
                 task = json.loads(document)
                 if task["project_id"] not in config["projects"] or ("*" not in peer["projects"] and task["project_id"] not in peer["projects"]):
                     continue
                 if not self.can_read(task, identity, config['projects'][task['project_id']], shared=shared):
                     continue
+                title, hidden = preferences.get(task['id'], (None, False))
+                if hidden:
+                    continue
                 if len(output) == 32:
-                    return {"tasks": output, "cursor": output[-1]["cursor"], "has_more": True, 'capabilities': {'shared_task_history': True}}
+                    return {"tasks": output, "cursor": output[-1]["cursor"], "has_more": True, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True}}
                 summary = {key: task[key] for key in ("id", "project_id", "status", "recipient", "sender", "revision", "created_at", "updated_at")}
-                output.append({**summary, "objective": task["objective"][:300], "cursor": seq, 'permissions': self.permissions(task, identity)})
-            return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False, 'capabilities': {'shared_task_history': True}}
+                output.append({**summary, 'title': title or task.get('title') or compact_title(task['objective']), 'mode': task.get('mode'), "objective": task["objective"][:300], "cursor": seq, 'permissions': self.permissions(task, identity)})
+            return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True}}
         require(request.op != "shutdown" or identity == "local", "Only the local operator may stop the daemon.", "permission_denied")
         if request.op == "shutdown":
             return {"stopping": True}
@@ -240,7 +248,7 @@ class Store:
             else:
                 task = self.get(request.body["task_id"])
                 project = authorize(config, identity, task["project_id"])
-                shared_read = request.op in HISTORY_READS and request.body.get('shared', False)
+                shared_read = (request.op in HISTORY_READS and request.body.get('shared', False)) or request.op in {'task_rename', 'task_forget'}
                 require(self.can_read(task, identity, project, shared=shared_read), "Task access denied.", "permission_denied")
             prior = self.db.execute("SELECT digest,response FROM requests WHERE owner=? AND key=?", (identity, request.key)).fetchone()
             if prior and request.op in MUTATIONS:
@@ -265,7 +273,8 @@ class Store:
             require(set(body["scope"]) <= set(project["scope"]), "Task scope exceeds local policy.", "permission_denied")
             for key, value in body["limits"].items():
                 require(value <= project["limits"][key], "Resource limit exceeds local policy.", "permission_denied")
-            task = {**body, "version": 1, "id": new_id("task"), "attempt_id": new_id("attempt"), "sender": identity,
+            from aabridge_protocol.messages import task_title
+            task = {**body, 'title': task_title(body['title']) if 'title' in body else compact_title(body['objective']), "version": 1, "id": new_id("task"), "attempt_id": new_id("attempt"), "sender": identity,
                     "recipient_node": config["node_id"], "revision": 1, "status": "queued", "turns": 0,
                     "session_id": None, "thread_id": None, "question": None, "result": None,
                     "pending": None, "worker_pid": None, "runtime_used": 0.0, "created_at": time.time()}
@@ -274,6 +283,14 @@ class Store:
             self.save(task, "submitted")
             return task
         task = self.get(body["task_id"])
+        if op in {'task_rename', 'task_forget'}:
+            if op == 'task_rename':
+                from aabridge_protocol.messages import task_title
+                title = task_title(body['title'])
+                self.db.execute('INSERT INTO task_preferences(task_id,viewer,title) VALUES (?,?,?) ON CONFLICT(task_id,viewer) DO UPDATE SET title=excluded.title', (task['id'], identity, title))
+                return {'task_id': task['id'], 'title': title}
+            self.db.execute('INSERT INTO task_preferences(task_id,viewer,hidden) VALUES (?,?,1) ON CONFLICT(task_id,viewer) DO UPDATE SET hidden=1', (task['id'], identity))
+            return {'task_id': task['id'], 'deleted_from_history': True}
         if op == "status":
             return {**task, 'permissions': self.permissions(task, identity)} if body.get('shared') else task
         if op == "activity":

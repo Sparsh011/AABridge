@@ -79,6 +79,10 @@ async def verify(args):
             print(result.stderr[-2000:])
             raise RuntimeError("Native chat-control verification failed.")
         assert len(dropped) == 1
+        preference = supervisor.store.db.execute('SELECT title,hidden FROM task_preferences WHERE task_id=? AND viewer=?', (waiting['id'], 'local')).fetchone()
+        assert preference == ('Fix addition', 1), 'Native rename/removal was not persisted'
+        assert supervisor.store.history_page(waiting['id'], 0)['messages'], 'History removal erased durable task records'
+
         tasks = [json.loads(row[0]) for row in supervisor.store.db.execute("SELECT document FROM tasks")]
         assert len(tasks) == 4, "A lost acknowledgement caused a duplicate submission"
         submitted = next(task for task in tasks if task["id"] == dropped[0])
@@ -90,7 +94,7 @@ async def verify(args):
         assert answer["actor"] == {"kind": "human", "name": "You"}
         assert not (root / "desktop-outbox/pending-action.json").exists()
         print(json.dumps({"passed": True, "category": "native GUI controls and authenticated IPC without a worker scheduler",
-            "checks": ["human sender persisted", "answer", "revision", "cancel", "new task", "editable scope subset", "immediate pending bubble", "activity display", "local project GUI model", "dropped acknowledgement", "restored private outbox", "same-key retry without duplicate", "silent refresh and draft preservation"],
+            "checks": ["title edit", "history removal preserves task records", "human sender persisted", "answer", "revision", "cancel", "new task", "editable scope subset", "immediate pending bubble", "activity display", "local project GUI model", "dropped acknowledgement", "restored private outbox", "same-key retry without duplicate", "silent refresh and draft preservation"],
             "state": str(state), "preview": str(args.preview.resolve()), "model_inference_started": False}, indent=2))
     finally:
         # Leave no runnable fixture tasks or enabled execution behind.

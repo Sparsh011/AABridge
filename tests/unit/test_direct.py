@@ -161,6 +161,13 @@ class DirectTransportTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(BridgeError) as denied:
             await self.rpc('cancel', {'task_id': task['id']})
         self.assertEqual(denied.exception.code, 'permission_denied')
+        await self.rpc('task_rename', {'task_id': task['id'], 'title': 'Compact shared title'})
+        page = await self.rpc('tasks', {'cursor': 0, 'shared': True})
+        self.assertEqual(page['tasks'][0]['title'], 'Compact shared title')
+        await self.rpc('task_forget', {'task_id': task['id']})
+        self.assertEqual((await self.rpc('tasks', {'cursor': 0, 'shared': True}))['tasks'], [])
+        local = self.supervisors[1].store.handle(request('tasks', {'cursor': 0}), 'local', load_config(self.mini))
+        self.assertIn(task['id'], [item['id'] for item in local['tasks']])
 
     async def test_project_grants_and_revocation_apply_to_rpc_and_result_reads(self):
         task = await self.completed()
