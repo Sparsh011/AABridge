@@ -47,6 +47,9 @@ struct TaskState: Decodable {
     let error: String?
     let scope: [String]?
     var permissions: TaskPermissions? = nil
+    var thread_id: String? = nil
+    var objective: String? = nil
+    var work_deleted: Bool? = nil
 }
 
 struct PendingChatAction: Codable {
@@ -73,6 +76,19 @@ struct BridgeTask: Decodable, Identifiable {
     let recipient: String
     let sender: String
     var permissions: TaskPermissions? = nil
+    var title: String? = nil
+    var mode: String? = nil
+    var displayTitle: String {
+        if let title = title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return String(title.prefix(80)) }
+        let original = objective.components(separatedBy: "Admin task:").last ?? objective
+        if !objective.contains("Admin task:") && original.hasPrefix("You are the follower.") { return "Implementation task" }
+        let line = original.components(separatedBy: .newlines).first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? "Untitled task"
+        let label = line.split(whereSeparator: { $0.isWhitespace }).prefix(8).joined(separator: " ")
+        return String(label.prefix(80))
+    }
+    var stageLabel: String? {
+        switch mode { case "plan": return "Plan"; case "work": return "Implementation"; case "review": return "Review"; default: return nil }
+    }
 }
 
 struct BridgeMessage: Decodable, Identifiable {
@@ -111,6 +127,7 @@ final class TaskBrowserModel: ObservableObject {
     @Published var projects: [BridgeProject] = []
     @Published var taskState: TaskState?
     @Published var historyNotice = ""
+    @Published var historyManagement = false
     @Published var actionBusy = false
     @Published var actionNotice = ""
     @Published var pendingAction: PendingChatAction?
@@ -153,7 +170,7 @@ final class TaskBrowserModel: ObservableObject {
         var args = ["-f", resources.appendingPathComponent("Activity.command").path, "--action", action]
         if let stateDirectory = stateDirectory { args += ["--state-dir", stateDirectory] }
         if target != "local" { args += ["--remote", target] }
-        if target != "local" && ["tasks", "conversation", "events", "status"].contains(action) { args.append("--shared") }
+        if target != "local" && ["tasks", "conversation", "events", "status", "task_work"].contains(action) { args.append("--shared") }
         if let task = task { args += ["--task-id", task] }
         if ["tasks", "conversation", "events"].contains(action) { args.append("--all") }
         process.arguments = args
@@ -223,6 +240,7 @@ final class TaskBrowserModel: ObservableObject {
         projects = []
         taskState = nil
         historyNotice = ""
+        historyManagement = false
         lastUpdated = nil
         preferences.set(target, forKey: "activityTarget")
         refresh(silent: false)
@@ -236,7 +254,7 @@ final class TaskBrowserModel: ObservableObject {
         let token = generation, selectedTarget = target
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                struct Reply: Decodable { let tasks: [BridgeTask]; var history_notice: String? = nil }
+                struct Reply: Decodable { let tasks: [BridgeTask]; var history_notice: String? = nil; var capabilities: [String: Bool]? = nil }
                 let reply = try JSONDecoder().decode(Reply.self, from: self.call("tasks", target: selectedTarget))
                 struct ProjectReply: Decodable { let projects: [BridgeProject] }
                 let projects = try JSONDecoder().decode(ProjectReply.self, from: self.call("projects", target: selectedTarget)).projects
@@ -244,6 +262,7 @@ final class TaskBrowserModel: ObservableObject {
                     guard token == self.generation else { return }
                     self.tasks = reply.tasks
                     self.historyNotice = reply.history_notice ?? ""
+                    self.historyManagement = reply.capabilities?["history_management"] == true
                     self.projects = projects
                     self.loading = false
                     self.showListLoader = false
@@ -319,12 +338,45 @@ final class TaskBrowserModel: ObservableObject {
         loadDetail(silent: false)
     }
 
+    func updateHistory(_ task: BridgeTask, title: String? = nil) {
+        guard canAct, historyManagement else { return }
+        let selectedTarget = target
+        let action = title == nil ? "task_forget" : "task_rename"
+        var body: [String: Any] = ["task_id": task.id]
+        if let title = title { body["title"] = title }
+        guard let payload = try? JSONSerialization.data(withJSONObject: ["key": "history-" + UUID().uuidString.lowercased(), "body": body]) else { return }
+        actionBusy = true
+        generation += 1
+        detailGeneration += 1
+        loading = false
+        loadingDetail = false
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                _ = try self.call(action, target: selectedTarget, input: payload)
+                DispatchQueue.main.async {
+                    self.actionBusy = false
+                    if title == nil {
+                        self.tasks.removeAll(where: { $0.id == task.id })
+                        if self.selection == task.id {
+                            self.selection = nil
+                            self.messages = []; self.events = ""; self.session = ""; self.taskState = nil
+                        }
+                    }
+                    self.refresh(silent: true)
+                }
+            } catch {
+                DispatchQueue.main.async { self.actionBusy = false; self.error = error.localizedDescription }
+            }
+        }
+    }
+
     func export() {
         guard let task = tasks.first(where: { $0.id == selection }) else { return }
         let picker = NSSavePanel()
-        picker.nameFieldStringValue = task.id + "-conversation.md"
+        let filename = task.displayTitle.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: "-")
+        picker.nameFieldStringValue = String(filename.prefix(80)) + "-conversation.md"
         guard picker.runModal() == .OK, let url = picker.url else { return }
-        var text = "# AABridge conversation\n\nTask: \(task.id)\nReceiver: \(target)\nProject: \(task.project_id)\nStatus: \(task.status)\nSession: \(session)\n\n"
+        var text = "# \(task.displayTitle)\n\nTask: \(task.id)\nReceiver: \(target)\nProject: \(task.project_id)\nStatus: \(task.status)\nSession: \(session)\n\n"
         text += "This export includes supplied context and accepted bridge messages. Older recovered entries are labelled. It is not a copy of internal model reasoning.\n\n"
         for message in messages {
             let recipient = recipientLabel(message)
@@ -343,7 +395,7 @@ extension TaskBrowserModel {
     var canControlSelectedTask: Bool { taskState?.permissions?.can_control ?? selectedTask?.permissions?.can_control ?? true }
     var canReply: Bool {
         guard canAct, canControlSelectedTask, let state = taskState, state.id == selection else { return false }
-        return state.status == "waiting_question" || (state.status == "completed" && state.revision <= state.limits.max_revisions)
+        return state.work_deleted != true && (state.status == "waiting_question" || (state.status == "completed" && state.revision <= state.limits.max_revisions))
     }
     var replyLabel: String {
         if taskState?.status == "waiting_question" { return "Send answer" }
@@ -372,6 +424,7 @@ extension TaskBrowserModel {
     var pendingNewTask: Bool { pendingAction?.action == "submit" && pendingAction?.target == target && selection == nil }
     var composerHint: String {
         if !canControlSelectedTask { return "This task was created on the selected Mac. Open AABridge there to continue it; its shared history is read-only here." }
+        if taskState?.work_deleted == true { return "Saved work was deleted. Start a new task to continue." }
         switch taskState?.status {
         case "waiting_question": return "Reply to \(workerName)'s question…"
         case "completed": return canReply ? "Ask \(workerName) for a revision…" : "Revision limit reached. Start a new task to continue."
@@ -547,14 +600,16 @@ struct TaskBrowserView: View {
     @State private var query = ""
     @State private var statusFilter = "All"
     @State private var autoRefresh = true
-    @State private var selectedTab = 0
+    @State private var editingTask: BridgeTask?
+    @State private var infoTask: BridgeTask?
+    @State private var deletingTask: BridgeTask?
     let active: Bool
     private let timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     private var filtered: [BridgeTask] {
         model.tasks.filter { task in
             (statusFilter == "All" || task.status == statusFilter) &&
-            (query.isEmpty || (task.objective + task.project_id + task.id).localizedCaseInsensitiveContains(query))
+            (query.isEmpty || (task.displayTitle + task.objective + task.project_id).localizedCaseInsensitiveContains(query))
         }
     }
 
@@ -592,6 +647,15 @@ struct TaskBrowserView: View {
         } }
     }
 
+    @ViewBuilder private func taskActions(_ task: BridgeTask) -> some View {
+        Button { editingTask = task } label: { Label("Edit title", systemImage: "pencil") }
+            .disabled(!model.canAct || !model.historyManagement)
+        Button(role: .destructive) { deletingTask = task } label: { Label("Delete from history", systemImage: "trash") }
+            .disabled(!model.canAct || !model.historyManagement)
+        Divider()
+        Button { model.selection = task.id; if model.taskState?.id != task.id { model.loadDetail() }; infoTask = task } label: { Label("Info", systemImage: "info.circle") }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -627,15 +691,16 @@ struct TaskBrowserView: View {
                             ForEach(filtered) { task in
                                 Button { model.selection = task.id } label: {
                                     VStack(alignment: .leading, spacing: 8) {
-                                        Text(task.objective).lineLimit(4).font(.bridge(.headline)).foregroundStyle(.primary)
-                                        if task.permissions?.can_control == false { Label("Created on this receiver · read-only", systemImage: "eye").font(.bridge(.caption2)).foregroundStyle(.secondary) }
+                                        Text(task.displayTitle).lineLimit(2).font(.bridge(.headline)).foregroundStyle(.primary)
+                                        if task.permissions?.can_control == false { Label("Shared task · work controls read-only", systemImage: "eye").font(.bridge(.caption2)).foregroundStyle(.secondary) }
+                                        if let stage = task.stageLabel { Text(stage).font(.bridge(.caption2)).foregroundStyle(.secondary) }
                                         HStack { Text(task.project_id); Spacer(); Text(task.status.replacingOccurrences(of: "_", with: " ")) }
                                             .font(.bridge(.caption)).foregroundStyle(.secondary)
                                         Text(Date(timeIntervalSince1970: task.updated_at), style: .date).font(.bridge(.caption2)).foregroundStyle(.secondary)
                                     }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
                                         .background(model.selection == task.id ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.025))
                                         .clipShape(RoundedRectangle(cornerRadius: 10))
-                                }.buttonStyle(.plain)
+                                }.buttonStyle(.plain).contextMenu { taskActions(task) }
                             }
                         }
                     }.onChange(of: model.selection) { _ in model.selectTask() }
@@ -649,28 +714,18 @@ struct TaskBrowserView: View {
                         PendingSendView(model: model).padding(16)
                     } else if let task = model.tasks.first(where: { $0.id == model.selection }) {
                         VStack(alignment: .leading, spacing: 7) {
-                            Text(task.objective).font(.bridge(.title3).bold()).textSelection(.enabled)
+                            HStack(alignment: .top) {
+                                Text(task.displayTitle).font(.bridge(.title3).bold()).lineLimit(2).textSelection(.enabled)
+                                Spacer()
+                                Menu { taskActions(task) } label: { Image(systemName: "ellipsis.circle") }
+                                    .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Task options")
+                            }
                             HStack { Text("\(model.workerName) · \(task.project_id) · \(task.status) · revision \(task.revision)"); Spacer(); Button("Export…") { model.export() }.disabled(model.actionBusy) }
-                            Text(task.id + "\nSession: " + model.session).font(.bridge(.caption, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
                             if let scope = model.taskState?.scope { Text("Scope: " + scope.joined(separator: ", ")).font(.bridge(.caption)).foregroundStyle(.secondary).textSelection(.enabled) }
                             WorkerActivityView(model: model)
                             if model.showDetailLoader { ProgressView("Loading saved messages…").controlSize(.small) }
                         }.padding([.horizontal, .top], 20)
-                        HStack(spacing: 8) {
-                            ForEach(Array(["Conversation", "Supplied context", "Task events"].enumerated()), id: \.offset) { index, label in
-                                Button { selectedTab = index } label: {
-                                    Text(label).font(.bridge(.callout).weight(.semibold))
-                                        .foregroundStyle(selectedTab == index ? Color.accentColor : Color.secondary)
-                                        .padding(.horizontal, 14).padding(.vertical, 9)
-                                        .background(selectedTab == index ? Color.accentColor.opacity(0.12) : Color.clear)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                                }.buttonStyle(.plain)
-                            }
-                            Spacer()
-                        }.padding(.horizontal, 18)
-                        if selectedTab == 0 { transcript(context: false) }
-                        else if selectedTab == 1 { transcript(context: true) }
-                        else { ScrollView { Text(model.events).font(.bridge(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(18) } }
+                        transcript(context: false)
                         TaskComposer(model: model)
                     } else {
                         Spacer()
@@ -692,6 +747,14 @@ struct TaskBrowserView: View {
         }.onAppear { model.discover() }
             .onReceive(timer) { _ in if active && autoRefresh && !model.loading && !model.loadingDetail && !model.actionBusy { model.refresh(silent: true) } }
             .sheet(isPresented: $model.showNewTask) { NewTaskSheet(model: model) }
+            .sheet(item: $editingTask) { task in
+                EditTaskTitleSheet(title: task.displayTitle) { title in model.updateHistory(task, title: title) }
+            }
+            .sheet(item: $infoTask) { task in
+                TaskInfoSheet(task: task, state: model.taskState?.id == task.id ? model.taskState : nil,
+                              messages: model.selection == task.id ? model.messages : [], events: model.selection == task.id ? model.events : "")
+            }
+            .sheet(item: $deletingTask) { task in TaskDeletionSheet(browser: model, task: task) }
     }
 }
 
@@ -743,7 +806,7 @@ func verifyActivity(resources: URL, stateDirectory: String, output: String) -> B
     return true
 }
 
-func verifySharedHistoryView(resources: URL, output: String) -> Bool {
+func verifySharedHistoryView(resources: URL, output: String, panel: String? = nil) -> Bool {
     let domain = "local.aabridge.shared-history-verification." + UUID().uuidString
     let preferences = UserDefaults(suiteName: domain)!
     defer { preferences.removePersistentDomain(forName: domain) }
@@ -752,8 +815,9 @@ func verifySharedHistoryView(resources: URL, output: String) -> Bool {
     let now = Date().timeIntervalSince1970
     model.targets = [ActivityTarget(id: "fixture-mini", label: "Fixture Mac mini")]
     model.target = "fixture-mini"
-    model.tasks = [BridgeTask(id: "task-shared", project_id: "booking", status: "waiting_question", objective: "Task created on the Mac mini",
-                             revision: 1, created_at: now - 60, updated_at: now, recipient: "claude", sender: "local", permissions: TaskPermissions(can_control: false))]
+    model.tasks = [BridgeTask(id: "task-shared", project_id: "booking", status: "waiting_question", objective: "You are the follower. The human admin appointed codex on node-fixture as your leader. Implement the leader instructions below. Admin task: Align Sparshur clients and relay",
+                             revision: 1, created_at: now - 60, updated_at: now, recipient: "claude", sender: "local", permissions: TaskPermissions(can_control: false), title: "Align Sparshur clients and relay", mode: "work")]
+    model.historyManagement = true
     model.selection = "task-shared"
     model.taskState = TaskState(id: "task-shared", status: "waiting_question", recipient: "claude", sender: "local", revision: 1,
                                limits: ProjectLimits(runtime_seconds: 60, max_turns: 6, max_revisions: 3),
@@ -764,6 +828,10 @@ func verifySharedHistoryView(resources: URL, output: String) -> Bool {
     model.drafts["task-shared"] = "This reply must not be sent from the viewing Mac."
     model.sendReply(); model.cancelTask()
     guard !model.canControlSelectedTask && !model.canReply && model.pendingAction == nil else { return false }
+    if panel == "info" {
+        return renderOwnView(TaskInfoSheet(task: model.tasks[0], state: model.taskState, messages: model.messages, events: "{\"task_id\":\"task-shared\"}"), output: output)
+    }
+    if panel == "edit" { return renderOwnView(EditTaskTitleSheet(title: model.tasks[0].displayTitle) { _ in }, output: output) }
     guard renderTaskBrowser(model: model, output: output) else { return false }
     print("Shared history renders read-only; answer and cancel did not create an outbox send. No model inference started.")
     return true
@@ -866,6 +934,17 @@ func verifyChatControls(resources: URL, stateDirectory: String, output: String) 
     model.selection = questionTask.id
     model.selectTask()
     guard wait({ !model.loadingDetail && model.taskState?.id == questionTask.id }) else { return false }
+    model.updateHistory(questionTask, title: "Fix addition")
+    guard wait({ !model.actionBusy && !model.loading && !model.loadingDetail && model.tasks.first(where: { $0.id == questionTask.id })?.displayTitle == "Fix addition" }) else { return false }
+    let deletion = TaskDeletionModel(browser: model, task: questionTask)
+    deletion.load()
+    guard wait({ !deletion.loading && deletion.review != nil }),
+          deletion.review?.can_delete_work == true,
+          let repository = deletion.review?.repositories.first,
+          let file = repository.files.first(where: { $0.path == "pending.txt" }) else { return false }
+    guard renderOwnView(TaskDeletionSheet(model: deletion, selectedFile: repository.id + file.id), output: output + ".delete.png") else { return false }
+    deletion.deleteWork = true; deletion.acknowledgedLoss = true; deletion.remove()
+    guard wait({ deletion.finished && !model.actionBusy && !model.loading && !model.loadingDetail && !model.tasks.contains(where: { $0.id == questionTask.id }) }) else { return false }
     guard renderTaskBrowser(model: model, output: output) else { return false }
     print("Native chat controls verified over IPC: local project settings, scope subset, immediate pending bubble, active status, answer, revision, cancel, new task, durable retry after lost acknowledgement, and silent refresh preserving drafts. No model inference started.")
     return true

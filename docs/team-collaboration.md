@@ -14,7 +14,7 @@ AABridge now treats every Mac as a peer. A room has a human admin, a leader chos
 
 - `aabridge_core.teams`: persistent room assignments, admin messages, stage checkpoints, deterministic task keys, stop/retry, and follow-up revisions.
 - `TeamRunner` runs alongside the existing supervisor and uses the same local/SSH protocol in either direction. The admin Mac holds the room; task history and workspaces stay on the Mac running each stage. Keep the admin supervisor running during orchestration.
-- A leader stage is read-only. Its plan becomes the follower’s instruction. The follower’s report and independently transferred Git diff become evidence for the leader’s review. The follower cannot reassign the room, create another delegation, or override its leader through task output. Remote identities cannot invoke room-admin operations.
+- Planning is read-only. The plan becomes the follower’s instruction. Review receives the exact implementation commit in an isolated checkout. Review can run checks using private scratch/cache directories, but must leave the checkout and HEAD unchanged; the bridge rejects source edits. The follower’s report and transferred Git evidence inform the review. The follower cannot reassign the room, create another delegation, or override its leader through task output. Remote identities cannot invoke room-admin operations.
 - `NativeWorker` starts the installed Codex or Claude coding CLI in a separate cloned checkout on `codex/task-…`. The CLI can read the whole project, add/edit/delete files and run project commands. Codex uses its workspace-write sandbox; Claude uses normal acceptEdits permissions with explicitly allowed coding tools. No bypass-permissions flags are used. The worker runs under the local signed-in user: this mode does not provide the old proposal sandbox’s OS-level isolation. Use it for projects and paired Macs you trust.
 - Native coding removes the old 16-file/16-KiB restrictions and arithmetic-only verification requirement. It uses a one-hour task budget with up to 100 turns/revisions. Application test results are agent-reported, not independently guaranteed by AABridge. Every coding result requires review.
 - Existing proposal projects, pinned agent binaries, restricted transport, task ownership, credential privacy and history remain supported. Saving a coding project revalidates the installed binary; an updated binary must be re-enabled locally.
@@ -237,3 +237,183 @@ This does not execute an agent, install a runtime, or change project approvals.
 App preferences with empty/missing locations fall back to bundled selections;
 existing usable user choices remain authoritative. Cross-Mac paths still need
 selection on the receiving Mac, especially when external drives differ.
+
+
+## GitHub delivery and exact review handoff · October 31, 2026
+
+Two saved service-room histories and the discussion on Sparshur-Service PR #1
+showed the same failure: the leader stayed at baseline `050c454` while the
+worker's newer commits lived in a different task clone. The coordinator fetched
+the real result but sent only diff text to the leader. Missing-commit and
+permission complaints then consumed review/fix rounds even when code findings
+had been addressed. The latest room also failed every GitHub push: its SSH
+origin bypassed the HTTPS credential helper despite a working `gh` login.
+
+- Team review submissions and revisions now carry `review_snapshot`, a bounded
+  base64 Git bundle plus the exact implementation commit. The receiving workspace
+  verifies the bundle, exact commit identity, and ancestry from the locally
+  approved baseline before checking out the implementation on its own task
+  branch. Successive reviews keep the leader session while refreshing its files.
+  A review result must retain that exact head and a clean checkout. Planning and
+  work cannot accept a review snapshot. Project grants, ownership and revision
+  checks still apply. MCP uses the same request schemas as desktop/CLI delivery.
+- The leader's updated receiver must advertise `review_snapshot`. Older receivers
+  stop before a review model turn with an update instruction. Both participating
+  bridge services should be updated after active work ends. Previously discarded
+  intermediate agent messages cannot be recovered by this change.
+- Review with a verified snapshot can run shell checks. Codex uses workspace-write
+  for its isolated review clone plus a private task scratch root; Claude gets
+  Bash without Edit/Write tools. Temporary files, XDG caches and Go build caches
+  use that private root. Agents are instructed to keep sources/HEAD unchanged,
+  and post-run Git validation enforces the accepted result. This is native coding
+  with the signed-in user's permissions, not a security boundary for hostile
+  repository tools. Missing dependencies or platform tools remain real limits.
+- Bundles contain only history after the baseline and are capped at 60,000 bytes
+  before base64. The full RPC is checked against the existing 128 KiB limit before
+  submission. Oversized evidence stops for manual review instead of falling back
+  to reviewing old files. Linked-project changes remain explicit diff evidence;
+  their exact working trees are not transferred to the reviewer in this version.
+- GitHub pushes rewrite GitHub SSH origins to HTTPS for that command only and use
+  `gh auth git-credential`; saved remotes are unchanged. Failed push/PR creation
+  keeps the placed branch, commit and linked delivery state, so fix rounds retry
+  the same branch rather than allocating `-2`, `-3`, etc. Normal pushes still
+  reject concurrent remote updates; there is no force push or automatic merge.
+  Admin-requested merges use `--match-head-commit` for the delivered revision
+  and reject failed delivery, so a changed PR head cannot silently be merged.
+- Agent prompts explain that the bridge owns commit capture, branch delivery
+  and PR publication. Workers may integrate a task-required target branch into
+  their isolated feature branch; the no-merge restriction applies to PRs and
+  protected/source-project branches, not that local conflict-resolution step. Review comments identify the implementation commit. Posting errors
+  are saved as `publication.review_errors` and shown in team chat. These are PR
+  conversation comments, not inline review threads that GitHub can mark resolved.
+
+These fixes do not implement simultaneous leader/follower editing or reciprocal
+cross-repository reviews. The configured workflow is still plan → implement →
+review. Merely cloning other repositories does not register linked projects.
+Existing rooms retain their assignments and baselines. Real target-branch
+conflicts, incompatible client protocols and missing device acceptance results
+still require implementation work; this change does not approve or merge those
+PRs or modify the installed app/running services.
+
+Validation: `.venv/bin/python scripts/check.py` passed all 225 deterministic
+checks after removing redundant scenarios and trivial helper checks. The team fixture uses local IPC plus mutual TLS and verifies that the leader's
+HEAD and files match the worker's exact revision, including follow-up turns.
+An additional replay used the captured failing room's real `a9d1b10` commit:
+a baseline-only `050c454` reviewer imported its 21,145-byte bundle, resolved
+the exact SHA and inspected the new `accept.go` file with a clean checkout.
+No paid model calls, physical two-Mac model run, installed-app replacement or
+service restart was performed. This is a source PR, not a shipped desktop build.
+
+The test suite keeps one real team integration path using local IPC plus mutual
+TLS. Duplicate mocked-transport and standalone snapshot happy-path runs were
+removed; the existing automatic fix loop checks successive review heads/files,
+and the PR delivery test checks branch placement, unchanged main and the merge
+commit argument. Invalid evidence, dirty review preservation, role restrictions,
+GitHub authentication/retries, lost acknowledgements and peer access checks remain
+covered. The first cleanup removed 14 test methods and prompt-text assertions without
+changing application behavior or skipping tests in the runner.
+
+A subsequent suite-wide audit removed another 19 duplicate runs, leaving 225
+tests. The remaining suite exercised the same 3,390 in-process production lines
+as the preceding 244-test suite. This is a supporting line-execution comparison,
+not a claim of exhaustive branch/mutation coverage. Removal reasons and retained
+behavior checks are recorded in [the test audit](test-audit-2026-10-31.md).
+
+## Compact task titles and personal history controls · October 31, 2026
+
+Task labels are now separate from execution instructions. The leader's existing
+planning turn is asked for one plain `TASK_TITLE:` line (4–8 words, at most 80
+characters). The coordinator stores that label and sends optional `title`
+metadata to receivers advertising `task_titles`. The full objective, plan and
+context remain intact. Retries, repair rounds and continuation of the same
+worker task keep its title. Missing/invalid leader titles and older task records
+use a compact label derived from the original admin request, without inference.
+Older receivers receive the original compatible request body.
+
+The history list and detail header use a two-line title, with a separate
+Plan/Implementation/Review label. The ellipsis menu and row context menu contain
+**Edit title**, **Delete from history**, and **Info**. App-generated task/session
+IDs, agent-thread identifiers and raw supplied context/verification/events are
+shown inside Info. Conversation messages and diagnostic exports keep their
+original content; the application does not rewrite historical agent messages.
+
+`task_rename` and the default `task_forget` action are display-only mutations. Their preferences
+live on the receiver in an additive `task_preferences(task_id,viewer,...)` table,
+keyed by the authenticated viewer identity. Editing a title affects only that
+viewer's history. Keeping work hides the row from that viewer's list, including pagination/search,
+without cancelling work or changing saved records. The deletion sheet also
+offers explicit removal of stopped isolated task copies, described below. It is not a private
+record-erasure operation. The confirmation dialog explicitly describes this.
+
+These controls require current project/read access even on idempotency-cache
+hits. They do not grant answer/revise/cancel rights over shared tasks. One peer
+cannot rename or hide another viewer's history. The desktop enables these menu
+items only when the receiver advertises `history_management`; update its bridge
+service to enable them. The CLI exposes `task rename --id … --title …` and
+`task forget --id …`; MCP exposes the same bounded, authenticated operations.
+
+Validation: all 226 deterministic tests passed. Existing handoff/TLS fixtures
+check separate title transmission, unchanged instructions, per-viewer metadata
+and shared-task control restrictions. One focused lifecycle test covers restart
+persistence, malformed titles, revocation and retained work; the pagination test
+now skips a hidden row. The universal app was built through
+`scripts/build_desktop.py` for arm64 and x86_64, with signature/resource smoke
+checks. The native control fixture renamed and removed an item over real local
+IPC, then verified its saved records survived. History, Info and Edit views were
+rendered and visually inspected. No paid model call, physical two-Mac model run,
+installed-app replacement or running-service update was performed.
+
+
+## Interactive saved-work deletion · October 31, 2026
+
+Deleting a history entry now opens a review sheet rather than a generic
+confirmation. `task_work` inspects the selected receiver's isolated main/linked
+copies and returns saved commit counts, changed/new filenames, bounded text
+previews, known local team usage, deletion blockers and a snapshot fingerprint.
+The sheet supports expanding a file, refreshing changes and stopping an owned
+active task. **Keep saved work** is the default. **Delete saved work** requires
+an explicit acknowledgement; it never deletes original projects or copies
+already delivered into project branches/PRs. Task/session IDs stay under Info.
+
+Work deletion requires owner/local-admin authorization, a terminal task with no
+remaining worker PID, no known active local team dependency, and a matching
+review snapshot. Shared-history read access alone cannot delete work. Local
+completed team links remain visible as a warning; remote team usage is not
+fully discoverable, so remotely managed work carries a separate warning about
+losing fetch/resume access. Deleted work rejects revisions and Git-result
+exports with a specific error rather than recreating a baseline checkout.
+
+Only server-derived task directories under `state/workspaces` are targets;
+requests contain a task ID and fingerprint, never a received path. Inspection
+disables Git external diff/textconv helpers and does not follow file symlinks.
+Incomplete/unsafe/oversized previews do not authorize deletion. Limits are
+30,000 directory entries, 200 changed paths per repository, a bounded text
+preview budget and a 180 KB response ceiling; file previews show the current
+checkout, and the sheet explicitly states that all branches/history/build
+files in these isolated copies are included in deletion.
+
+Confirmed directories are renamed into a private cleanup area with a durable
+move journal. SQLite failure restores the moves. Startup also restores an
+uncommitted move after interruption; committed cleanup failures retain their
+location for an authorized retry. The original task/conversation records and
+per-viewer history preferences are retained. This is workspace cleanup plus
+history-list removal, not permanent conversation erasure. CLI `task work` and
+`task forget --delete-work --work-snapshot …` and MCP use the same contract.
+
+Current desktop setup/device wording and connection-error copy no longer refer
+to Remote Login. Legacy SSH support remains available.
+
+Validation includes real linked-repository deletion, unchanged originals,
+stale-preview rejection, active-task/team blockers, shared-reader denial,
+symlink rejection, suppressed external diff helpers, SQLite rollback, process-
+interruption recovery and retry after disk cleanup failure. The native control
+fixture renders a pending file's contents, confirms work deletion over IPC and
+checks that the source repository and saved conversation survived.
+
+The required suite passes all 229 deterministic tests; three focused deletion
+lifecycle tests cover the new destructive behavior, including a file changing
+between preview and staging. The final universal app was compiled through
+`scripts/build_desktop.py` for arm64 and x86_64 and passed signature/resource
+smoke checks. The native sheet was rendered and visually inspected. These
+checks use disposable local fixtures, without paid model calls or a physical
+two-Mac model run. The installed app and running services were not replaced.

@@ -288,9 +288,37 @@ class TeamRunner:
             context = ['Your plan:\n' + room['outputs']['plan']['summary'][:12000],
                        'Follower report:\n' + room['outputs']['work']['summary'][:24000],
                        'Follower diff:\n' + room.get('diff', '')[:64000]] + noted
+        if stage == 'plan':
+            objective += ('\nInclude one plain line TASK_TITLE: followed by a descriptive 4–8 word task title, at most 80 characters. '
+                          'Describe the work, without role instructions, device IDs or paths. This is display metadata, not a replacement for your implementation plan.')
+        snapshot = None
+        if stage == 'review':
+            require(project.get('capabilities', {}).get('review_snapshot'),
+                    'The leader runs an older AABridge that cannot inspect the implementation commit. Update AABridge on the leader Mac, then press Try again. No review turn was started.', 'upgrade_required')
+            from aabridge_workspace.review import export_snapshot
+            work = room['outputs']['work']
+            source_path = room.get('review_source')
+            if not source_path:
+                worker_task = next(item['task_id'] for item in reversed(room['stage_tasks']) if item['stage'] == 'work')
+                source_path = work['worktree'] if room['follower']['target'] == 'local' else self.state / 'reviews' / worker_task
+            source = Path(source_path)
+            snapshot = export_snapshot(source, work['base_commit'], work['result_commit'])
+            # The checkout now contains the actual implementation; don't spend
+            # the request budget duplicating its full diff in prose.
+            context = [entry for entry in context if not entry.startswith(('Full diff from the baseline:', 'Follower diff:'))]
+            context = [entry[:12000] for entry in context]
+            context.append('The bridge supplies the exact implementation commit ' + snapshot['commit'] +
+                           '. Review that checkout against baseline ' + work['base_commit'] +
+                           '. Branch placement and PR publishing are bridge operations, not missing agent permissions.')
+            linked_evidence = ['Linked project ' + link['name'] + ' (diff evidence only; its checkout is not transferred):\n' + link['diff']
+                               for link in work.get('linked', []) if link.get('diff')]
+            if linked_evidence:
+                context.append('\n\n'.join(linked_evidence))
         member = room['follower' if stage == 'work' else 'leader']
         selected = member.get('model_settings', {})
-        return {**({'model_settings': selected} if selected else {}), 'project_id': member['project'],
+        from aabridge_protocol.titles import compact_title
+        title = room.get('title') or compact_title(room['objective'])
+        return {**({'title': title} if project.get('capabilities', {}).get('task_titles') else {}), **({'review_snapshot': snapshot} if snapshot else {}), **({'model_settings': selected} if selected else {}), 'project_id': member['project'],
                 'recipient': project['worker'], 'base_commit': project['base_commit'],
                 'objective': objective, 'scope': ['*'], 'acceptance': ['Follow the admin task and assigned team role.'],
                 'context': context, 'limits': project['limits'], 'permission_profile': 'coding-v1',
@@ -354,7 +382,12 @@ class TeamRunner:
             placed = delivery.place(repo, source, result['result_commit'], placement['mode'], previous.get('branch') or delivery.free_branch(repo, wanted))
             publication.update(placed)
             if placement.get('pull_request'):
-                publication.update(pull_request=delivery.pull_request(repo, placed['branch'], title, body, previous.get('pull_request'))['url'])
+                try:
+                    publication.update(pull_request=delivery.pull_request(repo, placed['branch'], title, body, previous.get('pull_request'))['url'])
+                except Exception as exc:
+                    # Placement succeeded. Keep its identity even when GitHub
+                    # fails, so another round retries the same branch/PR.
+                    publication['error'] = getattr(exc, 'message', 'Could not publish the result on GitHub.')
         # Each linked project with edits gets the same branch name and its own PR.
         earlier = {entry['name']: entry for entry in previous.get('linked', [])}
         linked = []
@@ -386,6 +419,9 @@ class TeamRunner:
             message(room, 'AABridge', 'Couldn’t copy the work into your project: ' + room['publication']['error'] + '\nThe team keeps going; the result stays saved in AABridge.')
             return
         after = room['publication']
+        if after.get('error'):
+            message(room, 'AABridge', 'The work is saved on branch `' + after['branch'] + '`, but GitHub delivery failed: ' + after['error'] +
+                    '\nThe next delivery retries this same branch; the team can keep reviewing the saved implementation.')
         if after.get('pull_request') and after['pull_request'] != before.get('pull_request'):
             message(room, 'AABridge', f'Opened a pull request for the leader to review: {after["pull_request"]}')
         elif after.get('branch') and after.get('branch') != before.get('branch'):
@@ -408,7 +444,9 @@ class TeamRunner:
             if url in publication.get('merged', []):
                 continue  # Retrying after a partial failure skips the ones already merged.
             try:
-                await asyncio.to_thread(delivery.merge, Path(repository), url)
+                entry = publication if publication.get('pull_request') == url else next(item for item in publication.get('linked', []) if item.get('pull_request') == url)
+                require(entry.get('commit') and not entry.get('error'), 'The latest implementation was not delivered successfully. Publish it before merging.', 'publish_blocked')
+                await asyncio.to_thread(delivery.merge, Path(repository), url, entry['commit'])
                 publication.setdefault('merged', []).append(url)
                 message(room, 'AABridge', f'Merged {url} on GitHub.')
             except Exception as exc:
@@ -465,6 +503,8 @@ class TeamRunner:
             room.pop(key, None)
         approval, notes = room.get('approval'), bool(waiting_notes(room))
         if stage == 'plan':
+            from aabridge_protocol.titles import leader_title
+            room.setdefault('title', leader_title(result['summary'], room['objective']))
             if notes:
                 room['stage'] = 'plan'  # The leader folds the admin's note into its plan first.
             elif approval == 'ask':
@@ -544,11 +584,18 @@ class TeamRunner:
                         require(previous['status'] == 'completed', 'The previous result is no longer ready for a revision.', 'invalid_state')
                         room['stage_operation'] = 'revise'
                         draft = room['stage_body']
+                        revision_text = draft['objective'] + '\n' + '\n'.join(draft['context'])
+                        require(len(revision_text) <= 100000, 'The revision evidence exceeds the review limit. Review it manually; no agent turn was started.', 'review_too_large')
                         room['stage_body'] = {'task_id': previous['id'], 'revision': previous['revision'],
-                            'text': (draft['objective'] + '\n' + '\n'.join(draft['context']))[:100000],
+                            'text': revision_text,
                             'origin': draft['origin']}
+                        if draft.get('review_snapshot'):
+                            room['stage_body']['review_snapshot'] = draft['review_snapshot']
                         if project.get('capabilities', {}).get('model_settings'):
                             room['stage_body']['model_settings'] = member.get('model_settings', {})
+                    from aabridge_protocol.messages import MAX_MESSAGE
+                    require(len(canonical({'version': 1, 'op': room['stage_operation'], 'key': room['stage_key'], 'body': room['stage_body']}).encode()) < MAX_MESSAGE - 1024,
+                            'The review evidence exceeds the transport limit. Review this change manually; no agent turn was started.', 'review_too_large')
                     for note in waiting_notes(room):
                         note.update(delivered=True, stage=stage)
                 latest = get(self.store, room_id)
@@ -601,9 +648,11 @@ class TeamRunner:
                     from aabridge_workspace.git import git
                     from aabridge_cli.actions import fetch_result
                     if target == 'local':
+                        room['review_source'] = result['worktree']
                         room['diff'] = await asyncio.to_thread(git, Path(result['worktree']), 'diff', '--no-ext-diff', '--no-textconv', result['base_commit'], result['result_commit'])
                     else:
                         fetched = await asyncio.to_thread(fetch_result, self.state, target, task['id'])
+                        room['review_source'] = fetched['review_repository']
                         room['diff'] = fetched['diff']
                     for link in result.get('linked', []):
                         require(not link.get('diff_truncated'), f'This change needs manual review: the {link["name"]} diff exceeds the team review context.', 'review_too_large')
@@ -616,11 +665,17 @@ class TeamRunner:
                         await self.deliver(room, task)
                 elif stage == 'review':
                     from aabridge_workspace.publish import comment
-                    for repository, url, _ in pull_requests(room.get('publication') or {}):
+                    room.setdefault('publication', {}).pop('review_errors', None)
+                    publication = room.get('publication') or {}
+                    for repository, url, _ in pull_requests(publication):
                         try:
-                            await asyncio.to_thread(comment, Path(repository), url, f'**Leader review · {member["agent"]}**\n\n' + result['summary'])
-                        except Exception:
-                            pass  # The review is always saved in the team chat; the PR comment is a convenience.
+                            entry = publication if publication.get('pull_request') == url else next(item for item in publication.get('linked', []) if item.get('pull_request') == url)
+                            reviewed_commit = entry.get('commit', room['outputs']['work']['result_commit'])
+                            await asyncio.to_thread(comment, Path(repository), url, f'**Leader review · {member["agent"]} · implementation {reviewed_commit}**\n\n' + result['summary'])
+                        except Exception as exc:
+                            error = getattr(exc, 'message', 'Could not post the leader review on GitHub.')
+                            room['publication'].setdefault('review_errors', {})[url] = error
+                            message(room, 'AABridge', f'The leader review is saved in this chat, but could not be posted to {url}: {error}')
                 self.advance(room, stage, result)
             room['error'] = ''
             save_runtime(self.store, room)
@@ -628,7 +683,7 @@ class TeamRunner:
             room = get(self.store, room_id)
             code, mac = getattr(exc, 'code', ''), self.machine(contact)
             if code in {'remote_unavailable', 'daemon_unavailable'}:
-                room['error'] = (f'Couldn’t reach AABridge on {mac}. Make sure it’s awake and on the same network, Remote Login is on, and AABridge is running there. Then press Try again.'
+                room['error'] = (f'Couldn’t reach AABridge on {mac}. Make sure it’s awake, its saved connection settings are correct, and AABridge is running there. Then press Try again.'
                                  if contact != 'local' else 'AABridge’s background service on this Mac isn’t running. Open Settings → Set up this Mac, then press Try again.')
             elif code == 'direct_unavailable':
                 room['error'] = (f'Couldn’t reach AABridge on {mac} over its direct connection. Make sure it’s awake, AABridge is running there, and its address in Devices is reachable '

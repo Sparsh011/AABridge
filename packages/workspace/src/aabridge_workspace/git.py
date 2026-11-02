@@ -154,6 +154,11 @@ class Workspace:
             # A task may never accidentally push back into the source checkout.
             git(self.path, "remote", "remove", "origin")
         require(not self.path.is_symlink(), "Task workspace was replaced by a symlink.", "unsafe_workspace")
+        if self.task.get('review_snapshot'):
+            require(self.task.get('mode') == 'review' and self.project['verification']['profile'] == 'repository-v1',
+                    'Snapshots require a coding review task.', 'permission_denied')
+            from .review import import_snapshot
+            import_snapshot(self.path, self.task['base_commit'], self.task['review_snapshot'], self.branch)
         if self.project.get("links"):
             from . import linked
             linked.prepare(self.path.parent.parent, self.task, self.project, git(self.path, "branch", "--show-current"))
@@ -230,7 +235,7 @@ class Workspace:
         # accepted changes in this isolated clone, with no push remote configured.
         if self.task.get("mode", "work") != "work":
             require(not git(self.path, "status", "--porcelain") and
-                    git(self.path, "rev-parse", "HEAD") == self.task["base_commit"],
+                    git(self.path, "rev-parse", "HEAD") == self.task.get("review_snapshot", {}).get("commit", self.task["base_commit"]),
                     "Planning/review must leave the checkout unchanged.", "permission_denied")
         else:
             git(self.path, "add", "--all")

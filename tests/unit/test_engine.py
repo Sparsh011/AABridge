@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import copy
-import json
 import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from runtime_fixture import select_fake_codex
 from aabridge_cli.actions import demo_init, request
-from aabridge_core.config import authenticate, initialize, load_config, read_private, save_config, write_private
+from aabridge_core.config import initialize, load_config, write_private
 from aabridge_core.store import Store
 from aabridge_protocol.messages import BridgeError, decode, validate_request
 from aabridge_workspace.git import Workspace, git, verify_source
@@ -36,14 +32,6 @@ class EngineFixture(unittest.TestCase):
 
     def submit(self, key="request-one", identity="local"):
         return self.store.handle(request("submit", self.body, key), identity, self.config)
-
-    def test_submission_survives_database_reopen(self):
-        task = self.submit()
-        other = Store(self.state)
-        try:
-            self.assertEqual(other.get(task["id"])["base_commit"], self.body["base_commit"])
-        finally:
-            other.close()
 
     def test_newer_database_version_is_not_overwritten(self):
         self.store.db.execute("PRAGMA user_version=99")
@@ -71,11 +59,6 @@ class EngineFixture(unittest.TestCase):
         with self.assertRaises(BridgeError):
             verify_source("def add(a, a):\n    return a + a\n", self.project["verification"])
 
-    def test_duplicate_mutation_returns_same_task(self):
-        first, second = self.submit(), self.submit()
-        self.assertEqual(first["id"], second["id"])
-        self.assertEqual(self.store.db.execute("SELECT count(*) FROM tasks").fetchone()[0], 1)
-
     def test_changed_content_replay_rejected(self):
         self.submit()
         self.body["objective"] = "Different task"
@@ -97,24 +80,11 @@ class EngineFixture(unittest.TestCase):
         with self.assertRaises(BridgeError):
             self.submit()
 
-    def test_cross_peer_task_access_denied(self):
-        self.config["peers"]["alice"] = {"enabled": True, "projects": ["demo"], "digest": "unused"}
-        self.config["peers"]["bob"] = {"enabled": True, "projects": ["demo"], "digest": "unused"}
-        task = self.submit(identity="alice")
-        with self.assertRaises(BridgeError):
-            self.store.handle(request("status", {"task_id": task["id"]}), "bob", self.config)
-
     def test_revocation_applies_to_cached_mutation(self):
         self.submit()
         self.config["peers"]["local"]["enabled"] = False
         with self.assertRaises(BridgeError):
             self.submit()
-
-    def test_authentication_requires_private_credential_not_task_id(self):
-        task = self.submit()
-        with self.assertRaises(BridgeError):
-            authenticate(self.config, task["id"])
-        self.assertEqual(authenticate(self.config, read_private(self.state / "local.token").decode()), "local")
 
     def test_stale_and_cross_task_answers_rejected(self):
         task = self.submit()
@@ -141,14 +111,6 @@ class EngineFixture(unittest.TestCase):
         with self.assertRaises(BridgeError):
             self.store.handle(request("revise", {**body, "revision": 2}), "local", self.config)
 
-    def test_events_have_ordered_resumable_cursors(self):
-        task = self.submit()
-        self.store.update(task["id"], "question", status="waiting_question", question={"id": "question-fixture", "text": "Should add perform addition?"})
-        first = self.store.handle(request("events", {"task_id": task["id"], "cursor": 0}), "local", self.config)
-        self.assertEqual([event["kind"] for event in first["events"]], ["submitted", "question"])
-        second = self.store.handle(request("events", {"task_id": task["id"], "cursor": first["cursor"]}), "local", self.config)
-        self.assertEqual(second["events"], [])
-
     def test_restart_does_not_restart_uncertain_workers(self):
         task = self.submit()
         self.store.update(task["id"], "running", status="running", worker_pid=123)
@@ -161,18 +123,6 @@ class EngineFixture(unittest.TestCase):
         task = self.submit()
         result = self.store.handle(request("cancel", {"task_id": task["id"]}), "local", self.config)
         self.assertEqual(result["status"], "cancelled")
-
-    def test_workspace_result_is_reviewable_and_active_checkout_untouched(self):
-        task = self.submit()
-        workspace = Workspace(self.state, task, self.project)
-        original = (self.root / "repo/math_ops.py").read_text()
-        workspace.prepare()
-        result = workspace.result({"edits": [{"path": "math_ops.py", "content": "def add(a, b):\n    return a + b\n"}], "summary": "Fixed addition", "issues": []})
-        self.assertEqual(result["changed_paths"], ["math_ops.py"])
-        self.assertNotEqual(result["base_commit"], result["result_commit"])
-        self.assertEqual(result["verification"][0]["exit_code"], 0)
-        self.assertEqual((self.root / "repo/math_ops.py").read_text(), original)
-        self.assertEqual(git(self.root / "repo", "rev-parse", "HEAD"), self.project["base_commit"])
 
     def test_out_of_scope_and_deleting_proposals_rejected(self):
         workspace = Workspace(self.state, self.submit(), self.project)

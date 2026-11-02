@@ -152,7 +152,7 @@ def pull_request(repo: Path, branch: str, title: str, body: str, existing: str |
         raise BridgeError("publish_failed", f"This project has no `origin` remote, so no pull request was opened. Branch `{branch}` is ready in your project.") from None
     base = default_branch(repo)
     require(branch != base and branch not in PROTECTED, "A pull request needs a feature branch, not the main branch.", "publish_blocked")
-    _run(["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
+    _run(["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "url.https://github.com/.insteadOf=git@github.com:", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
           "push", "--quiet", "origin", f"refs/heads/{branch}:refs/heads/{branch}"], repo,
          f"Could not push `{branch}` to GitHub. Check `gh auth status`.")
     url = existing
@@ -169,5 +169,6 @@ def comment(repo: Path, url: str, body: str) -> None:
     _gh(repo, "pr", "comment", url, "--body-file", "-", stdin=body[:60000], failure="Could not post the review on the pull request.")
 
 
-def merge(repo: Path, url: str) -> None:
-    _gh(repo, "pr", "merge", url, "--merge", failure="GitHub did not merge the pull request.")
+def merge(repo: Path, url: str, commit: str) -> None:
+    _gh(repo, "pr", "merge", url, "--merge", "--match-head-commit", commit,
+        failure="GitHub did not merge the pull request. If its head changed, review and publish that revision before retrying.")

@@ -287,6 +287,7 @@ def restricted_rpc(state: Path, peer: str) -> None:
                 project_id, task_id = map(identifier, components[2:])
                 task = local_call(state, request("status", {"task_id": task_id}), peer=peer)
                 require(task["project_id"] == project_id and task["status"] == "completed", "No completed authorized result is available.", "permission_denied")
+                require(not task.get("work_deleted"), "The owner deleted this task’s saved workspace.", "work_deleted")
                 path = state / "workspaces" / task_id
                 require(path.resolve() == path and git(path, "rev-parse", "HEAD") == task["result"]["result_commit"], "Result workspace identity changed.")
                 metadata = path / ".git"
@@ -307,6 +308,7 @@ def restricted_rpc(state: Path, peer: str) -> None:
 def fetch_result(state: Path, remote_name: str, task_id: str) -> dict:
     from aabridge_protocol.messages import SHA
     task = send(state, request("status", {"task_id": task_id}), remote_name)
+    require(not task.get("work_deleted"), "The owner deleted this task’s saved workspace.", "work_deleted")
     require(task["status"] == "completed", "Task has no completed result.")
     result = task["result"]
     require(SHA.fullmatch(result["base_commit"]) and SHA.fullmatch(result["result_commit"]), "Remote result contains invalid commit IDs.")

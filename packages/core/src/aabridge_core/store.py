@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from aabridge_protocol.messages import BridgeError, HISTORY_READS, MUTATIONS, Request, canonical, require
+from aabridge_protocol.titles import compact_title
 from .config import authorize, read_private, write_private
 
 
@@ -27,6 +28,8 @@ class Store:
         return {'can_control': identity == 'local' or task['sender'] == identity}
 
     def __init__(self, state: Path):
+        self.state = state
+        self._staged_work = None
         path = state / "bridge.sqlite3"
         if not path.exists():
             write_private(path, b"", exclusive=True)
@@ -50,6 +53,9 @@ class Store:
                 team_id TEXT NOT NULL, source TEXT NOT NULL, source_cursor INTEGER NOT NULL, document TEXT NOT NULL,
                 UNIQUE(team_id,source,source_cursor));
             CREATE INDEX IF NOT EXISTS activity_team ON team_activity(team_id,seq);
+            CREATE TABLE IF NOT EXISTS task_preferences (task_id TEXT NOT NULL,
+                viewer TEXT NOT NULL, title TEXT, hidden INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(task_id, viewer));
             CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, project TEXT NOT NULL,
                 owner TEXT NOT NULL, status TEXT NOT NULL, document TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,6 +67,16 @@ class Store:
         self._migrate_history()
         from .teams import setup
         setup(self.db)
+        from .task_work import reconcile
+        # Never recover another live connection's uncommitted filesystem move.
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            reconcile(self)
+            self.db.execute("COMMIT")
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            self.db.close()
+            raise
 
     def _migrate_history(self):
         self.db.execute("BEGIN IMMEDIATE")
@@ -208,7 +224,7 @@ class Store:
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
             # Peers see linked project names and access, never their local paths.
-            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "model_settings": project.get("permission_profile") == "coding-v1"},
+            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "task_titles": True, "model_settings": project.get("permission_profile") == "coding-v1"},
                            "links": [{"name": link["name"], "access": link["access"]} for link in project.get("links", [])],
                            **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
@@ -218,20 +234,25 @@ class Store:
             cursor, output = request.body["cursor"], []
             shared = request.body.get('shared', False)
             query = "SELECT rowid,document FROM tasks WHERE (?=0 OR rowid<?) AND (?='local' OR owner=? OR (? AND owner='local')) ORDER BY rowid DESC"
+            preferences = {row[0]: (row[1], row[2]) for row in self.db.execute('SELECT task_id,title,hidden FROM task_preferences WHERE viewer=?', (identity,))}
             for seq, document in self.db.execute(query, (cursor, cursor, identity, identity, shared)):
                 task = json.loads(document)
                 if task["project_id"] not in config["projects"] or ("*" not in peer["projects"] and task["project_id"] not in peer["projects"]):
                     continue
                 if not self.can_read(task, identity, config['projects'][task['project_id']], shared=shared):
                     continue
+                title, hidden = preferences.get(task['id'], (None, False))
+                if hidden:
+                    continue
                 if len(output) == 32:
-                    return {"tasks": output, "cursor": output[-1]["cursor"], "has_more": True, 'capabilities': {'shared_task_history': True}}
+                    return {"tasks": output, "cursor": output[-1]["cursor"], "has_more": True, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True, 'history_work_review': True}}
                 summary = {key: task[key] for key in ("id", "project_id", "status", "recipient", "sender", "revision", "created_at", "updated_at")}
-                output.append({**summary, "objective": task["objective"][:300], "cursor": seq, 'permissions': self.permissions(task, identity)})
-            return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False, 'capabilities': {'shared_task_history': True}}
+                output.append({**summary, 'title': title or task.get('title') or compact_title(task['objective']), 'mode': task.get('mode'), "objective": task["objective"][:300], "cursor": seq, 'permissions': self.permissions(task, identity)})
+            return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True, 'history_work_review': True}}
         require(request.op != "shutdown" or identity == "local", "Only the local operator may stop the daemon.", "permission_denied")
         if request.op == "shutdown":
             return {"stopping": True}
+        self._staged_work = None
         self.db.execute("BEGIN IMMEDIATE")
         try:
             # Authorize even an idempotency-cache hit, so revocation takes effect.
@@ -240,7 +261,7 @@ class Store:
             else:
                 task = self.get(request.body["task_id"])
                 project = authorize(config, identity, task["project_id"])
-                shared_read = request.op in HISTORY_READS and request.body.get('shared', False)
+                shared_read = (request.op in HISTORY_READS and request.body.get('shared', False)) or request.op in {'task_rename', 'task_forget'}
                 require(self.can_read(task, identity, project, shared=shared_read), "Task access denied.", "permission_denied")
             prior = self.db.execute("SELECT digest,response FROM requests WHERE owner=? AND key=?", (identity, request.key)).fetchone()
             if prior and request.op in MUTATIONS:
@@ -251,10 +272,17 @@ class Store:
                 if request.op in MUTATIONS:
                     self.db.execute("INSERT INTO requests VALUES (?,?,?,?)", (identity, request.key, request.digest, canonical(result)))
             self.db.execute("COMMIT")
-            return result
         except BaseException:
             self.db.execute("ROLLBACK")
+            from .task_work import rollback
+            rollback(self)
             raise
+        self._staged_work = None
+        if request.op == 'task_forget' and request.body.get('delete_work'):
+            from .task_work import finish
+            # A cached request also retries any durably staged disk cleanup.
+            result = {**result, 'cleanup_pending': finish(self, self.get(request.body['task_id']))}
+        return result
 
     def _apply(self, request: Request, identity: str, project: dict, config: dict) -> dict:
         body, op = request.body, request.op
@@ -265,7 +293,8 @@ class Store:
             require(set(body["scope"]) <= set(project["scope"]), "Task scope exceeds local policy.", "permission_denied")
             for key, value in body["limits"].items():
                 require(value <= project["limits"][key], "Resource limit exceeds local policy.", "permission_denied")
-            task = {**body, "version": 1, "id": new_id("task"), "attempt_id": new_id("attempt"), "sender": identity,
+            from aabridge_protocol.messages import task_title
+            task = {**body, 'title': task_title(body['title']) if 'title' in body else compact_title(body['objective']), "version": 1, "id": new_id("task"), "attempt_id": new_id("attempt"), "sender": identity,
                     "recipient_node": config["node_id"], "revision": 1, "status": "queued", "turns": 0,
                     "session_id": None, "thread_id": None, "question": None, "result": None,
                     "pending": None, "worker_pid": None, "runtime_used": 0.0, "created_at": time.time()}
@@ -274,6 +303,21 @@ class Store:
             self.save(task, "submitted")
             return task
         task = self.get(body["task_id"])
+        if op in {'task_rename', 'task_forget'}:
+            if op == 'task_rename':
+                from aabridge_protocol.messages import task_title
+                title = task_title(body['title'])
+                self.db.execute('INSERT INTO task_preferences(task_id,viewer,title) VALUES (?,?,?) ON CONFLICT(task_id,viewer) DO UPDATE SET title=excluded.title', (task['id'], identity, title))
+                return {'task_id': task['id'], 'title': title}
+            if body.get('delete_work'):
+                require(identity == 'local' or task['sender'] == identity, 'Only the task owner can delete its saved work.', 'permission_denied')
+                from .task_work import stage
+                stage(self, task, project, identity, body['work_snapshot'])
+            self.db.execute('INSERT INTO task_preferences(task_id,viewer,hidden) VALUES (?,?,1) ON CONFLICT(task_id,viewer) DO UPDATE SET hidden=1', (task['id'], identity))
+            return {'task_id': task['id'], 'deleted_from_history': True, 'work_deleted': bool(task.get('work_deleted'))}
+        if op == 'task_work':
+            from .task_work import preview
+            return preview(self, task, project, identity)
         if op == "status":
             return {**task, 'permissions': self.permissions(task, identity)} if body.get('shared') else task
         if op == "activity":
@@ -289,6 +333,7 @@ class Store:
                 task["status"] = "cancelling" if task["status"] == "running" else "cancelled"
                 self.save(task, "cancellation_requested")
             return task
+        require(not task.get("work_deleted"), "This task’s saved workspace was deleted. Start a new task to continue.", "work_deleted")
         require(body["revision"] == task["revision"], "Stale task revision.", "stale_revision")
         task["last_actor"] = body.get("origin", {"kind": "coordinator", "name": identity})
         task["last_sender_identity"] = identity
@@ -296,6 +341,10 @@ class Store:
             from aabridge_protocol.messages import model_settings
             require(task["permission_profile"] == "coding-v1", "Model selection requires a full coding project.")
             task["model_settings"] = model_settings(body["model_settings"], project["adapter"])
+        if 'review_snapshot' in body:
+            require(task['permission_profile'] == 'coding-v1' and task.get('mode') == 'review',
+                    'Snapshots require a coding review task.', 'permission_denied')
+            task['review_snapshot'] = body['review_snapshot']
         if op == "answer":
             require(task["status"] == "waiting_question" and task["question"]["id"] == body["question_id"], "Question is stale or belongs to another task.", "stale_question")
             task["pending"] = {"kind": "answer", "question_id": body["question_id"], "text": body["text"]}

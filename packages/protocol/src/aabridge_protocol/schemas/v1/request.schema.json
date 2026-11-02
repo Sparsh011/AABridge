@@ -124,6 +124,31 @@
             }
           },
           "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
+        },
+        "review_snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "commit": {
+              "type": "string",
+              "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "bundle": {
+              "type": "string",
+              "maxLength": 80000,
+              "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+            }
+          },
+          "required": [
+            "commit",
+            "bundle"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\r\\n\\t\\u0085\\u2028\\u2029]+$"
         }
       },
       "required": [
@@ -359,6 +384,31 @@
                 }
               },
               "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
+            },
+            "review_snapshot": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "commit": {
+                  "type": "string",
+                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "bundle": {
+                  "type": "string",
+                  "maxLength": 80000,
+                  "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                }
+              },
+              "required": [
+                "commit",
+                "bundle"
+              ]
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[^\\r\\n\\t\\u0085\\u2028\\u2029]+$"
             }
           },
           "required": [
@@ -701,6 +751,25 @@
                 }
               },
               "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
+            },
+            "review_snapshot": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "commit": {
+                  "type": "string",
+                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "bundle": {
+                  "type": "string",
+                  "maxLength": 80000,
+                  "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                }
+              },
+              "required": [
+                "commit",
+                "bundle"
+              ]
             }
           },
           "required": [
@@ -1514,6 +1583,155 @@
           },
           "required": [
             "team_id"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "task_rename"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[^\\r\\n\\t\\u0085\\u2028\\u2029]+$"
+            }
+          },
+          "required": [
+            "task_id",
+            "title"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "task_forget"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "delete_work": {
+              "type": "boolean"
+            },
+            "work_snapshot": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "task_id"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "delete_work": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "delete_work"
+                ]
+              },
+              "then": {
+                "required": [
+                  "work_snapshot"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "work_snapshot"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "task_work"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "shared": {
+              "type": "boolean",
+              "description": "Also read receiver-local coding history in projects granted to this peer. Does not grant task controls."
+            }
+          },
+          "required": [
+            "task_id"
           ]
         }
       },

@@ -36,7 +36,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         config['projects']['app'] = {'repository': str(self.repo)}
         save_config(self.state, config)
         self.project = {'worker': 'codex', 'adapter': 'codex', 'base_commit': self.base,
-                        'scope': ['*'], 'execution_enabled': True, 'verification': {'profile': 'repository-v1'},
+                        'capabilities': {'review_snapshot': True, 'task_titles': True}, 'scope': ['*'], 'execution_enabled': True, 'verification': {'profile': 'repository-v1'},
                         'limits': {'runtime_seconds': 3600, 'max_turns': 100, 'max_revisions': 100}}
         self.tasks, self.requests = {}, []
         self.reviews = []  # Summaries the leader returns, one per review turn.
@@ -58,7 +58,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         if mode == 'work':
             (path / f'change-{task["revision"]}.txt').write_text('work')
             git(path, 'add', '--all'); git(path, 'commit', '-m', 'Work ' + str(task['revision']))
-        summary = {'plan': 'Plan v' + str(task['revision']), 'work': 'Implemented v' + str(task['revision'])}.get(mode)
+        summary = {'plan': 'TASK_TITLE: Fix weight validation\nPlan v' + str(task['revision']), 'work': 'Implemented v' + str(task['revision'])}.get(mode)
         task['result'].update(summary=summary or (self.reviews.pop(0) if self.reviews else 'Looks fine'),
                               result_commit=git(path, 'rev-parse', 'HEAD'))
 
@@ -74,6 +74,9 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
                 git(path, 'checkout', '-q', '-b', ('claude/' if target == 'local' else 'codex/') + task_id)
                 task = {'id': task_id, 'revision': 1, 'mode': body['mode'], 'status': 'running' if self.pending else 'completed', 'text': [body['objective'], *body['context']],
                         'result': {'worktree': str(path), 'branch': 'x', 'base_commit': self.base}}
+                if body.get('review_snapshot'):
+                    from aabridge_workspace.review import import_snapshot
+                    import_snapshot(path, self.base, body['review_snapshot'], 'codex/' + task_id)
                 self.turn(task, body['mode'])
                 self.tasks[key] = task
             return self.tasks[key]
@@ -82,6 +85,9 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
             if task['revision'] == body['revision']:
                 task['revision'] += 1
                 task['text'] = [body['text']]
+                if body.get('review_snapshot'):
+                    from aabridge_workspace.review import import_snapshot
+                    import_snapshot(Path(task['result']['worktree']), self.base, body['review_snapshot'], 'codex/' + task['id'])
                 self.turn(task, task['mode'])
             return task
         if op == 'status':
@@ -107,6 +113,10 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(verdict('Fine.\nVERDICT: APPROVED'), 'approved')
         self.assertEqual(verdict('VERDICT: APPROVED\n...\n**VERDICT: CHANGES_REQUESTED**\n1. Fix the bug'), 'changes')
         self.assertIsNone(verdict('Looks good to me'))
+        from aabridge_protocol.titles import compact_title, leader_title
+        self.assertEqual(leader_title('TASK_TITLE: Fix relay shutdown', 'Long instructions'), 'Fix relay shutdown')
+        self.assertEqual(leader_title('TASK_TITLE: ' + 'x' * 81, 'Fix relay shutdown'), 'Fix relay shutdown')
+        self.assertEqual(compact_title('You are the follower. Admin task: Fix relay shutdown. Then test it.'), 'Fix relay shutdown')
 
     def test_new_options_are_validated(self):
         base = {'objective': 'x', 'leader': {'target': 'local', 'project': 'a', 'agent': 'codex'}, 'follower': {'target': 'mini', 'project': 'a', 'agent': 'claude'}}
@@ -119,20 +129,6 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         validate_request(envelope('team_decide', {'team_id': 'team-1', 'decision': 'replan', 'text': 'Smaller'}))
         with self.assertRaises(BridgeError):
             validate_request(envelope('team_decide', {'team_id': 'team-1', 'decision': 'merge'}))
-
-    async def test_auto_mode_loops_review_and_fix_until_the_leader_approves(self):
-        self.reviews = ['1. Negative weights are accepted.\nVERDICT: CHANGES_REQUESTED', 'Fixed properly.\nVERDICT: APPROVED']
-        room = self.start(approval='auto')
-        done = await self.run_until(room['id'])
-        self.assertEqual(done['status'], 'completed', done['messages'][-1])
-        self.assertEqual(self.stages(), [('submit', 'plan'), ('submit', 'work'), ('submit', 'review'), ('revise', 'work'), ('revise', 'review')])
-        fix = [b for op, b, _, _ in self.requests if op == 'revise'][0]['text']
-        self.assertIn('Negative weights are accepted', fix)
-        self.assertIn('explain why with evidence', fix)
-        rereview = [b for op, b, _, _ in self.requests if op == 'revise'][1]['text']
-        self.assertIn('change-2.txt', rereview)  # The leader re-reviews the real, cumulative diff.
-        self.assertEqual(done['fixes'], 1)
-        self.assertIn('leader approved', done['messages'][-1]['text'])
 
     async def test_auto_mode_asks_the_admin_after_the_fix_limit(self):
         self.reviews = ['VERDICT: CHANGES_REQUESTED'] * 3
@@ -199,17 +195,6 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.stages(), [('submit', 'plan'), ('submit', 'work'), ('revise', 'work'), ('submit', 'review')])
         self.assertIn('Make the button blue', [b for op, b, _, _ in self.requests if op == 'revise'][0]['text'])
 
-    async def test_new_branch_placement_copies_the_result_without_touching_main(self):
-        self.reviews = ['VERDICT: CHANGES_REQUESTED', 'VERDICT: APPROVED']
-        room = self.start(approval='auto', placement={'mode': 'branch'})
-        done = await self.run_until(room['id'])
-        branch = done['publication']['branch']
-        self.assertTrue(branch.startswith('claude/add-a-weight-input-screen-'), branch)
-        self.assertEqual(git(self.repo, 'rev-parse', 'refs/heads/' + branch), done['outputs']['work']['result_commit'])
-        self.assertEqual(git(self.repo, 'rev-parse', 'main'), self.base)
-        self.assertEqual(git(self.repo, 'branch', '--show-current'), 'main')
-        self.assertFalse((self.repo / 'change-1.txt').exists())
-
     async def test_worktree_placement_and_branch_name_collision(self):
         self.reviews = ['VERDICT: APPROVED']
         room = self.start(approval='auto', placement={'mode': 'worktree'})
@@ -234,24 +219,85 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.repo / 'change-1.txt').exists())
 
     async def test_pull_request_is_opened_reviewed_and_merged_only_on_request(self):
-        self.reviews = ['VERDICT: CHANGES_REQUESTED', 'VERDICT: APPROVED']
+        self.reviews = ['1. Negative weights are accepted.\nVERDICT: CHANGES_REQUESTED', 'Fixed properly.\nVERDICT: APPROVED']
         calls = []
         def opened(repo, branch, title, body, existing=None):
             calls.append(('pr', branch, existing))
             return {'url': 'https://github.com/o/r/pull/7', 'base': 'main'}
         with patch('aabridge_workspace.publish.pull_request', side_effect=opened), \
              patch('aabridge_workspace.publish.comment', side_effect=lambda *a: calls.append(('comment',))), \
-             patch('aabridge_workspace.publish.merge', side_effect=lambda *a: calls.append(('merge',))):
+             patch('aabridge_workspace.publish.merge', side_effect=lambda *a: calls.append(('merge',))) as merge:
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
+            self.assertEqual(self.stages(), [('submit', 'plan'), ('submit', 'work'), ('submit', 'review'), ('revise', 'work'), ('revise', 'review')])
+            work = next(body for op, body, _, _ in self.requests if op == 'submit' and body['mode'] == 'work')
+            self.assertEqual(work['title'], 'Fix weight validation')
+            self.assertIn('You are the follower.', work['objective'])
+            self.assertEqual(done['title'], work['title'])
+            revisions = [body for op, body, _, _ in self.requests if op == 'revise']
+            self.assertIn('Negative weights are accepted', revisions[0]['text'])
+            self.assertIn('explain why with evidence', revisions[0]['text'])
+            self.assertEqual(revisions[1]['review_snapshot']['commit'], done['outputs']['work']['result_commit'])
+            review = next(task for task in self.tasks.values() if task['mode'] == 'review')
+            review_path = Path(review['result']['worktree'])
+            self.assertEqual(git(review_path, 'rev-parse', 'HEAD'), done['outputs']['work']['result_commit'])
+            self.assertTrue((review_path / 'change-2.txt').is_file())
+            self.assertEqual(done['fixes'], 1)
             self.assertEqual(done['publication']['pull_request'], 'https://github.com/o/r/pull/7')
             self.assertEqual([c[0] for c in calls], ['pr', 'comment', 'pr', 'comment'])
             self.assertEqual(calls[2][2], 'https://github.com/o/r/pull/7')  # The fix updates the same PR.
+            branch = done['publication']['branch']
+            self.assertEqual(git(self.repo, 'rev-parse', branch), done['outputs']['work']['result_commit'])
+            self.assertEqual(git(self.repo, 'branch', '--show-current'), 'main')
+            self.assertEqual(git(self.repo, 'rev-parse', 'main'), self.base)
+            self.assertFalse((self.repo / 'change-1.txt').exists())
             self.assertNotIn(('merge',), calls)
             self.admin('team_merge', {'team_id': room['id']})
             await self.runner.step(room['id'])
             self.assertEqual(get(self.store, room['id'])['publication']['merge'], 'merged')
             self.assertIn(('merge',), calls)
+            merge.assert_called_once_with(self.repo, done['publication']['pull_request'], done['outputs']['work']['result_commit'])
+
+    async def test_push_failures_keep_one_branch_across_fix_rounds(self):
+        self.reviews = ['VERDICT: CHANGES_REQUESTED', 'VERDICT: APPROVED']
+        branches = []
+        def offline(repo, branch, *args):
+            branches.append(branch)
+            raise BridgeError('publish_failed', 'GitHub is offline')
+        with patch('aabridge_workspace.publish.pull_request', side_effect=offline):
+            room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
+            done = await self.run_until(room['id'])
+        self.assertEqual(len(branches), 2)
+        self.assertEqual(len(set(branches)), 1)
+        self.assertEqual(done['publication']['branch'], branches[0])
+        self.assertIn('GitHub is offline', done['publication']['error'])
+        self.assertEqual(git(self.repo, 'rev-parse', branches[0]), done['outputs']['work']['result_commit'])
+
+    async def test_review_post_failure_is_visible_in_chat_and_saved_state(self):
+        self.reviews = ['VERDICT: APPROVED']
+        with patch('aabridge_workspace.publish.pull_request', return_value={'url': 'https://github.com/o/r/pull/7'}), \
+             patch('aabridge_workspace.publish.comment', side_effect=BridgeError('publish_failed', 'GitHub rejected the comment')):
+            room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
+            done = await self.run_until(room['id'])
+        self.assertIn('GitHub rejected the comment', done['publication']['review_errors']['https://github.com/o/r/pull/7'])
+        self.assertTrue(any('could not be posted' in m['text'] for m in done['messages']))
+
+    def test_github_ssh_origin_uses_the_authenticated_https_transport(self):
+        import subprocess
+        git(self.repo, 'remote', 'add', 'origin', 'git@github.com:owner/project.git')
+        resolved = []
+        def inspect_push(command, cwd, failure, *args, **kwargs):
+            if command[0] == '/usr/bin/git':
+                # Ask Git itself which URL these push options select, without
+                # connecting. gh's credential helper cannot authenticate SSH.
+                index = command.index('push')
+                result = subprocess.run(command[:index] + ['remote', 'get-url', '--push', 'origin'], cwd=cwd, capture_output=True, text=True, check=True)
+                resolved.append(result.stdout.strip())
+            return ''
+        git(self.repo, 'branch', 'claude/feature')
+        with patch('aabridge_workspace.publish.default_branch', return_value='main'), patch('aabridge_workspace.publish._run', side_effect=inspect_push):
+            publish.pull_request(self.repo, 'claude/feature', 'Title', 'Body', 'https://github.com/owner/project/pull/1')
+        self.assertEqual(resolved, ['https://github.com/owner/project.git'])
 
     async def test_placement_in_the_project_needs_a_member_on_this_mac(self):
         body = {'objective': 'x', 'leader': {'target': 'mini', 'agent': 'codex', 'project': 'app'},
@@ -316,11 +362,11 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
             opened.append((Path(repo).name, existing))
             return {'url': 'https://github.com/o/' + Path(repo).name + '/pull/1', 'base': 'main'}
         with patch('aabridge_workspace.publish.pull_request', side_effect=pull), patch('aabridge_workspace.publish.comment'), \
-             patch('aabridge_workspace.publish.merge', side_effect=lambda repo, url: merged.append(url)):
+             patch('aabridge_workspace.publish.merge', side_effect=lambda repo, url, commit: merged.append(url)):
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
             review = [b for op, b, _, _ in self.requests if op == 'submit' and b['mode'] == 'review'][0]
-            self.assertIn('# Linked project android (can edit)', review['context'][2])
+            self.assertIn('Linked project android (diff evidence only', '\n'.join(review['context']))
             entry = done['publication']['linked'][0]
             self.assertEqual(entry['branch'], done['publication']['branch'])  # Same branch name in every repository.
             self.assertEqual(git(android, 'rev-parse', 'refs/heads/' + entry['branch']), git(android, 'rev-parse', entry['branch']))
@@ -370,7 +416,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         blocked = get(self.store, room['id'])
         self.assertEqual(blocked['status'], 'blocked')
         self.assertIn('Couldn’t reach AABridge on mini', blocked['error'])
-        self.assertIn('Remote Login', blocked['error'])
+        self.assertIn('saved connection settings', blocked['error'])
 
     async def test_direct_connection_failure_does_not_mention_remote_login(self):
         async def offline(op, body, target, key=None):
@@ -381,11 +427,6 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         error = get(self.store, room['id'])['error']
         self.assertIn('over its direct connection', error)
         self.assertNotIn('Remote Login', error)
-
-    def test_branch_names_are_short_and_valid(self):
-        name = publish.branch_name('codex', 'Add a NEW screen — that takes weight as input!!! and more words here', 'team-0123456789abcdef')
-        self.assertEqual(name, 'codex/add-a-new-screen-that-takes-weight-as-abcdef')
-        self.assertEqual(publish.branch_name('claude', '✨', 'team-aaaaaa'), 'claude/task-aaaaaa')
 
 
 if __name__ == '__main__':

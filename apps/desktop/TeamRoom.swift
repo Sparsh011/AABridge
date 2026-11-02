@@ -324,7 +324,7 @@ struct DevicesView: View {
             Text("Optional. Skip this if both agents run on this Mac. To use a second Mac, exchange a connection card once in each direction. Either Mac can then lead or do the work.").foregroundStyle(.secondary)
             GroupBox { VStack(alignment: .leading, spacing: 14) {
                 Text("1. Send this Mac’s card").font(.bridge(.headline))
-                Text("Set up AABridge on this Mac using the app’s Settings, then create its card. AABridge accepts an encrypted connection directly; Remote Login is not needed.")
+                Text("Set up AABridge on this Mac using the app’s Settings, then create its card. AABridge accepts an encrypted connection directly.")
                 TextField("LAN or VPN address (optional; defaults to this Mac’s local hostname)", text: $model.connectionHost).textFieldStyle(.roundedBorder)
                 Button("Create connection card") { model.createCard() }.disabled(model.busy)
                 if !model.connectionCard.isEmpty {

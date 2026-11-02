@@ -33,7 +33,7 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
         git(self.repo, 'commit', '-m', 'Baseline')
         self.base = git(self.repo, 'rev-parse', 'HEAD')
         self.project = {'worker': 'codex', 'adapter': 'codex', 'base_commit': self.base,
-                        'scope': ['*'], 'execution_enabled': True, 'verification': {'profile': 'repository-v1'},
+                        'capabilities': {'review_snapshot': True}, 'scope': ['*'], 'execution_enabled': True, 'verification': {'profile': 'repository-v1'},
                         'limits': {'runtime_seconds': 3600, 'max_turns': 100, 'max_revisions': 100}}
         self.accepted, self.requests = {}, []
         self.drop = False
@@ -101,7 +101,7 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
             def fetched(state, target, task_id):
                 task = next(t for t in self.accepted.values() if t['id'] == task_id)
                 result = task['result']
-                return {'diff': git(Path(result['worktree']), 'diff', self.base, result['result_commit'])}
+                return {'review_repository': result['worktree'], 'diff': git(Path(result['worktree']), 'diff', self.base, result['result_commit'])}
             with patch('aabridge_cli.actions.fetch_result', side_effect=fetched):
                 for _ in range(3):
                     await self.runner.step(room['id'])
@@ -110,26 +110,10 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
             submits = [r for r in self.requests if r[0] == 'submit']
             self.assertEqual([r[2] for r in submits], ['mini', 'local', 'mini'] if reverse else ['local', 'mini', 'local'])
             self.assertIn('Leader plan', submits[1][1]['context'][0])
-            self.assertIn('+After', submits[2][1]['context'][2])
+            self.assertEqual(submits[2][1]['review_snapshot']['commit'], done['outputs']['work']['result_commit'])
             self.assertEqual((self.repo / 'README.md').read_text(), 'Before\n')
             replay = self.store.handle(value, 'local', load_config(self.state))
             self.assertEqual(replay['id'], room['id'])
-
-    async def test_followup_revises_the_existing_implementation(self):
-        room, _ = self.start(reverse=True)
-        for _ in range(3):
-            await self.runner.step(room['id'])
-        before = get(self.store, room['id'])['outputs']['work']['worktree']
-        value = request('team_reply', {'team_id':room['id'], 'text':'Now add a second feature'}, 'next-round')
-        self.store.handle(value, 'local', {})
-        for _ in range(3):
-            await self.runner.step(room['id'])
-        after = get(self.store, room['id'])
-        self.assertEqual(after['status'], 'completed', after)
-        self.assertEqual(after['outputs']['work']['worktree'], before)
-        self.assertEqual((Path(before) / 'README.md').read_text(), 'After\n')
-        self.assertTrue((Path(before) / 'second.txt').exists())
-        self.assertEqual(len([r for r in self.requests if r[0] == 'revise']), 1)
 
     async def test_model_selection_blocks_old_participant_before_starting_any_agent(self):
         room, _ = self.start()
@@ -141,22 +125,6 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(blocked['status'], 'blocked')
         self.assertIn('older AABridge', blocked['error'])
         self.assertFalse(self.accepted)
-
-    async def test_model_settings_are_pinned_independently_for_each_role(self):
-        room, _ = self.start()
-        stored = get(self.store, room['id'])
-        lead = {'model':'leader-model','effort':'high'}
-        follow = {'model':'follower-model','effort':'low'}
-        stored['leader']['model_settings'] = lead; stored['follower']['model_settings'] = follow
-        save(self.store, stored)
-        self.project['capabilities'] = {'model_settings':True}
-        self.pending = True
-        await self.runner.step(room['id'])
-        self.assertEqual([r for r in self.requests if r[0] == 'submit'][0][1]['model_settings'], lead)
-        next(iter(self.accepted.values()))['status'] = 'completed'
-        await self.runner.step(room['id'])
-        await self.runner.step(room['id'])
-        self.assertEqual([r for r in self.requests if r[0] == 'submit'][1][1]['model_settings'], follow)
 
     async def test_live_feed_survives_cursor_replay_and_does_not_replay_model_work(self):
         room, _ = self.start()

@@ -13,7 +13,7 @@ import signal
 import uuid
 from pathlib import Path
 
-from aabridge_core.config import read_private
+from aabridge_core.config import private_directory, read_private
 from aabridge_protocol.messages import BridgeError, canonical, require
 
 
@@ -41,9 +41,13 @@ class NativeWorker:
         output, _ = await self.process.communicate()
         require(self.process.returncode == 0 and output, 'The agent could not start. Sign in to its CLI on this Mac.', 'adapter_unavailable')
 
+    def review_runtime(self):
+        return private_directory(self.state / 'review-runtime' / self.task['id'], create=True)
+
     def arguments(self):
         agent = self.project['adapter']
-        readonly = self.task.get('mode', 'work') != 'work'
+        review = self.task.get('mode') == 'review' and bool(self.task.get('review_snapshot'))
+        readonly = self.task.get('mode', 'work') != 'work' and not review
         session = self.task.get('thread_id')
         settings = self.task.get('model_settings', {})
         selected = ['--model', settings['model']] if settings.get('model') else []
@@ -56,14 +60,14 @@ class NativeWorker:
                       '-c', 'approval_policy="never"']
             if settings.get('effort'):
                 common += ['-c', 'model_reasoning_effort=' + json.dumps(settings['effort'])]
-            writable = [str(path) for link, path in links if link['access'] == 'edit']
+            writable = [str(path) for link, path in links if link['access'] == 'edit'] if not review else [str(self.review_runtime())]
             if writable and not readonly:
-                # Only edit links become writable; Codex can read the others anyway.
+                # Work gets edit links; review gets only its private scratch root.
                 common += ['-c', 'sandbox_workspace_write.writable_roots=' + json.dumps(writable)]
             if session:
                 return common + ['exec', 'resume', '--json', *selected, session, '-']
             return common + ['exec', '--json', *selected, '-']
-        tools = 'Read,Glob,Grep' if readonly else 'Read,Glob,Grep,Edit,Write,Bash'
+        tools = 'Read,Glob,Grep' if readonly else 'Read,Glob,Grep,Bash' if review else 'Read,Glob,Grep,Edit,Write,Bash'
         if settings.get('effort'):
             selected += ['--effort', settings['effort']]
         selected += [argument for _, path in links for argument in ('--add-dir', str(path))]
@@ -77,14 +81,30 @@ class NativeWorker:
         from aabridge_workspace import linked
         links = linked.describe(self.state, self.task, self.project)
         prompt = ('You are working in AABridge. The human is the admin. Follow the assigned team role. '
-                  'Work only in this checkout' + (' and the linked projects listed below' if links else '') + ', and keep their branch. Do not push, merge, deploy, or change remotes. '
+                  'Work only in this checkout' + (' and the linked projects listed below' if links else '') + ', and keep their branch. Do not push, merge pull requests, deploy, or change remotes. '
+                  'AABridge captures your changes and handles branch placement, authenticated pushes and PR creation when selected in the room. '
+                  'Do not ask the admin to repeat delivery permission or treat your checkout having no remote as a blocker; report any bridge delivery error separately. '
+                  'The leader plans and reviews; the follower implements in this workflow. '
                   'Report what changed, checks actually run, and remaining issues. '
                   'Give the human short progress updates as you work: what you are doing, files you are changing, and check results. Do not disclose private internal reasoning. '
-                  + ('Inspect and respond only; do not edit files or create commits. ' if mode != 'work' else '')
+                  + ('Inspect and respond only; do not edit files or create commits. ' if mode != 'work' else
+                     'When the task requires target-branch reconciliation, you may fetch its supplied URL and merge the target into this isolated task branch. '
+                     'Resolve conflicts, preserve both histories, and rerun checks. Never merge into a protected or source-project branch. ')
+                  + ('The bridge checked out the exact implementation commit ' + self.task['review_snapshot']['commit'] +
+                     '. Inspect these files and the cumulative diff from ' + self.task['base_commit'] +
+                     '; do not confuse the original baseline with the reviewed head. ' if self.task.get('review_snapshot') else '')
                   + ('\n' + links if links else '')
                   + '\nTask:\n' + self.task['objective'] + '\nContext:\n' + canonical(self.task.get('context', []))
                   + '\nFollow-up:\n' + canonical(self.task.get('pending')))
         environment = dict(os.environ)
+        if mode == 'review' and self.task.get('review_snapshot'):
+            runtime = self.review_runtime()
+            for variable, directory in (('TMPDIR', 'tmp'), ('XDG_CACHE_HOME', 'cache'), ('GOCACHE', 'go-build')):
+                environment[variable] = str(private_directory(runtime / directory, create=True))
+            prompt += ('\nReview validation is authorized in this isolated snapshot. Run appropriate checks when possible. '
+                       'Use ' + environment['TMPDIR'] + ' for temporary/build outputs. '
+                       'Keep tracked source, the index, branch, and HEAD unchanged; AABridge rejects a modified review checkout. '
+                       'Report actual test failures or unavailable dependencies precisely; do not ask for source-edit permission to review.')
         for key in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
                     'ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL'):
             environment.pop(key, None)

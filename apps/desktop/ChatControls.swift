@@ -170,9 +170,6 @@ struct MessageBubble: View {
                 } else if ["verified_result", "review_required_result"].contains(message.kind), let object = structured {
                     if message.kind == "review_required_result" { Label("Proposal ready · review required", systemImage: "doc.text.magnifyingglass").font(.bridge(.headline)).foregroundStyle(.orange) }
                     Text(object["summary"] as? String ?? "Result").textSelection(.enabled)
-                    DisclosureGroup("Verification and commit details") {
-                        Text(message.text).font(.bridge(.caption, design: .monospaced)).textSelection(.enabled)
-                    }
                 } else { Text(message.text).textSelection(.enabled) }
             }.frame(maxWidth: 760, alignment: .leading).padding(16)
                 .background(outgoing ? Color.accentColor.opacity(0.12) : agentMessage ? Color.primary.opacity(0.045) : Color.orange.opacity(0.055))

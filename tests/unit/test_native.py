@@ -28,6 +28,12 @@ if '--version' in sys.argv:
 prompt=sys.stdin.read()
 Path('received-prompt.txt').write_text(prompt)
 Path('received-args.json').write_text(json.dumps(sys.argv[1:]))
+if 'Review validation is authorized' in prompt:
+    import os,tempfile
+    with tempfile.TemporaryDirectory() as scratch:
+        Path(scratch, 'validation-output.txt').write_text('check output')
+        assert scratch.startswith(os.environ['TMPDIR'])
+    Path(os.environ['GOCACHE'], 'fixture-cache').write_text('cached check')
 agent=AGENT
 if agent=='codex':
     print(json.dumps({'type':'thread.started','thread_id':'fixture-session'}))
@@ -52,6 +58,9 @@ else:
                 args = json.loads((workspace / 'received-args.json').read_text())
                 self.assertIn('fixture-session', args)
                 self.assertIn('resume' if agent == 'codex' else '--resume', args)
+                self.assertNotIn('--model', args)
+                self.assertNotIn('--effort', args)
+                self.assertFalse(any('model_reasoning_effort' in argument for argument in args))
                 self.assertNotIn('--dangerously-bypass-approvals-and-sandbox', args)
                 self.assertNotIn('--dangerously-skip-permissions', args)
                 self.assertIn('Improve it', (workspace / 'received-prompt.txt').read_text())
@@ -59,6 +68,14 @@ else:
                 task['mode'] = 'plan'
                 args = worker.arguments()
                 self.assertIn('sandbox_mode="read-only"' if agent == 'codex' else 'Read,Glob,Grep', args)
+                task.update(mode='review', review_snapshot={'commit': 'a' * 40, 'bundle': ''}, base_commit='b' * 40)
+                args = worker.arguments()
+                self.assertIn('sandbox_mode="workspace-write"' if agent == 'codex' else 'Read,Glob,Grep,Bash', args)
+                if agent == 'codex':
+                    self.assertTrue(any(str(state / 'review-runtime/task-native') in arg for arg in args))
+                await worker.turn({}); await worker.close()
+                self.assertTrue((state / 'review-runtime/task-native/go-build/fixture-cache').is_file())
+                self.assertIn('Review validation is authorized', (workspace / 'received-prompt.txt').read_text())
                 executable.write_text('changed')
                 with self.assertRaises(BridgeError):
                     worker.executable()

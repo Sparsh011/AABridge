@@ -45,8 +45,8 @@ class ActivityBackendTests(unittest.TestCase):
                   "scope": ["math_ops.py"], "acceptance": ["Return the sum"], "context": [],
                   "limits": {"runtime_seconds": 180, "max_turns": 4, "max_revisions": 1}, "permission_profile": "proposal-v1"}
         for action, body in (("submit", submit), ("answer", {"task_id": "task-one", "revision": 1, "question_id": "question-one", "text": "Yes, addition"}),
-                             ("revise", {"task_id": "task-one", "revision": 1, "text": "Add a docstring"}), ("cancel", {"task_id": "task-one"})):
-            if action != "cancel":
+                             ("revise", {"task_id": "task-one", "revision": 1, "text": "Add a docstring"}), ("cancel", {"task_id": "task-one"}), ("task_rename", {"task_id": "task-one", "title": "Fix relay shutdown"}), ("task_forget", {"task_id": "task-one"})):
+            if action in {"submit", "answer", "revise"}:
                 body = {**body, "origin": {"kind": "agent", "name": "Spoofed GUI agent"}}
             data = json.dumps({"key": "gui-retry-same-key", "body": body}).encode()
             with self.subTest(action=action), contextlib.ExitStack() as stack:
@@ -61,10 +61,10 @@ class ActivityBackendTests(unittest.TestCase):
                 command = send.call_args.args[1]
                 self.assertEqual(command.key, "gui-retry-same-key")
                 self.assertEqual(command.op, action)
-                if action != "cancel":
+                if action in {"submit", "answer", "revise"}:
                     self.assertEqual(command.body["origin"], {"kind": "human", "name": "You"})
                 else:
-                    self.assertEqual(command.body, {"task_id": "task-one"})
+                    self.assertEqual(command.body, body)
 
     def test_remote_project_configuration_is_not_exposed(self):
         for action in ("projects-local", "project-save"):

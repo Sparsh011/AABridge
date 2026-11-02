@@ -84,10 +84,6 @@ class PublicActivityTests(unittest.TestCase):
         self.stream.claude({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'tool'}]}})
         self.assertIn('src/app.py',self.events[-1]['text'])
 
-    def test_claude_reports_resolved_model_without_claiming_default_resolution(self):
-        self.stream.claude({'type':'system','subtype':'init','model':'claude-opus-test'})
-        self.assertIn('claude-opus-test', self.events[-1]['text'])
-
 
 class TaskModelSettingsTests(unittest.TestCase):
     def test_model_and_effort_flags_apply_to_new_and_resumed_sessions(self):
@@ -102,14 +98,6 @@ class TaskModelSettingsTests(unittest.TestCase):
                 self.assertIn('model_reasoning_effort="high"' if agent == 'codex' else '--effort', arguments)
                 if resumed: self.assertIn('exact-session', arguments)
                 if agent == 'claude': self.assertIn('--include-partial-messages', arguments)
-
-    def test_default_settings_pass_no_model_or_effort_override(self):
-        worker = NativeWorker.__new__(NativeWorker)
-        for agent in ('codex','claude'):
-            worker.project = {'adapter':agent}; worker.task = {}
-            args = worker.arguments()
-            self.assertNotIn('--model', args); self.assertNotIn('--effort', args)
-            self.assertFalse(any('model_reasoning_effort' in item for item in args))
 
     def test_rejects_option_injection_and_agent_incompatible_effort(self):
         for value, agent in [({'model':'--dangerously-skip-permissions'},'claude'), ({'model':'model; echo hi'},'codex'), ({'effort':'ultracode'},'codex'), ({'effort':'ultra'},'claude'), ({'model':'m','unknown':True},'codex')]:

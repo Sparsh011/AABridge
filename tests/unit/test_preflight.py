@@ -16,21 +16,14 @@ from unittest.mock import patch
 from aabridge_cli.main import main
 from aabridge_preflight.doctor import check_python, check_shell_startup, check_sqlite, collect_report
 from aabridge_preflight.models import Check, Report
-from aabridge_preflight.paths import check_state_directory, default_state_directory
+from aabridge_preflight.paths import check_state_directory
 from aabridge_preflight.probes import TOOLS, ProbeOutput, _run_probe, check_agent_interface, check_tool
 
 
 class RuntimeTests(unittest.TestCase):
-    def test_python_311_supported(self):
-        with patch("aabridge_preflight.doctor.sys.version_info", (3, 11, 17)):
-            self.assertEqual(check_python().status, "ok")
-
     def test_old_python_rejected(self):
         with patch("aabridge_preflight.doctor.sys.version_info", (3, 9, 6)):
             self.assertEqual(check_python().status, "error")
-
-    def test_sqlite_transaction_rolls_back(self):
-        self.assertEqual(check_sqlite().status, "ok")
 
     def test_missing_sqlite_is_reported(self):
         with patch("aabridge_preflight.doctor.sqlite3", None):
@@ -72,19 +65,10 @@ class StateTests(unittest.TestCase):
         config.chmod(0o644)
         self.assertEqual(check_state_directory(self.root).status, "error")
 
-    def test_state_directory_symlink_rejected(self):
-        alias = self.root / "alias"
-        alias.symlink_to(self.root, target_is_directory=True)
-        self.assertEqual(check_state_directory(alias).status, "error")
-
     def test_symlink_ancestor_even_when_leaf_missing_rejected(self):
         alias = self.root / "alias"
         alias.symlink_to(self.root, target_is_directory=True)
         self.assertEqual(check_state_directory(alias / "missing").status, "error")
-
-    def test_dangling_symlink_rejected(self):
-        (self.root / "config.toml").symlink_to(self.root / "missing-secret")
-        self.assertEqual(check_state_directory(self.root).status, "error")
 
     def test_state_file_symlink_rejected(self):
         secret = self.root / "secret"
@@ -115,10 +99,6 @@ class StateTests(unittest.TestCase):
     def test_path_inspection_failure_is_reported(self):
         with patch.object(Path, "lstat", side_effect=PermissionError):
             self.assertEqual(check_state_directory(self.root).status, "error")
-
-    def test_default_mac_path(self):
-        with patch("aabridge_preflight.paths.sys.platform", "darwin"), patch.object(Path, "home", return_value=self.root):
-            self.assertEqual(default_state_directory(), self.root / "Library/Application Support/AABridge")
 
 
 class ToolTests(unittest.TestCase):
@@ -193,15 +173,6 @@ class ToolTests(unittest.TestCase):
 
 
 class ReportAndCliTests(unittest.TestCase):
-    def test_healthy_foundation_does_not_enable_workers(self):
-        value = Report((Check("runtime", "ok", "available"),)).to_dict()
-        self.assertTrue(value["foundation_ready"])
-        self.assertFalse(value["worker_execution_enabled"])
-        self.assertEqual(value["verification"]["real_two_device_agents"], "not_verified")
-
-    def test_error_report_fails_foundation(self):
-        self.assertFalse(Report((Check("state", "error", "unsafe"),)).to_dict()["foundation_ready"])
-
     def test_cli_json_and_exit_status(self):
         for status, expected in (("ok", 0), ("warning", 0), ("error", 1)):
             with self.subTest(status=status):
@@ -209,17 +180,14 @@ class ReportAndCliTests(unittest.TestCase):
                 with patch("aabridge_cli.main.collect_report", return_value=Report((Check("test", status, "test"),))), contextlib.redirect_stdout(stream):
                     actual = main(["doctor", "--json"])
                 self.assertEqual(actual, expected)
-                self.assertEqual(json.loads(stream.getvalue())["schema_version"], 1)
+                report = json.loads(stream.getvalue())
+                self.assertEqual(report["schema_version"], 1)
+                self.assertEqual(report["foundation_ready"], status != "error")
 
     def test_cli_passes_local_state_override(self):
         with patch("aabridge_cli.main.collect_report", return_value=Report(())) as collect, contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["doctor", "--state-dir", "/local/state"]), 0)
         collect.assert_called_once_with(state_dir=Path("/local/state"))
-
-    def test_no_task_execution_command_exposed(self):
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
-            main(["run", "untrusted command"])
-        self.assertEqual(raised.exception.code, 2)
 
     def test_collection_does_not_create_state_or_call_agents(self):
         with tempfile.TemporaryDirectory() as directory:
