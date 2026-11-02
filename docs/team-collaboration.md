@@ -417,3 +417,34 @@ between preview and staging. The final universal app was compiled through
 smoke checks. The native sheet was rendered and visually inspected. These
 checks use disposable local fixtures, without paid model calls or a physical
 two-Mac model run. The installed app and running services were not replaced.
+
+## Large main-project diffs and installation recovery · November 3, 2026
+
+Result fetching no longer rejects main-project diffs above 65,536 characters.
+Inline evidence above 48 KB becomes an explicitly labelled summary; the exact
+implementation commit remains in Git and is transferred into the review
+checkout. The reviewer must inspect every changed file with per-file/hunk
+reads. Local and remote follower paths use the same policy. The existing
+reverse-role handoff test now uses more than 65K of diff text and verifies the
+complete source survives review snapshot import. Summary text is never
+represented as a complete diff or sufficient proof of approval.
+
+The affected service result at `713d90c` has 66,717 diff characters and an
+inline snapshot of 32,480 base64 characters. It fits the separate 60 KB Git
+bundle bound, which remains in place along with linked-project evidence and
+Git metadata output bounds. This fix removes the inline diff gate, not all
+transport bounds. The saved commit was additionally backed up in a standalone
+Git bundle before recovery. Target-branch conflicts may remain in its PR.
+
+The installed receiver still lacked PR #12's snapshot and HTTPS delivery
+fixes despite that PR being merged. Installed Python services require an
+explicit update/restart; merging source does not change a running service.
+
+Validation: all 229 deterministic tests pass. The universal desktop/payload
+built for arm64 and x86_64 with signature/resource smoke checks. The real
+saved result was fetched successfully and its exact snapshot exported without
+model inference during this check. The idle local receiver was backed up,
+upgraded from dev4 to dev5 and restarted; the existing saved service result
+was published on its existing branch as Sparshur-Service PR #2. The team chat
+was updated and its blocked stage retried. This does not validate a physical
+two-Mac model review or certify the service changes or target reconciliation.

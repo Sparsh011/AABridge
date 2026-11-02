@@ -331,8 +331,8 @@ def fetch_result(state: Path, remote_name: str, task_id: str) -> dict:
     else:
         _fetch_ssh_result(state, remote, review, project_id, task_id, result['result_commit'])
     require(git(review, "rev-parse", "FETCH_HEAD") == result["result_commit"], "Fetched commit identity mismatch.")
-    diff = git(review, "diff", "--no-ext-diff", "--no-textconv", result["base_commit"], result["result_commit"])
-    require(len(diff) <= 65536, "Result diff exceeds the review limit.")
+    from aabridge_workspace.review import review_diff
+    diff = review_diff(review, result['base_commit'], result['result_commit'])
     return {"review_repository": str(review), "base_commit": result["base_commit"], "result_commit": result["result_commit"], "diff": diff}
 
 
