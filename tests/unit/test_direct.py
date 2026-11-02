@@ -7,12 +7,13 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from runtime_fixture import select_fake_codex
-from aabridge_cli.actions import demo_init, fetch_result, request, send
+from aabridge_cli.actions import demo_init, device_status, fetch_result, request, send
 from aabridge_core.config import authenticate, initialize, load_config, read_private, save_config
 from aabridge_core.direct import CERTIFICATE, PRIVATE_KEY, certificate_fingerprint, identity
 from aabridge_core.pairing import card, connect
@@ -274,6 +275,17 @@ class DirectTransportTests(unittest.IsolatedAsyncioTestCase):
             connect(self.book, {'version': 1, 'id': self.mini_id, 'name': 'mini', 'host': 'legacy.local',
                                 'port': 22, 'user': 'legacy', 'host_key': '', 'public_key': ''})
 
+    async def test_device_status_follows_a_paired_mac_going_away_and_returning(self):
+        def online():
+            with patch('aabridge_cli.actions.start_daemon', return_value={}):
+                return device_status(self.book)['devices'][0]['online']
+        self.assertTrue(await asyncio.to_thread(online))
+        await self.listeners[1].close(); self.listeners[1].server = None
+        self.assertFalse(await asyncio.to_thread(online))
+        port = load_config(self.book)['remotes'][self.mini_id]['port']
+        await self.listeners[1].start('127.0.0.1', port)
+        self.assertTrue(await asyncio.to_thread(online))
+
     async def test_unreachable_direct_device_never_requests_remote_login(self):
         remote = dict(load_config(self.book)['remotes'][self.mini_id])
         with socket.socket() as unavailable:
@@ -286,6 +298,32 @@ class DirectTransportTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DirectCardDaemonTests(unittest.TestCase):
+    def test_saved_pairing_recovers_a_stopped_service_without_a_new_card(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp', prefix='aab-direct-resume-') as temporary:
+            state = Path(temporary).resolve() / 'state'
+            initialize(state)
+            with socket.socket() as available:
+                available.bind(('127.0.0.1', 0)); port = available.getsockname()[1]
+            card(state, host='127.0.0.1', port=port)
+            before = load_config(state)
+            try:
+                send(state, request('shutdown', {}))
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    try:
+                        send(state, request('ping', {})); time.sleep(.05)
+                    except BridgeError:
+                        break
+                status = device_status(state)
+                self.assertTrue(status['service'])
+                deadline = time.monotonic() + 5
+                while not status['listening'] and time.monotonic() < deadline:
+                    time.sleep(.05); status = device_status(state)
+                self.assertTrue(status['listening'])
+                self.assertEqual(load_config(state), before)
+            finally:
+                send(state, request('shutdown', {}))
+
     def test_card_starts_app_listener_without_system_ssh(self):
         with tempfile.TemporaryDirectory(dir='/private/tmp', prefix='aab-direct-daemon-') as temporary:
             state = Path(temporary).resolve() / 'state'

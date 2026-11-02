@@ -498,7 +498,7 @@ struct TeamMessageRow: View {
                         Spacer()
                         Text(Date(timeIntervalSince1970: entry.time), style: .time).font(.bridge(.caption)).foregroundStyle(.secondary)
                     }
-                    Text(body_).textSelection(.enabled).lineLimit(long && !expanded ? 14 : nil).frame(maxWidth: .infinity, alignment: .leading)
+                    MarkdownText(text: body_).frame(maxWidth: .infinity, maxHeight: long && !expanded ? 320 : nil, alignment: .topLeading).clipped()
                     if let verdict = verdict {
                         Label(verdict == "approved" ? "Approved" : "Changes requested", systemImage: verdict == "approved" ? "checkmark.seal.fill" : "arrow.uturn.backward.circle.fill")
                             .font(.bridge(.caption).bold()).foregroundStyle(verdict == "approved" ? Color.green : Color.orange)
