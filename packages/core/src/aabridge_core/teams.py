@@ -645,11 +645,11 @@ class TeamRunner:
                 room.setdefault('resume', {})[stage] = {'target': target, 'task_id': task['id'], 'stage': stage}
                 message(room, member['agent'] + ' · ' + ('follower' if stage == 'work' else 'leader'), result['summary'])
                 if stage == 'work':
-                    from aabridge_workspace.git import git
+                    from aabridge_workspace.review import review_diff
                     from aabridge_cli.actions import fetch_result
                     if target == 'local':
                         room['review_source'] = result['worktree']
-                        room['diff'] = await asyncio.to_thread(git, Path(result['worktree']), 'diff', '--no-ext-diff', '--no-textconv', result['base_commit'], result['result_commit'])
+                        room['diff'] = await asyncio.to_thread(review_diff, Path(result['worktree']), result['base_commit'], result['result_commit'])
                     else:
                         fetched = await asyncio.to_thread(fetch_result, self.state, target, task['id'])
                         room['review_source'] = fetched['review_repository']
