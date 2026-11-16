@@ -65,6 +65,79 @@ final class DeviceStatusModel: ObservableObject {
     }
 }
 
+/// Finds other Macs running AABridge on this network with Bonjour, and lets them find this one.
+/// Discovery only shows who is there. Trust still comes from exchanging connection cards.
+final class NearbyMacs: NSObject, ObservableObject, NetServiceBrowserDelegate, NetServiceDelegate {
+    struct Found: Identifiable { let id: String; let name: String; var host: String? }
+    @Published var found: [Found] = []
+    @Published var problem = ""
+    private let browser = NetServiceBrowser()
+    private var advert: NetService?
+    private var resolving: [NetService] = []
+    private var started = false
+    private let ownName = Host.current().localizedName ?? "Mac"
+
+    func start() {
+        guard !started, Bundle.main.bundleIdentifier != nil else { return }
+        started = true
+        // The port is a placeholder: the service only announces that AABridge is open here.
+        let service = NetService(domain: "local.", type: "_aabridge._tcp.", name: ownName, port: 9)
+        service.delegate = self; service.publish(); advert = service
+        browser.delegate = self
+        browser.searchForServices(ofType: "_aabridge._tcp.", inDomain: "local.")
+    }
+    func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
+        guard service.name != ownName, !found.contains(where: { $0.id == service.name }) else { return }
+        found.append(Found(id: service.name, name: service.name, host: nil))
+        service.delegate = self; resolving.append(service); service.resolve(withTimeout: 5)
+    }
+    func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
+        found.removeAll { $0.id == service.name }
+    }
+    func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) {
+        problem = "macOS didn’t allow AABridge to look for other Macs. Allow it in System Settings → Privacy & Security → Local Network."
+    }
+    func netServiceDidResolveAddress(_ sender: NetService) {
+        if let index = found.firstIndex(where: { $0.id == sender.name }), let host = sender.hostName {
+            found[index].host = host.hasSuffix(".") ? String(host.dropLast()) : host
+        }
+        resolving.removeAll { $0 === sender }
+    }
+    func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) { resolving.removeAll { $0 === sender } }
+}
+
+struct NearbyMacsView: View {
+    @ObservedObject var nearby: NearbyMacs
+    let paired: [PairedDevice]
+    private func isPaired(_ mac: NearbyMacs.Found) -> Bool {
+        paired.contains { $0.label == mac.name || (mac.host != nil && $0.host.caseInsensitiveCompare(mac.host!) == .orderedSame) }
+    }
+    var body: some View {
+        GroupBox { VStack(alignment: .leading, spacing: 10) {
+            Label("AABridge on this network", systemImage: "dot.radiowaves.left.and.right").font(.bridge(.headline))
+            if !nearby.problem.isEmpty { Text(nearby.problem).font(.bridge(.callout)).foregroundStyle(.orange) }
+            if nearby.found.isEmpty {
+                Text("No other Mac with AABridge open was found yet. Open AABridge on your other Mac and keep both on the same Wi-Fi or network. You can still pair with a card if it doesn’t appear.")
+                    .font(.bridge(.callout)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(nearby.found) { mac in
+                HStack(spacing: 10) {
+                    Image(systemName: "laptopcomputer").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(mac.name).font(.bridge(.callout).weight(.medium))
+                        Text(mac.host ?? "Finding its address…").font(.bridge(.caption)).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                    Spacer()
+                    Text(isPaired(mac) ? "Paired" : "Not paired yet").font(.bridge(.caption).bold()).foregroundStyle(isPaired(mac) ? Color.green : Color.orange)
+                }
+            }
+            if nearby.found.contains(where: { !isPaired($0) }) {
+                Text("A Mac listed as not paired is reachable, so pairing will work: exchange connection cards with it below.").font(.bridge(.caption)).foregroundStyle(.secondary)
+            }
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading) }.onAppear { nearby.start() }
+    }
+}
+
 struct DeviceRow: View {
     let device: PairedDevice
     var mismatch = false

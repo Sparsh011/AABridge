@@ -2,8 +2,8 @@
 
 What AABridge still needs before a new user can pick it up and trust it.
 Sorted hardest first. `[x]` is done on `claude/team-usability`; `[ ]` is open.
-Checked with the deterministic suite (242 tests, eight new ones for 1.1, 1.2,
-1.7, 1.8, 2.1 and 2.4) and offscreen renders of the running, finished and new-task screens.
+Checked with the deterministic suite (244 tests, ten new ones for 1.1, 1.2,
+1.5, 1.6, 1.7, 1.8, 2.1 and 2.4) and offscreen renders of the running, finished and new-task screens.
 Nothing here was run against two physical Macs or a paid model, and the
 installed app and running services were not replaced. The orchestration
 changes take effect only after the bridge service on the admin Mac is updated
@@ -34,16 +34,19 @@ through Settings → Set up this Mac.
   shown only in the final card. A “Where the work is” strip now shows the
   branch, folder and pull request from the first build round onward, and says
   plainly when the work is still in the worker’s private copy.
-- [ ] 1.5 Mirror the worker’s commits into the project branch while it builds
-  (today the branch updates after each build round, not during one). The
-  worker commits once, when its turn ends, so there is nothing to mirror
-  mid-turn without committing half-finished edits. The pinned activity bar
-  shows each file edit meanwhile.
-- [ ] 1.6 Post leader reviews as real GitHub reviews (approve / request
-  changes) with inline comments, instead of plain pull-request comments.
-  Blocked while both agents push and review through one GitHub login: GitHub
-  refuses an approve or request-changes review on your own pull request. It
-  needs a second account or a GitHub App for the reviewer.
+- [x] **1.5 Nothing in the project while a build ran.** While a worker on
+  this Mac builds, AABridge refreshes a branch `aabridge-live/<id>` in your
+  project every 20 seconds with a snapshot of its unfinished files, taken
+  through a separate Git index so the worker’s checkout is untouched. It is
+  removed when the build step finishes and the real branch is updated. Not
+  available when the worker is on another Mac, or for “Keep it in AABridge”.
+- [x] **1.6 Reviews were plain pull-request comments.** The leader’s review
+  is posted through GitHub’s review API as an approval or a change request,
+  with its `INLINE: file:line:` findings as inline comments. GitHub refuses an
+  approval or change request from the pull request’s own author, and inline
+  comments outside the diff; each refusal falls back one step, ending at the
+  old plain comment. With one GitHub login for both agents you will therefore
+  get a comment-type review. Checked with a stubbed `gh`, not against GitHub.
 - [x] **1.7 A question from an agent ended the round.** The question now
   appears as a card; the answer resumes the same agent turn, so nothing is
   restarted. Checked against the test fixture only, not a real agent question.
@@ -82,15 +85,26 @@ through Settings → Set up this Mac.
 - [x] **3.4 “Follower” and “worker”.** Every message the admin reads says
   worker. Agent prompts and saved speaker labels keep “follower” so existing
   tasks and agent sessions stay valid.
-- [ ] 3.5 Empty states for Projects and Devices that walk through setup.
+- [x] **3.5 Empty states.** Projects explains what a project is and the two
+  entries a team needs; Devices says a second Mac is optional and how pairing
+  works.
 - [x] **3.6 Start at login.** Settings has “Open AABridge when I log in”.
   Compiled only: registering needs the installed app, and macOS may refuse an
   app outside Applications; the toggle then says what to do.
-- [ ] 3.7 Find paired Macs by Bonjour instead of a pasted address.
+- [x] **3.7 Finding Macs.** Devices lists other Macs on the network that have
+  AABridge open (Bonjour) and whether each is paired. Discovery only shows who
+  is there; trust still comes from exchanging connection cards. Compiled and
+  rendered empty; not seen finding a second Mac. Needs an app built with
+  `scripts/build_desktop.py`, which now declares the Bonjour service.
 
 ## 4. Shipping
 
-- [ ] 4.1 Developer ID signing and notarization; today the app is ad-hoc signed.
+- [x] **4.1 Signing.** `scripts/build_desktop.py` takes `--sign-identity`
+  (hardened runtime, secure timestamp) and `--notary-profile` (notarize,
+  staple, Gatekeeper check), also as `AABRIDGE_SIGN_IDENTITY` and
+  `AABRIDGE_NOTARY_PROFILE` for `make build`. Not exercised: this Mac has an
+  Apple Development certificate only. A Developer ID Application certificate
+  from a paid Apple Developer account is still needed to ship to other people.
 - [x] **4.2 A stale bridge service was invisible.** The service now reports
   its version. The toolbar turns orange with “Bridge service needs an update”
   when the installed service differs from the app, and a paired Mac on a

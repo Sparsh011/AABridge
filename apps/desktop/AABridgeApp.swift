@@ -348,6 +348,7 @@ struct AABridgeDesktop: App {
             room.live = TeamLiveState(role: "follower", agent: "claude", target: "mini", stage: "work", status: "running", checked_at: now, supported: true,
                                       activity: WorkerActivity(phase: "tool", message: "Running a project command", time: now - 2), stream_error: nil, model_settings: follower.model_settings)
             room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true); room.fixes = 1; room.max_fixes = 3; room.notes_waiting = 1
+            room.preview = TeamPreview(branch: "aabridge-live/3f9c2a", files: 4, time: now - 6)
             team.room = room; team.rooms = [room]; team.selected = room.id
             team.liveEntries = [LiveActivityEntry(id: "1", cursor: 1, role: "leader", agent: "codex", target: "local", stage: "plan", kind: "message", text: "Checking the existing booking flow before writing the plan.", state: "completed", time: now - 25),
                                 LiveActivityEntry(id: "2", cursor: 2, role: "follower", agent: "claude", target: "mini", stage: "work", kind: "status", text: "Selected model: opus · effort: medium", state: "completed", time: now - 15),
@@ -413,6 +414,12 @@ struct AABridgeDesktop: App {
                 exit(renderOwnView(panel, output: CommandLine.arguments[index + 1]) ? 0 : 1)
             }
             exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--preview-devices"), CommandLine.arguments.count > index + 1 {
+            let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
+            let devices = DeviceStatusModel(activity: activity)
+            devices.report = DeviceReport(service: true, listening: true, service_error: nil, devices: [])
+            exit(renderOwnView(DevicesView(model: TeamRoomModel(activity: activity), devices: devices), output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-connections"), CommandLine.arguments.count > index + 1 {
             let devices = DeviceStatusModel(activity: TaskBrowserModel(resources: Bundle.main.resourceURL!))
