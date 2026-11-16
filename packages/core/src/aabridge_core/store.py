@@ -9,7 +9,9 @@ from pathlib import Path
 
 from aabridge_protocol.messages import BridgeError, HISTORY_READS, MUTATIONS, Request, canonical, require
 from aabridge_protocol.titles import compact_title
-from .config import authorize, read_private, write_private
+from .config import authorize, read_private, release, write_private
+
+RELEASE = release()  # Read once: a running service keeps the code it started with.
 
 
 def new_id(prefix: str) -> str:
@@ -218,7 +220,7 @@ class Store:
             from .teams import handle
             return handle(self, request, identity)
         if request.op == "ping":
-            return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1", "direct_transport": True, "shared_task_history": True, "pid": os.getpid()}
+            return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1", "direct_transport": True, "shared_task_history": True, "pid": os.getpid(), "release": RELEASE}
         if request.op == "projects":
             peer = config["peers"][identity]
             allowed = {name: project for name, project in config["projects"].items()

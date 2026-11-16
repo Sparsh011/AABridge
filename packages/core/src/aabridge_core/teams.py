@@ -155,7 +155,7 @@ def handle(store, request, identity):
             intro = ('The leader plans, then waits for your OK before the worker builds. After each review that asks for fixes, '
                      'you decide what happens next. Send a note at any time to change direction.')
         else:
-            intro = 'You are the admin. The leader plans and reviews. The follower implements. Either Mac can take either role.'
+            intro = 'You are the admin. The leader plans and reviews. The worker implements. Either Mac can take either role.'
         message(room, 'AABridge', intro)
         store.db.execute('INSERT INTO teams VALUES (?,?,?)', (room['id'], request.key, canonical(room)))
         return public(room)
@@ -614,7 +614,7 @@ class TeamRunner:
         if not approval:
             room['status'] = 'completed'
             room.pop('diff', None)
-            message(room, 'AABridge', 'Leader review complete. You decide what to keep or change. The follower result branch is ready for review; nothing was pushed or merged.')
+            message(room, 'AABridge', 'Leader review complete. You decide what to keep or change. The worker’s result branch is ready for review; nothing was pushed or merged.')
             return
         room['verdict'] = found = verdict(result['summary'])
         fixes, limit = room.get('fixes', 0), room.get('max_fixes', 3)

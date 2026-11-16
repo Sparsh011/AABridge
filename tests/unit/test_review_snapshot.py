@@ -85,6 +85,8 @@ class ReviewSnapshotTests(unittest.TestCase):
         self.assertEqual(task['review_snapshot'], {'commit': self.commit, 'bundle': '', 'file': snapshot['sha256']})
         self.assertEqual(store.db.execute('SELECT COUNT(*) FROM snapshot_parts').fetchone()[0], 0)
         self.assertEqual(store.handle(request('projects', {}), 'local', config)['app']['capabilities']['review_snapshot_parts'], True)
+        from aabridge_core.config import release
+        self.assertEqual(store.handle(request('ping', {}), 'local', config)['release'], release())  # Lets the app spot a stale service.
         workspace = Workspace(state, store.get(task['id']), project)
         workspace.prepare()
         self.assertEqual(git(workspace.path, 'rev-parse', 'HEAD'), self.commit)

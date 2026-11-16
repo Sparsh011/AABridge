@@ -1,3 +1,4 @@
+import ServiceManagement
 import AppKit
 import Foundation
 import SwiftUI
@@ -271,6 +272,8 @@ struct SetupView: View {
             Text("Set up this Mac installs the bundled bridge for \(model.workerName). Pair your Macs in Devices, then choose the projects they can use. Existing repositories, keys, and provider credentials are preserved.")
                 .font(.bridge(.caption)).foregroundStyle(.secondary)
             Divider()
+            LoginItemToggle()
+            Divider()
             VStack(alignment: .leading, spacing: 5) {
                 Text("Connect directly in Devices").font(.bridge(.headline))
                 Text("Exchange connection cards to use AABridge’s encrypted app connection. Keep both Macs reachable on the same network or a VPN.")
@@ -293,6 +296,28 @@ struct SetupView: View {
             Text("Use Tasks & conversations to browse saved messages, supplied context and task events. Viewing does not start a model turn.")
                 .font(.bridge(.caption)).foregroundStyle(.secondary)
         }.padding(28).frame(minWidth: 820, idealWidth: 880, minHeight: 700)
+    }
+}
+
+/// Opens AABridge when you log in, so paired Macs reconnect after a restart without anyone opening the app.
+struct LoginItemToggle: View {
+    @State private var enabled = SMAppService.mainApp.status == .enabled
+    @State private var problem = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Toggle("Open AABridge when I log in", isOn: Binding(get: { enabled }, set: { wanted in
+                do {
+                    if wanted { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                    problem = ""
+                } catch {
+                    problem = "macOS didn’t accept the change: \(error.localizedDescription) Move AABridge to the Applications folder and try again, or add it yourself in System Settings → General → Login Items."
+                }
+                enabled = SMAppService.mainApp.status == .enabled
+            }))
+            Text("Keeps this Mac’s bridge running after a restart, so your other Macs can reach it and running teams can continue.")
+                .font(.bridge(.caption)).foregroundStyle(.secondary)
+            if !problem.isEmpty { Text(problem).font(.bridge(.caption)).foregroundStyle(.orange).textSelection(.enabled) }
+        }
     }
 }
 
@@ -394,6 +419,12 @@ struct AABridgeDesktop: App {
             devices.report = DeviceReport(service: true, listening: true, service_error: nil,
                                           devices: [PairedDevice(id: "mbp", label: "Sparsh’s MBP", host: "Sparsh-MBP.local", online: true),
                                                     PairedDevice(id: "mini", label: "Mac mini", host: "Mac-mini.local", online: false)])
+            if CommandLine.arguments.contains("--outdated") {
+                devices.report = DeviceReport(service: true, listening: true, service_error: nil,
+                                              devices: [PairedDevice(id: "mbp", label: "Sparsh’s MBP", host: "Sparsh-MBP.local", online: true, release: "older"),
+                                                        PairedDevice(id: "mini", label: "Mac mini", host: "Mac-mini.local", online: true, release: "0.3.0.dev6")],
+                                              app_release: "0.3.0.dev6", service_release: "0.3.0.dev5")
+            }
             let sample = "## Plan\n\nAdd **WeightEntryScreen** with `validate()` and a [guide](https://example.com). Unsafe [link](file:///etc/hosts) stays plain.\n\n1. Save to the store\n2. Show entries\n   - last *seven*\n\n- [x] Tests\n- [ ] Docs\n\n> Keep main untouched.\n\n```swift\nlet weight = 72.5\n```\n\n| File | Change |\n|---|---|\n| `App.swift` | **new** |\n\n---\nVERDICT line stays text."
             let panel = VStack(alignment: .leading, spacing: 18) {
                 DeviceToolbarStatus(model: devices) {}

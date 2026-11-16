@@ -2,8 +2,8 @@
 
 What AABridge still needs before a new user can pick it up and trust it.
 Sorted hardest first. `[x]` is done on `claude/team-usability`; `[ ]` is open.
-Checked with the deterministic suite (240 tests, six new ones for 1.1, 1.2,
-1.7, 2.1 and 2.4) and offscreen renders of the running, finished and new-task screens.
+Checked with the deterministic suite (242 tests, eight new ones for 1.1, 1.2,
+1.7, 1.8, 2.1 and 2.4) and offscreen renders of the running, finished and new-task screens.
 Nothing here was run against two physical Macs or a paid model, and the
 installed app and running services were not replaced. The orchestration
 changes take effect only after the bridge service on the admin Mac is updated
@@ -35,7 +35,10 @@ through Settings → Set up this Mac.
   branch, folder and pull request from the first build round onward, and says
   plainly when the work is still in the worker’s private copy.
 - [ ] 1.5 Mirror the worker’s commits into the project branch while it builds
-  (today the branch updates after each build round, not during one).
+  (today the branch updates after each build round, not during one). The
+  worker commits once, when its turn ends, so there is nothing to mirror
+  mid-turn without committing half-finished edits. The pinned activity bar
+  shows each file edit meanwhile.
 - [ ] 1.6 Post leader reviews as real GitHub reviews (approve / request
   changes) with inline comments, instead of plain pull-request comments.
   Blocked while both agents push and review through one GitHub login: GitHub
@@ -44,8 +47,11 @@ through Settings → Set up this Mac.
 - [x] **1.7 A question from an agent ended the round.** The question now
   appears as a card; the answer resumes the same agent turn, so nothing is
   restarted. Checked against the test fixture only, not a real agent question.
-- [ ] 1.8 One build round is capped by the 64 KB review diff. Large changes
-  need chunked review rather than “review manually”.
+- [x] **1.8 Large changes could not be reviewed.** A change whose Git bundle
+  passed 60,000 bytes stopped with “review it manually”. The bundle is now
+  sent to the leader in parts (up to about 15 MB) and verified by SHA-256
+  before the review checkout is built. Both Macs need this build; an older
+  leader gets an update instruction. Linked-project diffs are still capped.
 
 ## 2. Truthful state
 
@@ -73,17 +79,24 @@ through Settings → Set up this Mac.
   with a five-step “How it works” strip.
 - [x] **3.3 Decision cards did not say why they appeared.** The card title
   and buttons now match the cause: fix limit, disagreement, unclear verdict.
-- [ ] 3.4 “Follower” and “worker” are both used. The UI says worker; prompts
-  and saved speakers still say follower.
+- [x] **3.4 “Follower” and “worker”.** Every message the admin reads says
+  worker. Agent prompts and saved speaker labels keep “follower” so existing
+  tasks and agent sessions stay valid.
 - [ ] 3.5 Empty states for Projects and Devices that walk through setup.
-- [ ] 3.6 Start AABridge at login so paired Macs reconnect after a reboot.
+- [x] **3.6 Start at login.** Settings has “Open AABridge when I log in”.
+  Compiled only: registering needs the installed app, and macOS may refuse an
+  app outside Applications; the toggle then says what to do.
 - [ ] 3.7 Find paired Macs by Bonjour instead of a pasted address.
 
 ## 4. Shipping
 
 - [ ] 4.1 Developer ID signing and notarization; today the app is ad-hoc signed.
-- [ ] 4.2 In-app update of the bridge service. Merging source does not update
-  an installed service, which has caused stale-behaviour reports.
+- [x] **4.2 A stale bridge service was invisible.** The service now reports
+  its version. The toolbar turns orange with “Bridge service needs an update”
+  when the installed service differs from the app, and a paired Mac on a
+  different version is marked in the device list. Updating is still the
+  Settings → Set up this Mac button; the release is now 0.3.0.dev6 so the
+  running dev5 service is detected.
 - [ ] 4.3 Swift UI tests. The desktop is checked by offscreen renders only.
 - [ ] 4.4 A recorded two-Mac run with real models before each release.
 - [ ] 4.5 Token and cost display per task and per agent.

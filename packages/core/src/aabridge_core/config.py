@@ -10,6 +10,15 @@ from pathlib import Path
 from aabridge_protocol.messages import BridgeError, canonical, identifier, require
 
 
+def release() -> str:
+    """The AABridge version this process loaded: an installed service, or the app's bundled wheel."""
+    try:
+        from importlib.metadata import version
+        return version("aabridge")
+    except Exception:
+        return "source"
+
+
 def private_directory(path: Path, *, create: bool = False) -> Path:
     path = path.expanduser()
     require(path.is_absolute() and ".." not in path.parts, "State path must be absolute without traversal.")
