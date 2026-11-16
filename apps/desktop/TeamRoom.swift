@@ -93,6 +93,8 @@ final class TeamRoomModel: ObservableObject {
     /// A send is in flight. Polling uses `refreshing`, so buttons don't flicker.
     @Published var busy = false
     private var refreshing = false
+    /// A rediscovery that arrived mid-refresh, kept so a reconnect isn't missed.
+    var rediscover = false
     @Published var notice = ""
     @Published var showAssignment = false
     @Published var connectionCard = ""
@@ -125,8 +127,10 @@ final class TeamRoomModel: ObservableObject {
     private func envelope(_ body: [String: Any], key: String? = nil) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["key": key ?? "team-ui-" + UUID().uuidString, "body": body])
     }
-    func refresh(discover: Bool = false) {
-        guard !refreshing && !busy else { return }
+    func refresh(discover requested: Bool = false) {
+        guard !refreshing && !busy else { rediscover = rediscover || requested; return }
+        let discover = requested || rediscover
+        rediscover = false
         refreshing = true
         let selection = selected
         let feedRoom = liveRoom
@@ -318,10 +322,18 @@ struct TeamRoomView: View {
 
 struct DevicesView: View {
     @ObservedObject var model: TeamRoomModel
+    @ObservedObject var devices: DeviceStatusModel
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
             Text("Connect your Macs").font(.bridge(.title).bold())
             Text("Optional. Skip this if both agents run on this Mac. To use a second Mac, exchange a connection card once in each direction. Either Mac can then lead or do the work.").foregroundStyle(.secondary)
+            if !devices.devices.isEmpty {
+                GroupBox { VStack(alignment: .leading, spacing: 12) {
+                    Text("Paired Macs").font(.bridge(.headline))
+                    Text("Pairing is saved. When AABridge or either Mac restarts, they reconnect by themselves on the same network, so you don’t need to exchange cards again.").foregroundStyle(.secondary)
+                    DeviceList(model: devices)
+                }.padding(16).frame(maxWidth: .infinity, alignment: .leading) }
+            }
             GroupBox { VStack(alignment: .leading, spacing: 14) {
                 Text("1. Send this Mac’s card").font(.bridge(.headline))
                 Text("Set up AABridge on this Mac using the app’s Settings, then create its card. AABridge accepts an encrypted connection directly.")

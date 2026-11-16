@@ -381,6 +381,20 @@ struct AABridgeDesktop: App {
             }
             exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--preview-connections"), CommandLine.arguments.count > index + 1 {
+            let devices = DeviceStatusModel(activity: TaskBrowserModel(resources: Bundle.main.resourceURL!))
+            devices.report = DeviceReport(service: true, listening: true, service_error: nil,
+                                          devices: [PairedDevice(id: "mbp", label: "Sparsh’s MBP", host: "Sparsh-MBP.local", online: true),
+                                                    PairedDevice(id: "mini", label: "Mac mini", host: "Mac-mini.local", online: false)])
+            let sample = "## Plan\n\nAdd **WeightEntryScreen** with `validate()` and a [guide](https://example.com). Unsafe [link](file:///etc/hosts) stays plain.\n\n1. Save to the store\n2. Show entries\n   - last *seven*\n\n- [x] Tests\n- [ ] Docs\n\n> Keep main untouched.\n\n```swift\nlet weight = 72.5\n```\n\n| File | Change |\n|---|---|\n| `App.swift` | **new** |\n\n---\nVERDICT line stays text."
+            let panel = VStack(alignment: .leading, spacing: 18) {
+                DeviceToolbarStatus(model: devices) {}
+                DeviceList(model: devices).frame(width: 420)
+                Divider()
+                MarkdownText(text: sample).frame(width: 760, alignment: .leading)
+            }.padding(30).frame(width: 1200, height: 820, alignment: .topLeading)
+            exit(renderOwnView(panel, output: CommandLine.arguments[index + 1]) ? 0 : 1)
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-team"), CommandLine.arguments.count > index + 1 {
             let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
             let team = TeamRoomModel(activity: activity)

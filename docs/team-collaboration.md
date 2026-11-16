@@ -448,3 +448,33 @@ upgraded from dev4 to dev5 and restarted; the existing saved service result
 was published on its existing branch as Sparshur-Service PR #2. The team chat
 was updated and its blocked stage retried. This does not validate a physical
 two-Mac model review or certify the service changes or target reconciliation.
+
+## Chat Markdown and automatic reconnection · November 3, 2026
+
+Chat views passed message strings to `Text`, which never parses Markdown.
+`MarkdownText.swift` now renders headings, lists, task lists, quotes, code
+blocks, tables and inline styling in Team chat, Task history bubbles and live
+agent messages. Supplied context stays raw. Only http/https links stay clickable,
+because agent text is untrusted. Text selection now works per block.
+
+A saved pairing already survives restarts; a new card was never needed. Nothing
+started the supervisor at app launch, and **Create connection card** was the only
+Devices control that did, which made re-pasting cards look like the fix. Team chat
+also discovered paired Macs once when it opened, so a Mac that returned later
+stayed missing. The desktop now calls the local `devices` action every 10 seconds.
+`device_status` starts the existing supervisor when it is down and sends a mutual
+TLS `ping` to each paired Mac. A Mac becoming reachable reruns discovery. Status
+appears in the window toolbar and in Devices. Legacy SSH remotes are not probed.
+
+Limits: there is no login item, so after a reboot each Mac needs AABridge opened
+once. Reconnection uses the saved address. `.local` names follow IP changes, but
+a manually entered IP that changes still needs configuration review. There is no
+Bonjour discovery, relay or NAT traversal.
+
+Validation: all 231 deterministic tests passed, including a real supervisor stopped
+and recovered on its saved port with an unchanged config, and a paired listener
+going away and returning over mutual TLS. The universal app built, and Markdown and
+device views were rendered and inspected offscreen. The `devices` action reached the
+real paired MacBook from the mini. The toolbar placement in a live window and a full
+two-Mac restart were not verified. The installed app and running services were not
+replaced or restarted.
