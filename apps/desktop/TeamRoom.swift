@@ -54,22 +54,6 @@ struct PlacementOption: Identifiable {
     ]
 }
 
-/// Mirrors `aabridge_workspace.publish.slug` so the form can preview the branch name.
-func branchSlug(_ text: String, limit: Int = 40) -> String {
-    var parts: [String] = [], current = ""
-    for character in text.lowercased() {
-        if character.isASCII && (character.isLetter || character.isNumber) { current.append(character) }
-        else if !current.isEmpty { parts.append(current); current = "" }
-    }
-    if !current.isEmpty { parts.append(current) }
-    var words: [String] = []
-    for part in parts {
-        if (words + [part]).joined(separator: "-").count > limit { break }
-        words.append(part)
-    }
-    return words.isEmpty ? "task" : words.joined(separator: "-")
-}
-
 final class TeamRoomModel: ObservableObject {
     @Published var rooms: [TeamRoom] = []
     @Published var room: TeamRoom?
@@ -119,9 +103,8 @@ final class TeamRoomModel: ObservableObject {
     /// The result can only reach a project folder on this Mac.
     var hasLocalMember: Bool { leaderChoice?.member.target == "local" || followerChoice?.member.target == "local" }
     func placementAllowed(_ mode: String) -> Bool { mode == "sandbox" || hasLocalMember }
-    var branchPreview: String {
-        (followerChoice?.member.agent ?? "claude") + "/" + branchSlug(trimmedDraft.isEmpty ? "your task" : trimmedDraft) + "-…"
-    }
+    /// The agents name the branch during the task, so only its prefix is known here.
+    var branchPreview: String { (followerChoice?.member.agent ?? "claude") + "/…" }
     private func envelope(_ body: [String: Any], key: String? = nil) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["key": key ?? "team-ui-" + UUID().uuidString, "body": body])
     }

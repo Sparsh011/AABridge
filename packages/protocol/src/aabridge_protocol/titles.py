@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import re
 
+MAX_BRANCH_NAME = 48
+BRANCH_NAME = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*')
+
 
 def compact_title(objective: str) -> str:
     original = objective.rsplit('Admin task:', 1)[-1].strip()
@@ -24,3 +27,12 @@ def leader_title(summary: str, objective: str) -> str:
         except BridgeError:
             pass
     return compact_title(objective)
+
+
+def agent_branch(summary: str) -> str | None:
+    """The last valid BRANCH_NAME: line. Model output, so anything else is ignored."""
+    for candidate in reversed(re.findall(r'^BRANCH_NAME:[ \t]*([^\r\n]+)$', summary, re.MULTILINE)):
+        name = candidate.strip().strip('`')
+        if len(name) <= MAX_BRANCH_NAME and BRANCH_NAME.fullmatch(name):
+            return name
+    return None

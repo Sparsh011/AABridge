@@ -201,6 +201,7 @@ struct NewTeamTaskView: View {
                         HStack(spacing: 6) {
                             Text("Branch name:").foregroundStyle(.secondary)
                             Text(model.branchPreview).font(.bridge(.callout, design: .monospaced))
+                            Text("The agents choose the rest during the task.").foregroundStyle(.secondary)
                         }.font(.bridge(.callout))
                     }
                     Toggle(isOn: $model.pullRequest) {
