@@ -2,8 +2,7 @@
 
 What AABridge still needs before a new user can pick it up and trust it.
 Sorted hardest first. `[x]` is done on `claude/team-usability`; `[ ]` is open.
-Checked with the deterministic suite (244 tests, ten new ones for 1.1, 1.2,
-1.5, 1.6, 1.7, 1.8, 2.1 and 2.4) and offscreen renders of the running, finished and new-task screens.
+Checked with the deterministic suite (247 tests) and `make ui-check` and offscreen renders of the running, finished and new-task screens.
 Nothing here was run against two physical Macs or a paid model, and the
 installed app and running services were not replaced. The orchestration
 changes take effect only after the bridge service on the admin Mac is updated
@@ -111,7 +110,25 @@ through Settings → Set up this Mac.
   different version is marked in the device list. Updating is still the
   Settings → Set up this Mac button; the release is now 0.3.0.dev6 so the
   running dev5 service is detected.
-- [ ] 4.3 Swift UI tests. The desktop is checked by offscreen renders only.
-- [ ] 4.4 A recorded two-Mac run with real models before each release.
-- [ ] 4.5 Token and cost display per task and per agent.
-- [ ] 4.6 VoiceOver labels and keyboard navigation for the team screens.
+- [x] **4.3 Desktop checks.** `make ui-check` builds room states with the
+  real team code, compiles the app, and runs 27 checks in it: the status and
+  progress wording, hidden marker lines, link safety, stale-service detection,
+  and that the app decodes everything the service returns. It then renders
+  all ten preview screens and fails on a missing or blank one. It does not
+  click through the app; there is still no XCUITest target.
+- [ ] 4.4 A recorded two-Mac run with real models before each release. This
+  is the one item only you can do. After running a task in the app, run
+  `python scripts/record_team_run.py` on the admin Mac: it writes
+  `docs/evidence/team-run-<date>.md` from the saved task and states whether
+  the run used two Macs, completed plan, build and review, and had the same
+  version on both. It reads only and starts nothing.
+- [x] **4.5 Token use.** Each agent turn reports its token counts into the
+  activity feed, and the task header shows a total per role. Claude also
+  reports its own cost estimate, shown in the tooltip as an estimate, not a
+  bill. Parsed from the CLIs’ JSON output in tests; not yet seen from a real
+  agent turn, so a CLI that names these fields differently would show nothing.
+- [x] **4.6 VoiceOver and keyboard.** The status pill, progress strip,
+  working row, messages, task list, token chips and icon-only buttons have
+  spoken labels. ⌘N starts a task, ⌘Return sends, ⌘. stops, ⌘L shows or
+  hides the activity log, Esc cancels a new task. Labels were added in code
+  and compile; they were not listened to with VoiceOver on.

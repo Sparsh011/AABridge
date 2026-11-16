@@ -7,16 +7,20 @@ APP_PATH ?= build/AABridge.app
 CODEX_PATH ?=
 CLAUDE_PATH ?=
 
-.PHONY: help check build
+.PHONY: help check build ui-check
 
 help:
 	@echo 'make build  Check and replace build/AABridge.app (no ZIPs)'
 	@echo 'make check  Run deterministic tests without model calls'
+	@echo 'make ui-check  Compile the desktop, check it against real service output, render every screen'
 	@echo 'Override APP_PATH, PYTHON, PUBLIC_KEY or PEER; see docs/desktop.md.'
 	@echo 'Missing runtimes prompt in a terminal; override CODEX_PATH or CLAUDE_PATH.'
 
 check:
 	"$(PYTHON)" scripts/check.py
+
+ui-check:
+	"$(PYTHON)" scripts/verify_ui.py
 
 build: check
 	"$(PYTHON)" scripts/build_app.py --app-path "$(APP_PATH)" \

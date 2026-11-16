@@ -91,6 +91,9 @@ struct LiveActivityView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button { if active { openWhileWorking.toggle() } else { openLog.toggle() } } label: { summary }.buttonStyle(.plain)
+                .keyboardShortcut("l", modifiers: .command).help("Show or hide the activity log (⌘L)")
+                .accessibilityLabel(active ? "Live activity. " + (live.map { "\(agentName($0.agent)) is working: \(current($0))" } ?? "Starting the agent") : "Activity log, \(model.liveEntries.count) actions")
+                .accessibilityHint(expanded ? "Hides the list of actions" : "Shows the list of actions")
             if expanded {
                 if let live = live, active {
                     if !live.supported { Text("This Mac needs the live-activity update to show each action. Finish its active tasks before updating it.").font(.bridge(.caption)).foregroundStyle(.orange).padding(.top, 6) }

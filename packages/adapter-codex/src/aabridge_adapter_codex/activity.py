@@ -14,6 +14,16 @@ def clean(value, maximum=2000):
     return value[:maximum]
 
 
+def usage_text(tokens_in, tokens_out, cached=0, cost=None):
+    """One fixed, parseable line of token counts. The team view adds these up per agent."""
+    def count(value):
+        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value < 10**12 else 0
+    text = f"Tokens used: {count(tokens_in)} in, {count(tokens_out)} out, {count(cached)} cached"
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool) and 0 <= cost < 100000:
+        text += f", cost ${cost:.4f}"
+    return text
+
+
 class ActivityStream:
     def __init__(self, callback):
         self.callback = callback
@@ -39,6 +49,9 @@ class ActivityStream:
             self.emit("turn", "status", "Agent session started", force=True)
         if typ == "turn.completed":
             self.emit("turn", "status", "Agent finished this turn", "completed", force=True)
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                self.emit("usage", "status", usage_text(usage.get("input_tokens"), usage.get("output_tokens"), usage.get("cached_input_tokens")), "completed", force=True)
         if typ in {"error", "turn.failed"}:
             self.emit("turn", "status", "Agent stopped before completing. Check the chosen model and its availability.", "failed", force=True)
         if typ not in {"item.started", "item.updated", "item.completed"}:
@@ -122,6 +135,10 @@ class ActivityStream:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     self.emit(block.get("tool_use_id", "tool"), "tool", (self.tools.get(block.get("tool_use_id"), "Tool") + " · finished") if not block.get("is_error") else "Tool reported an error", "failed" if block.get("is_error") else "completed", force=True)
         elif typ == "result":
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                cached = sum(v for v in (usage.get("cache_read_input_tokens"), usage.get("cache_creation_input_tokens")) if isinstance(v, int) and not isinstance(v, bool))
+                self.emit("usage", "status", usage_text(usage.get("input_tokens"), usage.get("output_tokens"), cached, event.get("total_cost_usd")), "completed", force=True)
             self.emit("turn", "status", "Agent finished this turn" if event.get("is_error") is False else "Agent stopped before completing. Check the chosen model and its availability.", "completed" if event.get("is_error") is False else "failed", force=True)
 
     def tool(self, block):

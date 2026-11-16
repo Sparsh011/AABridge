@@ -573,3 +573,22 @@ Added to 0.3.0.dev6 before merge:
 
 244 deterministic tests pass. Not run: a real GitHub review, Bonjour between
 two Macs, Developer ID signing, `scripts/build_desktop.py`, any model call.
+
+## Token totals, desktop checks and run records · November 17, 2026
+
+- `ActivityStream` emits one `usage` status entry per turn in the fixed form
+  `Tokens used: N in, N out, N cached[, cost $N]` (Codex `turn.completed.usage`,
+  Claude `result.usage` and `total_cost_usd`). `relay_activity` stores each one
+  under `room.usage[role][source/cursor]`, so a replayed page counts once;
+  `team_status` returns totals in `usage`. No protocol field changed.
+- `AABridge --self-test [fixture.json]` runs the display-rule and decoding
+  checks in `SelfTest.swift`. `scripts/verify_ui.py` (`make ui-check`) produces
+  the fixture from real `team_status`, `teams` and `team_activity` output and
+  renders the preview screens. Add a room state there when the service gains a
+  field the desktop reads.
+- `scripts/record_team_run.py` writes an evidence file for a saved task from a
+  read-only SQLite connection plus a `ping` per Mac.
+- Team screens have accessibility labels and ⌘N, ⌘., ⌘L and Esc shortcuts.
+
+247 deterministic tests pass; `make ui-check` passes 27 checks and 10 screens.
+Not run: a real agent turn reporting tokens, VoiceOver, a two-Mac task.
