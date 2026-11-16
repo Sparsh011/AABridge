@@ -44,6 +44,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.idle_work = False  # A fix round that disputes the review and commits nothing.
         self.plans = []  # Leader plan-turn output, when a test needs a specific one.
         self.asks = None  # A stage whose agent stops to ask the admin a question first.
+        self.parts, self.uploaded, self.big = {}, [], False  # Review bundles sent in parts; whether the worker writes a large file.
         self.branch_lines = {}  # Extra output line per stage, e.g. a BRANCH_NAME: choice.
         self.runner = TeamRunner(self.state, self.store)
         self.runner.call = self.call
@@ -59,6 +60,9 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
 
     def turn(self, task, mode):
         path = Path(task['result']['worktree'])
+        if mode == 'work' and self.big:
+            import os
+            (path / f'asset-{task["revision"]}.bin').write_bytes(os.urandom(130_000))
         if mode == 'work' and not self.idle_work:
             (path / f'change-{task["revision"]}.txt').write_text('work')
             git(path, 'add', '--all'); git(path, 'commit', '-m', 'Work ' + str(task['revision']))
@@ -74,6 +78,20 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.requests.append((op, body, target, key))
         if op == 'projects':
             return {'app': {**self.project, 'adapter': 'codex' if target == 'mini' else 'claude', 'worker': 'codex' if target == 'mini' else 'claude'}}
+        if op == 'snapshot_part':
+            import base64
+            self.parts.setdefault(body['upload'], {})[body['index']] = base64.b64decode(body['data'])
+            return {}
+        if op in {'submit', 'revise'} and (body.get('review_snapshot') or {}).get('upload'):
+            # Stand in for the receiving service: assemble the parts into the bundle the review imports.
+            import base64, hashlib
+            snapshot = body['review_snapshot']
+            raw = b''.join(self.parts[snapshot['upload']][index] for index in range(snapshot['parts']))
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), snapshot['sha256'])
+            self.uploaded.append(len(raw))
+            (self.state / 'snapshots').mkdir(exist_ok=True)
+            (self.state / 'snapshots' / (snapshot['sha256'] + '.bundle')).write_bytes(raw)
+            body = {**body, 'review_snapshot': {'commit': snapshot['commit'], 'bundle': '', 'file': snapshot['sha256']}}
         if op == 'submit':
             if key not in self.tasks:
                 task_id = 'task-' + str(len(self.tasks))
@@ -580,6 +598,24 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((len(first['messages']), first['earlier_messages'], first['messages'][0]['text']), (22, 0, 'Add a weight input screen'))
         with self.assertRaises(BridgeError):
             validate_request({'version': 1, 'op': 'team_status', 'key': 'k1', 'body': {'team_id': 'team-1', 'before': 0}})
+
+    async def test_large_change_is_sent_to_the_leader_in_parts_and_reviewed(self):
+        self.big, self.reviews = True, ['1. Fix it\nVERDICT: CHANGES_REQUESTED', 'VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        blocked = await self.run_until(room['id'])  # An older leader cannot take the upload.
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertIn('Update AABridge on the leader Mac', blocked['error'])
+        self.assertEqual([mode for _, mode in self.stages()], ['plan', 'work'])
+        self.project['capabilities']['review_snapshot_parts'] = True
+        self.admin('team_retry', {'team_id': room['id']})
+        done = await self.run_until(room['id'])
+        self.assertEqual((done['status'], done['verdict']), ('completed', 'approved'))
+        self.assertEqual(len(self.uploaded), 2)  # First review, then the re-review of the fix.
+        self.assertTrue(all(size > 60000 for size in self.uploaded))
+        self.assertEqual(list((self.state / 'outbox').iterdir()), [])
+        self.assertNotIn('snapshot_upload', done)
+        review = next(t for t in self.tasks.values() if t['mode'] == 'review')
+        self.assertTrue((Path(review['result']['worktree']) / 'asset-2.bin').is_file())
 
 
 if __name__ == '__main__':

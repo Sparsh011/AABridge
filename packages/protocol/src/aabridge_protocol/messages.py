@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 MAX_MESSAGE = 131_072
+SNAPSHOT_PARTS = 256  # 256 parts of 60,000 bytes: a review bundle of up to about 15 MB.
 ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,79}\Z")
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
-OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity", "task_rename", "task_forget", "task_work"})
+OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity", "task_rename", "task_forget", "task_work", "snapshot_part"})
 TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry", "team_activity",
                       "team_guide", "team_decide", "team_merge"})
 OPERATIONS = OPERATIONS | TEAM_OPS
@@ -54,9 +55,15 @@ def task_title(value: object) -> str:
 
 
 def review_snapshot(value: object) -> dict:
-    value = fields(value, {'commit', 'bundle'})
+    value = fields(value, {'commit', 'bundle'}, {'upload', 'parts', 'sha256'})
     require(isinstance(value['commit'], str) and SHA.fullmatch(value['commit']), 'An exact review commit is required.')
     require(isinstance(value['bundle'], str) and len(value['bundle']) <= 80000, 'Review bundle exceeds bounds.')
+    if {'upload', 'parts', 'sha256'} & set(value):
+        # A large implementation arrives first as snapshot_part requests.
+        require({'upload', 'parts', 'sha256'} <= set(value) and value['bundle'] == '', 'An uploaded review bundle needs upload, parts and sha256, and no inline bundle.')
+        identifier(value['upload'])
+        integer(value['parts'], 1, SNAPSHOT_PARTS)
+        require(isinstance(value['sha256'], str) and re.fullmatch(r'[0-9a-f]{64}', value['sha256']), 'Review bundle digest must be SHA-256.')
     try:
         decoded = base64.b64decode(value['bundle'], validate=True)
     except (ValueError, binascii.Error):
@@ -256,6 +263,16 @@ def validate_request(value: object) -> Request:
     elif op == "tasks":
         fields(body, {"cursor"}, {'shared'})
         integer(body["cursor"], 0, 2**63 - 1)
+    elif op == "snapshot_part":
+        fields(body, {"project_id", "upload", "index", "data"})
+        identifier(body["project_id"])
+        identifier(body["upload"])
+        integer(body["index"], 0, SNAPSHOT_PARTS - 1)
+        require(isinstance(body["data"], str) and 4 <= len(body["data"]) <= 88000, "Review bundle part exceeds bounds.")
+        try:
+            base64.b64decode(body["data"], validate=True)
+        except (ValueError, binascii.Error):
+            raise BridgeError("invalid_request", "Review bundle part must be base64.") from None
     elif op in {"answer", "revise"}:
         fields(body, {"task_id", "revision", "text"} | ({"question_id"} if op == "answer" else set()), {"origin", "mode", "model_settings", "review_snapshot"})
         identifier(body["task_id"])

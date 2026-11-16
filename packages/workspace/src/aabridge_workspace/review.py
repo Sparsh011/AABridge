@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -10,6 +12,8 @@ from aabridge_protocol.messages import require
 from .git import git
 
 MAX_BUNDLE = 60000  # Base64 fits alongside review instructions in a 128 KiB RPC.
+PART = 60000  # Raw bytes per snapshot_part request.
+MAX_UPLOAD = 256 * PART  # Matches the protocol's part count: about 15 MB.
 
 
 def review_diff(source: Path, base: str, commit: str) -> str:
@@ -23,7 +27,8 @@ def review_diff(source: Path, base: str, commit: str) -> str:
             f'Baseline: {base}; implementation: {commit}. No implementation files were discarded.\n' + summary[:12000])
 
 
-def export_snapshot(source: Path, base: str, commit: str) -> dict:
+def export_snapshot(source: Path, base: str, commit: str, spool: Path | None = None) -> dict:
+    """An inline bundle, or with `spool` a bundle file to upload in parts when it is too large."""
     require(git(source, 'rev-parse', '--verify', commit + '^{commit}') == commit,
             'The implementation commit is unavailable for review.', 'review_unavailable')
     git(source, 'merge-base', '--is-ancestor', base, commit)
@@ -36,8 +41,18 @@ def export_snapshot(source: Path, base: str, commit: str) -> dict:
         with tempfile.TemporaryDirectory(prefix='aabridge-review-') as folder:
             bundle = Path(folder) / 'review.bundle'
             git(source, 'bundle', 'create', str(bundle), ref, '^' + base)
-            require(bundle.stat().st_size <= MAX_BUNDLE,
-                    'The implementation Git bundle exceeds the automatic review limit (60,000 bytes). Review it manually; no leader turn was started.', 'review_too_large')
+            size = bundle.stat().st_size
+            if size > MAX_BUNDLE and spool is not None:
+                require(size <= MAX_UPLOAD, f'The implementation Git bundle is {size // 1_000_000} MB, above the {MAX_UPLOAD // 1_000_000} MB automatic review limit. '
+                        'Review it manually; no leader turn was started.', 'review_too_large')
+                raw = bundle.read_bytes()
+                upload = 'snap-' + uuid.uuid4().hex[:24]
+                spool.mkdir(mode=0o700, parents=True, exist_ok=True)
+                (spool / (upload + '.bundle')).write_bytes(raw)
+                return {'commit': commit, 'bundle': '', 'upload': upload, 'parts': -(-size // PART), 'sha256': hashlib.sha256(raw).hexdigest()}
+            require(size <= MAX_BUNDLE,
+                    'The implementation Git bundle exceeds the automatic review limit (60,000 bytes) of the leader’s AABridge version. '
+                    'Update AABridge on the leader Mac, then press Try again. No leader turn was started.', 'review_too_large')
             return {'commit': commit, 'bundle': base64.b64encode(bundle.read_bytes()).decode('ascii')}
     finally:
         git(source, 'update-ref', '-d', ref, commit)
@@ -48,10 +63,18 @@ def import_snapshot(workspace: Path, base: str, snapshot: dict, branch: str) -> 
     require(not git(workspace, 'status', '--porcelain'),
             'The review checkout has unexpected edits; it was preserved.', 'review_unavailable')
     commit = snapshot['commit']
-    if snapshot['bundle']:
+    if snapshot['bundle'] or snapshot.get('file'):
         with tempfile.TemporaryDirectory(prefix='aabridge-review-') as folder:
             bundle = Path(folder) / 'review.bundle'
-            bundle.write_bytes(base64.b64decode(snapshot['bundle'], validate=True))
+            if snapshot.get('file'):
+                # Saved by this Mac's own service under its digest: state/snapshots/<sha256>.bundle.
+                require(re.fullmatch(r'[0-9a-f]{64}', snapshot['file']), 'Review bundle reference is invalid.', 'review_unavailable')
+                saved = workspace.parent.parent / 'snapshots' / (snapshot['file'] + '.bundle')
+                require(saved.is_file() and not saved.is_symlink() and hashlib.sha256(saved.read_bytes()).hexdigest() == snapshot['file'],
+                        'The uploaded review bundle is missing or changed. Press Try again to send it again.', 'review_unavailable')
+                bundle.write_bytes(saved.read_bytes())
+            else:
+                bundle.write_bytes(base64.b64decode(snapshot['bundle'], validate=True))
             git(workspace, 'bundle', 'verify', str(bundle))
             git(workspace, 'fetch', '--no-tags', str(bundle), commit)
             require(git(workspace, 'rev-parse', 'FETCH_HEAD') == commit,
