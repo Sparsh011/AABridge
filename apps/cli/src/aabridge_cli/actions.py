@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -198,21 +199,51 @@ def demo_init(state: Path, directory: Path, project_id: str, agent: str = "codex
     return {**register_project(state, project_id, directory, profile, agent), "demo_repository": str(directory)}
 
 
-def start_daemon(state: Path) -> dict:
+def supervisor_lock_held(state: Path) -> bool:
+    """Whether another process still holds the supervisor's state lock."""
     try:
-        return {"already_running": True, **local_call(state, request("ping", {}))}
+        descriptor = os.open(state / "daemon.lock", os.O_RDWR | os.O_NOFOLLOW)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    else:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(descriptor)
+
+
+def start_daemon(state: Path) -> dict:
+    def ping() -> dict:
+        return local_call(state, request("ping", {}))
+
+    try:
+        return {"already_running": True, **ping()}
     except BridgeError as exc:
         require(exc.code == "daemon_unavailable", exc.message, exc.code)
+    deadline = time.monotonic() + 5
+    # A stopping supervisor stops answering before it releases the state lock;
+    # a child started in that window would exit at once, so wait for the lock.
+    while supervisor_lock_held(state) and time.monotonic() < deadline:
+        try:
+            return {"already_running": True, **ping()}
+        except BridgeError:
+            time.sleep(0.05)
     # The child has its own session and no SSH/terminal stdio dependency.
     process = subprocess.Popen([sys.executable, "-m", "aabridge_cli", "serve", "--state-dir", str(state)],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                start_new_session=True, cwd=state)
-    deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise BridgeError("daemon_failed", "Daemon failed to start. Run aabridge serve in the foreground to see the bounded error.")
+            try:
+                return {"already_running": True, **ping()}  # Another caller started it first.
+            except BridgeError:
+                raise BridgeError("daemon_failed", "Daemon failed to start. Run aabridge serve in the foreground to see the bounded error.") from None
         try:
-            return {"started": True, **local_call(state, request("ping", {}))}
+            return {"started": True, **ping()}
         except BridgeError:
             time.sleep(0.1)
     raise BridgeError("daemon_failed", "Daemon did not become ready within five seconds.")
