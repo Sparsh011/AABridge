@@ -351,6 +351,9 @@ class TeamRunner:
             context = ['Your plan:\n' + room['outputs']['plan']['summary'][:12000],
                        'Follower report:\n' + room['outputs']['work']['summary'][:24000],
                        'Follower diff:\n' + room.get('diff', '')[:64000]] + noted
+        if stage == 'review' and pull_requests(room.get('publication') or {}):
+            objective += ('\nYour review is posted on the pull request. For a finding about one specific line that this change added or modified, also write a line '
+                          '"INLINE: path/to/file:LINE: comment", using the line number in the new version of the file. Each becomes an inline comment on that line.')
         if stage == 'plan':
             objective += ('\nInclude one plain line TASK_TITLE: followed by a descriptive 4–8 word task title, at most 80 characters. '
                           'Describe the work, without role instructions, device IDs or paths. This is display metadata, not a replacement for your implementation plan.')
@@ -819,14 +822,19 @@ class TeamRunner:
                         except Exception:
                             pass
                 elif stage == 'review':
-                    from aabridge_workspace.publish import comment
+                    from aabridge_workspace.publish import inline_comments, review
                     room.setdefault('publication', {}).pop('review_errors', None)
                     publication = room.get('publication') or {}
                     for repository, url, _ in pull_requests(publication):
                         try:
                             entry = publication if publication.get('pull_request') == url else next(item for item in publication.get('linked', []) if item.get('pull_request') == url)
                             reviewed_commit = entry.get('commit', room['outputs']['work']['result_commit'])
-                            await asyncio.to_thread(comment, Path(repository), url, f'**Leader review · {member["agent"]} · implementation {reviewed_commit}**\n\n' + result['summary'])
+                            main = publication.get('pull_request') == url
+                            changed = room['outputs']['work'].get('changed_paths', []) if main else next(
+                                (link.get('changed_paths', []) for link in room['outputs']['work'].get('linked', []) if link['name'] == entry.get('name')), [])
+                            posted = await asyncio.to_thread(review, Path(repository), url, f'**Leader review · {member["agent"]} · implementation {reviewed_commit}**\n\n' + result['summary'],
+                                                             verdict(result['summary']) if room.get('approval') else None, reviewed_commit, inline_comments(result['summary'], changed))
+                            room['publication'].setdefault('review_posts', {})[url] = posted
                         except Exception as exc:
                             error = getattr(exc, 'message', 'Could not post the leader review on GitHub.')
                             room['publication'].setdefault('review_errors', {})[url] = error

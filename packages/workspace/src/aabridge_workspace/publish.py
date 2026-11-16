@@ -8,7 +8,9 @@ Merge request.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -199,6 +201,47 @@ def pull_request(repo: Path, branch: str, title: str, body: str, existing: str |
 
 def comment(repo: Path, url: str, body: str) -> None:
     _gh(repo, "pr", "comment", url, "--body-file", "-", stdin=body[:60000], failure="Could not post the review on the pull request.")
+
+
+PULL = re.compile(r"https://([A-Za-z0-9.-]+)/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)/?\Z")
+INLINE = re.compile(r"^\W*INLINE:\s*`?([^\s:`]+):(\d+)`?\s*[:\-–—]?\s*(\S.*)$", re.MULTILINE)
+
+
+def inline_comments(summary: str, changed: list[str]) -> list[dict]:
+    """`INLINE: path:line: text` lines from a review, kept only for files the change touched."""
+    allowed, found = set(changed), []
+    for path, line, text in INLINE.findall(summary or ""):
+        if path in allowed and 0 < int(line) < 1_000_000 and len(found) < 20:
+            found.append({"path": path, "line": int(line), "side": "RIGHT", "body": text.strip()[:4000]})
+    return found
+
+
+def review(repo: Path, url: str, body: str, verdict: str | None, commit: str, comments: list[dict]) -> str:
+    """Post the leader's review on the pull request and say how it was posted.
+
+    GitHub refuses an approval or a change request from the pull request's own
+    author, and refuses inline comments on lines outside the diff. Each refusal
+    falls back one step, ending at a plain comment, so a review is never lost.
+    """
+    match = PULL.match(url)
+    event = {"approved": "APPROVE", "changes": "REQUEST_CHANGES"}.get(verdict or "", "COMMENT")
+    attempts = [(event, comments), ("COMMENT", comments), ("COMMENT", [])] if match else []
+    tried = set()
+    for kind, inline in attempts:
+        if (kind, bool(inline)) in tried:
+            continue
+        tried.add((kind, bool(inline)))
+        notes = "" if inline or not comments else "\n\n" + "\n".join(f"- `{c['path']}:{c['line']}` {c['body']}" for c in comments)
+        host, owner, name, number = match.groups()
+        payload = {"commit_id": commit, "body": (body + notes)[:60000], "event": kind, **({"comments": inline} if inline else {})}
+        try:
+            _gh(repo, "api", *(("--hostname", host) if host != "github.com" else ()), "--method", "POST", f"repos/{owner}/{name}/pulls/{number}/reviews", "--input", "-",
+                stdin=json.dumps(payload), failure="GitHub did not accept the review.")
+            return {"APPROVE": "approval", "REQUEST_CHANGES": "change request"}.get(kind, "review") + (" with inline comments" if inline else "")
+        except BridgeError:
+            continue
+    comment(repo, url, body)
+    return "comment"
 
 
 def merge(repo: Path, url: str, commit: str) -> None:

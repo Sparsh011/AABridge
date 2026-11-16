@@ -289,7 +289,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
             calls.append(('pr', branch, existing))
             return {'url': 'https://github.com/o/r/pull/7', 'base': 'main'}
         with patch('aabridge_workspace.publish.pull_request', side_effect=opened), \
-             patch('aabridge_workspace.publish.comment', side_effect=lambda *a: calls.append(('comment',))), \
+             patch('aabridge_workspace.publish.review', side_effect=lambda *a: calls.append(('comment',))), \
              patch('aabridge_workspace.publish.merge', side_effect=lambda *a: calls.append(('merge',))) as merge:
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
@@ -340,7 +340,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
     async def test_review_post_failure_is_visible_in_chat_and_saved_state(self):
         self.reviews = ['VERDICT: APPROVED']
         with patch('aabridge_workspace.publish.pull_request', return_value={'url': 'https://github.com/o/r/pull/7'}), \
-             patch('aabridge_workspace.publish.comment', side_effect=BridgeError('publish_failed', 'GitHub rejected the comment')):
+             patch('aabridge_workspace.publish.review', side_effect=BridgeError('publish_failed', 'GitHub rejected the comment')):
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
         self.assertIn('GitHub rejected the comment', done['publication']['review_errors']['https://github.com/o/r/pull/7'])
@@ -425,7 +425,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         def pull(repo, branch, title, body, existing=None):
             opened.append((Path(repo).name, existing))
             return {'url': 'https://github.com/o/' + Path(repo).name + '/pull/1', 'base': 'main'}
-        with patch('aabridge_workspace.publish.pull_request', side_effect=pull), patch('aabridge_workspace.publish.comment'), \
+        with patch('aabridge_workspace.publish.pull_request', side_effect=pull), patch('aabridge_workspace.publish.review', return_value='review'), \
              patch('aabridge_workspace.publish.merge', side_effect=lambda repo, url, commit: merged.append(url)):
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
@@ -647,6 +647,35 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('preview', done)
         self.assertNotIn('aabridge-live/', git(self.repo, 'branch', '--list'))
         self.assertTrue(done['publication']['branch'].startswith('claude/'))
+
+    def test_leader_review_is_posted_as_a_github_review_and_falls_back_when_refused(self):
+        summary = '1. Negative weights pass.\nINLINE: app/save.py:12: reject values below zero\nINLINE: other/file.py:3: not part of this change\nVERDICT: CHANGES_REQUESTED'
+        comments = publish.inline_comments(summary, ['app/save.py'])
+        self.assertEqual(comments, [{'path': 'app/save.py', 'line': 12, 'side': 'RIGHT', 'body': 'reject values below zero'}])
+        url, sent = 'https://github.com/o/r/pull/7', []
+        def gh(refuse):
+            def run(repo, *arguments, stdin=None, failure=''):
+                if arguments[0] == 'api':
+                    import json
+                    payload = json.loads(stdin)
+                    sent.append((arguments[3], payload['event'], len(payload.get('comments', [])), '- `app/save.py:12` reject' in payload['body']))
+                    if (payload['event'], bool(payload.get('comments'))) in refuse:
+                        raise BridgeError('publish_failed', failure)
+                else:
+                    sent.append((arguments[0], arguments[1]))
+                return ''
+            return run
+        with patch('aabridge_workspace.publish._gh', side_effect=gh(set())):
+            self.assertEqual(publish.review(self.repo, url, summary, 'changes', 'a' * 40, comments), 'change request with inline comments')
+        self.assertEqual(sent, [('repos/o/r/pulls/7/reviews', 'REQUEST_CHANGES', 1, False)])
+        sent.clear()  # The author of a pull request may only comment on it, and the line is outside the diff.
+        with patch('aabridge_workspace.publish._gh', side_effect=gh({('REQUEST_CHANGES', True), ('COMMENT', True)})):
+            self.assertEqual(publish.review(self.repo, url, summary, 'changes', 'a' * 40, comments), 'review')
+        self.assertEqual([entry[1:] for entry in sent], [('REQUEST_CHANGES', 1, False), ('COMMENT', 1, False), ('COMMENT', 0, True)])
+        sent.clear()  # Nothing accepted as a review: the plain comment still carries it.
+        with patch('aabridge_workspace.publish._gh', side_effect=gh({('APPROVE', False), ('COMMENT', False)})):
+            self.assertEqual(publish.review(self.repo, url, 'Fine.', 'approved', 'a' * 40, []), 'comment')
+        self.assertEqual(sent[-1], ('pr', 'comment'))
 
 
 if __name__ == '__main__':
