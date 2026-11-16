@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from aabridge_core.config import initialize, load_config, private_directory, read_private, save_config, token_digest, write_private
@@ -217,6 +218,38 @@ def start_daemon(state: Path) -> dict:
     raise BridgeError("daemon_failed", "Daemon did not become ready within five seconds.")
 
 
+def device_status(state: Path) -> dict:
+    """Keep this Mac's saved bridge running and report which paired Macs answer."""
+    if not (state / "config.json").exists():
+        return {"service": False, "listening": False, "service_error": "Set up this Mac in Settings first.", "devices": []}
+    status = {"service": True, "listening": False, "service_error": None}
+    try:
+        start_daemon(state)
+    except BridgeError as exc:
+        status.update(service=False, service_error=exc.message)
+    config = load_config(state)
+    try:
+        status["listening"] = json.loads(read_private(state / "direct-listener.json")).get("ready") is True
+    except (FileNotFoundError, ValueError):
+        pass
+
+    def probe(name: str, remote: dict) -> dict:
+        device = {"id": name, "label": remote.get("label", name), "host": remote.get("host", ""), "online": None}
+        # Legacy SSH would open a login shell on every poll; it is checked when used.
+        if remote.get("transport") == "tls":
+            try:
+                send(state, request("ping", {}), name)
+                device["online"] = True
+            except BridgeError:
+                device["online"] = False
+        return device
+
+    remotes = config["remotes"]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        status["devices"] = list(pool.map(lambda item: probe(*item), remotes.items())) if remotes else []
+    return status
+
+
 def grant_peer(state: Path, peer_id: str, projects: list[str], public_key: Path) -> dict:
     identifier(peer_id)
     require(peer_id != "local", "The local operator identity cannot be enrolled as a peer.")
@@ -331,8 +364,8 @@ def fetch_result(state: Path, remote_name: str, task_id: str) -> dict:
     else:
         _fetch_ssh_result(state, remote, review, project_id, task_id, result['result_commit'])
     require(git(review, "rev-parse", "FETCH_HEAD") == result["result_commit"], "Fetched commit identity mismatch.")
-    diff = git(review, "diff", "--no-ext-diff", "--no-textconv", result["base_commit"], result["result_commit"])
-    require(len(diff) <= 65536, "Result diff exceeds the review limit.")
+    from aabridge_workspace.review import review_diff
+    diff = review_diff(review, result['base_commit'], result['result_commit'])
     return {"review_repository": str(review), "base_commit": result["base_commit"], "result_commit": result["result_commit"], "diff": diff}
 
 

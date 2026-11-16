@@ -17,7 +17,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--state-dir", type=Path)
-    parser.add_argument("--action", choices=("connection-card", "connect", "teams", "team_start", "team_status", "team_activity", "team_reply", "team_cancel", "team_retry", "team_guide", "team_decide", "team_merge", "targets", "projects", "projects-local", "project-save", "tasks", "conversation", "status", "events", "submit", "answer", "revise", "cancel", "task_rename", "task_forget", "task_work"), required=True)
+    parser.add_argument("--action", choices=("connection-card", "connect", "devices", "teams", "team_start", "team_status", "team_activity", "team_reply", "team_cancel", "team_retry", "team_guide", "team_decide", "team_merge", "targets", "projects", "projects-local", "project-save", "tasks", "conversation", "status", "events", "submit", "answer", "revise", "cancel", "task_rename", "task_forget", "task_work"), required=True)
     parser.add_argument("--remote")
     parser.add_argument("--task-id")
     parser.add_argument("--cursor", type=int, default=0)
@@ -53,6 +53,11 @@ def main():
             require(not raw_card.lstrip().startswith(b"ssh "),
                     "Paste an AABridge connection card, not an SSH command. On the other Mac, choose Create connection card → Copy card.")
             print(json.dumps(connect(state, decode(raw_card))))
+        return
+    if args.action == "devices":
+        require(not args.remote, "Connections belong to this Mac.")
+        from aabridge_cli.actions import device_status
+        print(json.dumps(device_status(state)))
         return
     if args.action.startswith("team"):
         require(not args.remote, "Manage team roles on the admin Mac.")

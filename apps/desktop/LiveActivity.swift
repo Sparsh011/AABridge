@@ -114,7 +114,9 @@ struct LiveActivityView: View {
                                             Spacer()
                                             Text(Date(timeIntervalSince1970: entry.time), style: .time)
                                         }.font(.bridge(.caption)).foregroundStyle(.secondary)
-                                        Text(entry.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                                        Group {
+                                            if entry.kind == "message" { MarkdownText(text: entry.text) } else { Text(entry.text).textSelection(.enabled) }
+                                        }.frame(maxWidth: .infinity, alignment: .leading)
                                     }
                                 }.padding(9).background(Color.primary.opacity(0.025)).clipShape(RoundedRectangle(cornerRadius: 8)).id(entry.id)
                             }

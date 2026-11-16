@@ -763,24 +763,36 @@ struct DesktopView: View {
     @StateObject private var activity: TaskBrowserModel
     @StateObject private var projects: ProjectSettingsModel
     @StateObject private var team: TeamRoomModel
+    @StateObject private var devices: DeviceStatusModel
     @State private var section = 0
+    private let deviceTimer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
     init(setup: SetupModel, resources: URL) {
         self.setup = setup
         let browser = TaskBrowserModel(resources: resources)
         _activity = StateObject(wrappedValue: browser)
         _projects = StateObject(wrappedValue: ProjectSettingsModel(activity: browser))
-        _team = StateObject(wrappedValue: TeamRoomModel(activity: browser))
+        let team = TeamRoomModel(activity: browser)
+        let devices = DeviceStatusModel(activity: browser)
+        devices.onReconnect = { team.refresh(discover: true) }
+        _team = StateObject(wrappedValue: team)
+        _devices = StateObject(wrappedValue: devices)
     }
 
     var body: some View {
         TabView(selection: $section) {
             TeamRoomView(model: team, active: section == 0, navigate: { section = $0 }).tabItem { Label("Team", systemImage: "person.3") }.tag(0)
             ProjectSettingsView(model: projects).tabItem { Label("Projects", systemImage: "folder") }.tag(2)
-            DevicesView(model: team).tabItem { Label("Devices", systemImage: "laptopcomputer.and.arrow.down") }.tag(1)
+            DevicesView(model: team, devices: devices).tabItem { Label("Devices", systemImage: "laptopcomputer.and.arrow.down") }.tag(1)
             TaskBrowserView(model: activity, active: section == 4).tabItem { Label("Task history", systemImage: "clock") }.tag(4)
             ScrollView { SetupView(model: setup) }.tabItem { Label("Settings", systemImage: "gearshape") }.tag(3)
         }.font(.bridge(.body)).padding(8).frame(minWidth: 1100, minHeight: 780)
+            .toolbar { ToolbarItem(placement: .primaryAction) { DeviceToolbarStatus(model: devices) { section = 1 } } }
+            .onAppear { devices.refresh() }
+            .onReceive(deviceTimer) { _ in
+                devices.refresh()
+                if team.rediscover { team.refresh() }
+            }
     }
 }
 

@@ -154,7 +154,7 @@ struct MessageBubble: View {
                 }.font(.bridge(.caption2)).foregroundStyle(.secondary)
                 if message.recovered { Text("Recovered · earlier history may be incomplete").font(.bridge(.caption)).foregroundStyle(.orange) }
                 if message.kind == "proposal", let object = structured {
-                    if let summary = object["summary"] as? String { Text(summary).textSelection(.enabled) }
+                    if let summary = object["summary"] as? String { MarkdownText(text: summary) }
                     if let issues = object["issues"] as? [String], !issues.isEmpty {
                         ForEach(Array(issues.enumerated()), id: \.offset) { _, issue in Label(issue, systemImage: "exclamationmark.bubble").font(.bridge(.callout)).foregroundStyle(.orange).textSelection(.enabled) }
                     }
@@ -169,8 +169,8 @@ struct MessageBubble: View {
                     }
                 } else if ["verified_result", "review_required_result"].contains(message.kind), let object = structured {
                     if message.kind == "review_required_result" { Label("Proposal ready · review required", systemImage: "doc.text.magnifyingglass").font(.bridge(.headline)).foregroundStyle(.orange) }
-                    Text(object["summary"] as? String ?? "Result").textSelection(.enabled)
-                } else { Text(message.text).textSelection(.enabled) }
+                    MarkdownText(text: object["summary"] as? String ?? "Result")
+                } else { MarkdownText(text: message.text) }
             }.frame(maxWidth: 760, alignment: .leading).padding(16)
                 .background(outgoing ? Color.accentColor.opacity(0.12) : agentMessage ? Color.primary.opacity(0.045) : Color.orange.opacity(0.055))
                 .clipShape(RoundedRectangle(cornerRadius: 15))

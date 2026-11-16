@@ -61,7 +61,7 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
                 path = self.state / 'workspaces' / task_id
                 git(path.parent, 'clone', '--no-local', '--template=', str(self.repo), str(path))
                 if body['mode'] == 'work':
-                    (path / 'README.md').write_text('After\n')
+                    (path / 'README.md').write_text('After\n' * 12000)
                     git(path, 'add', '--all'); git(path, 'commit', '-m', 'Implementation')
                 self.accepted[key] = {'id': task_id, 'revision': 1, 'status': 'running' if self.pending else 'completed',
                     'result': {'summary': 'Leader plan' if body['mode'] == 'plan' else 'Follower implementation' if body['mode'] == 'work' else 'Reviewed real diff',
@@ -101,7 +101,8 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
             def fetched(state, target, task_id):
                 task = next(t for t in self.accepted.values() if t['id'] == task_id)
                 result = task['result']
-                return {'review_repository': result['worktree'], 'diff': git(Path(result['worktree']), 'diff', self.base, result['result_commit'])}
+                from aabridge_workspace.review import review_diff
+                return {'review_repository': result['worktree'], 'diff': review_diff(Path(result['worktree']), self.base, result['result_commit'])}
             with patch('aabridge_cli.actions.fetch_result', side_effect=fetched):
                 for _ in range(3):
                     await self.runner.step(room['id'])
@@ -111,6 +112,12 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([r[2] for r in submits], ['mini', 'local', 'mini'] if reverse else ['local', 'mini', 'local'])
             self.assertIn('Leader plan', submits[1][1]['context'][0])
             self.assertEqual(submits[2][1]['review_snapshot']['commit'], done['outputs']['work']['result_commit'])
+            from aabridge_workspace.review import import_snapshot
+            review_task = next(t for t in self.accepted.values() if t['id'] == 'task-2')
+            checkout = Path(review_task['result']['worktree'])
+            import_snapshot(checkout, self.base, submits[2][1]['review_snapshot'], 'codex/verified-review')
+            self.assertEqual((checkout / 'README.md').read_text(), 'After\n' * 12000)
+            self.assertIn('not a complete review', done['last_diff'])
             self.assertEqual((self.repo / 'README.md').read_text(), 'Before\n')
             replay = self.store.handle(value, 'local', load_config(self.state))
             self.assertEqual(replay['id'], room['id'])
