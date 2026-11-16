@@ -43,6 +43,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.pending = False
         self.idle_work = False  # A fix round that disputes the review and commits nothing.
         self.plans = []  # Leader plan-turn output, when a test needs a specific one.
+        self.asks = None  # A stage whose agent stops to ask the admin a question first.
         self.branch_lines = {}  # Extra output line per stage, e.g. a BRANCH_NAME: choice.
         self.runner = TeamRunner(self.state, self.store)
         self.runner.call = self.call
@@ -84,7 +85,10 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
                 if body.get('review_snapshot'):
                     from aabridge_workspace.review import import_snapshot
                     import_snapshot(path, self.base, body['review_snapshot'], 'codex/' + task_id)
-                self.turn(task, body['mode'])
+                if self.asks == body['mode']:
+                    task.update(status='waiting_question', question={'id': 'q1', 'text': 'Kilograms or pounds?'})
+                else:
+                    self.turn(task, body['mode'])
                 self.tasks[key] = task
             return self.tasks[key]
         task = next(t for t in self.tasks.values() if t['id'] == body['task_id'])
@@ -95,6 +99,12 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
                 if body.get('review_snapshot'):
                     from aabridge_workspace.review import import_snapshot
                     import_snapshot(Path(task['result']['worktree']), self.base, body['review_snapshot'], 'codex/' + task['id'])
+                self.turn(task, task['mode'])
+            return task
+        if op == 'answer':
+            if task.get('question'):
+                self.assertEqual((body['question_id'], body['revision']), (task['question']['id'], task['revision']))
+                task.update(status='completed', question=None, answer=body['text'])
                 self.turn(task, task['mode'])
             return task
         if op == 'status':
@@ -536,6 +546,40 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Leader is planning…', [m['text'] for m in shown['messages']])
         self.assertEqual(shown['earlier_messages'], 0)
         self.assertTrue(shown['stage_started'])
+
+    async def test_worker_question_is_answered_in_place_and_the_same_turn_continues(self):
+        self.asks, self.reviews = 'work', ['VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        waiting = await self.run_until(room['id'])
+        self.assertEqual((waiting['status'], waiting['stage'], waiting['gate']['kind'], waiting['gate']['reason']), ('awaiting_admin', 'work', 'question', 'Kilograms or pounds?'))
+        self.assertIn(('claude · follower', 'Kilograms or pounds?'), [(m['speaker'], m['text']) for m in waiting['messages']])
+        for decision, text in (('finish', None), ('continue', None), ('replan', 'Other plan')):
+            with self.assertRaises(BridgeError):
+                self.admin('team_decide', {'team_id': room['id'], 'decision': decision, **({'text': text} if text else {})})
+        self.admin('team_decide', {'team_id': room['id'], 'decision': 'continue', 'text': 'Kilograms.'})
+        done = await self.run_until(room['id'])
+        self.assertEqual((done['status'], done['verdict']), ('completed', 'approved'))
+        # One build task: the question did not restart it, and the answer was not also sent as a note.
+        self.assertEqual([op for op, body, _, _ in self.requests if op in {'submit', 'revise', 'answer'}], ['submit', 'submit', 'answer', 'submit'])
+        self.assertEqual(next(t for t in self.tasks.values() if t['mode'] == 'work')['answer'], 'Kilograms.')
+        self.assertEqual(done['guidance'], [])
+
+    def test_earlier_messages_can_be_paged_back(self):
+        room = self.start(approval='auto')
+        saved = get(self.store, room['id'])
+        from aabridge_core.teams import message, save
+        for number in range(200):
+            message(saved, 'AABridge', 'Note ' + str(number))
+        save(self.store, saved)
+        status = lambda **extra: self.store.handle(request('team_status', {'team_id': room['id'], **extra}), 'local', {})
+        latest = status()
+        self.assertEqual((len(latest['messages']), latest['earlier_messages'], latest['messages'][-1]['text']), (120, 82, 'Note 199'))
+        page = status(before=latest['earlier_messages'])
+        self.assertEqual((len(page['messages']), page['earlier_messages'], page['messages'][-1]['text']), (60, 22, 'Note 79'))
+        first = status(before=page['earlier_messages'])
+        self.assertEqual((len(first['messages']), first['earlier_messages'], first['messages'][0]['text']), (22, 0, 'Add a weight input screen'))
+        with self.assertRaises(BridgeError):
+            validate_request({'version': 1, 'op': 'team_status', 'key': 'k1', 'body': {'team_id': 'team-1', 'before': 0}})
 
 
 if __name__ == '__main__':

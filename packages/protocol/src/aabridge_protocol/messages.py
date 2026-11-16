@@ -198,8 +198,10 @@ def validate_request(value: object) -> Request:
         if "text" in body:
             text(body["text"], 3000)
     elif op in {"team_status", "team_cancel", "team_retry", "team_reply", "team_merge"}:
-        fields(body, {"team_id"} | ({"text"} if op == "team_reply" else set()), {"leader_settings", "follower_settings"} if op == "team_reply" else set())
+        fields(body, {"team_id"} | ({"text"} if op == "team_reply" else set()), {"leader_settings", "follower_settings"} if op == "team_reply" else {"before"} if op == "team_status" else set())
         identifier(body["team_id"])
+        if "before" in body:
+            integer(body["before"], 1, 1_000_000)
         if op == "team_reply":
             text(body["text"], 3000)
             for role in ("leader", "follower"):

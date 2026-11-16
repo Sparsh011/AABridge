@@ -99,15 +99,17 @@ def waiting_notes(room):
     return [note for note in room.get('guidance', []) if not note['delivered']]
 
 
-def public(room):
+def public(room, before=None):
+    """`before` pages back: the window ends before that many messages from the start."""
     result = {k: room[k] for k in ('id', 'objective', 'status', 'stage', 'leader', 'follower', 'error', 'updated_at')}
     shown = [m for m in room['messages'] if not (m['speaker'] == 'AABridge' and m['text'] in TRANSIENT)]
-    messages = shown[-120:]
-    while len(canonical(messages).encode()) > 90000:
+    end = len(shown) if before is None else min(before, len(shown))
+    messages = shown[max(0, end - (120 if before is None else 60)):end]
+    while len(messages) > 1 and len(canonical(messages).encode()) > 90000:
         messages.pop(0)
     result['messages'] = messages
     result['live'] = room.get('live')
-    result['earlier_messages'] = len(shown) - len(messages)
+    result['earlier_messages'] = end - len(messages)
     # A follow-up clears this round's outputs; the saved work is still the result.
     work = room.get('outputs', {}).get('work') or room.get('previous_result')
     result['result'] = ({k: work[k] for k in ('branch', 'worktree', 'result_commit', 'base_commit')} if work else None)
@@ -171,7 +173,7 @@ def handle(store, request, identity):
         more = store.db.execute('SELECT 1 FROM team_activity WHERE team_id=? AND seq>?', (room['id'], next_cursor)).fetchone() is not None
         return {'entries': entries, 'cursor': next_cursor, 'has_more': more}
     if op == 'team_status':
-        return public(room)
+        return public(room, body.get('before'))
     digest = request.digest
     if request.key in room['controls']:
         require(room['controls'][request.key] == digest, 'This send key was already used for another message.', 'replay_conflict')
@@ -195,9 +197,18 @@ def handle(store, request, identity):
         gate = room.get('gate')
         require(room['status'] == 'awaiting_admin' and gate, 'The team is not waiting for you right now.', 'invalid_state')
         decision, note = body['decision'], body.get('text')
-        if note:
+        if gate['kind'] == 'question':
+            # The agent's own turn is paused on this question. The answer resumes
+            # that turn, so the stage, its task and its key all stay as they are.
+            require(decision == 'continue' and note, 'Type your answer to the question, or stop the task.')
+            room['answer'] = {'question_id': gate['question_id'], 'task_id': gate['task_id'], 'revision': gate['revision'], 'text': note}
+            message(room, 'You · admin', note)
+            room.update(status='running', gate=None)
+        elif note:
             room.setdefault('guidance', []).append({'id': new_id('note'), 'text': note, 'time': time.time(), 'delivered': False})
-        if decision == 'replan':
+        if gate['kind'] == 'question':
+            pass
+        elif decision == 'replan':
             require(note, 'Tell the leader what to change in the plan.')
             room['stage'] = 'plan'
             message(room, 'You · admin', 'Change the plan: ' + note)
@@ -685,6 +696,13 @@ class TeamRunner:
                 room['stage_tasks'].append({'target': target, 'task_id': task['id'], 'stage': stage})
                 room['stage_started'] = time.time()  # The chat shows who is working from this, not from a saved message.
                 save_runtime(self.store, room)
+            if room.get('answer'):
+                reply = room['answer']
+                await self.call('answer', {'task_id': reply['task_id'], 'revision': reply['revision'], 'question_id': reply['question_id'], 'text': reply['text'],
+                                           'origin': {'kind': 'human', 'name': 'You'}}, target, room['id'] + '-answer-' + reply['question_id'])
+                room = get(self.store, room_id)
+                room.pop('answer', None)
+                save_runtime(self.store, room)
             task = await self.call('status', {'task_id': room['task_id']}, target)
             room = get(self.store, room_id)
             await self.relay_activity(room, task, member)
@@ -696,6 +714,14 @@ class TeamRunner:
                     return
                 room['status'] = 'cancelled'
                 message(room, 'AABridge', 'Stopped. Partial work is preserved in the task branch.')
+            elif task['status'] == 'waiting_question' and (task.get('question') or {}).get('id'):
+                # Ask the admin here. The agent keeps its turn and resumes with the answer.
+                question = task['question']
+                role = 'follower' if stage == 'work' else 'leader'
+                message(room, member['agent'] + ' · ' + role, question.get('text') or 'The agent asked a question without any text.')
+                room.update(status='awaiting_admin', gate={'kind': 'question', 'cause': 'question', 'reason': question.get('text') or '',
+                                                           'question_id': question['id'], 'task_id': task['id'], 'revision': task['revision']})
+                message(room, 'AABridge', f'The {"worker" if stage == "work" else "leader"} is waiting for your answer. Type it below and press Send answer; it then carries on from where it stopped.')
             elif task['status'] in {'failed', 'cancelled', 'interrupted', 'waiting_question'}:
                 failure = self.explain(room, member, stage, task)
                 # A retry must start a new task: replaying the stage key would
