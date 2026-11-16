@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
+import os
+import threading
 import socket
 import ssl
 import subprocess
@@ -13,7 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from runtime_fixture import select_fake_codex
-from aabridge_cli.actions import demo_init, device_status, fetch_result, request, send
+from aabridge_cli.actions import demo_init, device_status, fetch_result, request, send, start_daemon
 from aabridge_core.config import authenticate, initialize, load_config, read_private, save_config
 from aabridge_core.direct import CERTIFICATE, PRIVATE_KEY, certificate_fingerprint, identity
 from aabridge_core.pairing import card, connect
@@ -323,6 +326,24 @@ class DirectCardDaemonTests(unittest.TestCase):
                 self.assertEqual(load_config(state), before)
             finally:
                 send(state, request('shutdown', {}))
+
+    def test_start_waits_for_a_stopping_supervisor_to_release_its_lock(self):
+        # A stopping supervisor stops answering before it releases the state lock.
+        with tempfile.TemporaryDirectory(dir='/private/tmp', prefix='aab-direct-lock-') as temporary:
+            state = Path(temporary).resolve() / 'state'
+            initialize(state)
+            descriptor = os.open(state / 'daemon.lock', os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            release = threading.Timer(.5, lambda: os.close(descriptor))
+            release.start()
+            try:
+                self.assertTrue(start_daemon(state)['started'])
+            finally:
+                release.join()
+                try:
+                    send(state, request('shutdown', {}))
+                except BridgeError:
+                    pass
 
     def test_card_starts_app_listener_without_system_ssh(self):
         with tempfile.TemporaryDirectory(dir='/private/tmp', prefix='aab-direct-daemon-') as temporary:
