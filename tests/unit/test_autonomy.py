@@ -617,6 +617,37 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         review = next(t for t in self.tasks.values() if t['mode'] == 'review')
         self.assertTrue((Path(review['result']['worktree']) / 'asset-2.bin').is_file())
 
+    async def test_unfinished_work_is_visible_on_a_live_branch_without_touching_the_worker(self):
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto', placement={'mode': 'branch'})
+        for _ in range(10):
+            await self.runner.step(room['id'])
+            if get(self.store, room['id'])['stage'] == 'work':
+                break
+        self.pending = True  # The worker's turn is still running.
+        await self.runner.step(room['id'])
+        work = next(t for t in self.tasks.values() if t['mode'] == 'work')
+        path = Path(work['result']['worktree'])
+        (path / 'half-done.txt').write_text('not committed yet')
+        before = (git(path, 'rev-parse', 'HEAD'), git(path, 'status', '--porcelain'), git(path, 'diff', '--cached', '--name-only'))
+        saved = get(self.store, room['id']); saved['preview_checked'] = 0
+        from aabridge_core.teams import save
+        save(self.store, saved)
+        await self.runner.step(room['id'])
+        shown = self.store.handle(request('team_status', {'team_id': room['id']}), 'local', {})['preview']
+        self.assertEqual(shown['branch'], 'aabridge-live/' + room['id'][-6:])
+        self.assertEqual(git(self.repo, 'show', shown['branch'] + ':half-done.txt'), 'not committed yet')
+        self.assertEqual(git(self.repo, 'branch', '--show-current'), 'main')
+        # The worker's own checkout, index and branch are exactly as it left them.
+        self.assertEqual((git(path, 'rev-parse', 'HEAD'), git(path, 'status', '--porcelain'), git(path, 'diff', '--cached', '--name-only')), before)
+        (path / 'half-done.txt').unlink()
+        work['status'] = 'completed'; self.pending = False
+        done = await self.run_until(room['id'])
+        self.assertEqual(done['status'], 'completed')
+        self.assertNotIn('preview', done)
+        self.assertNotIn('aabridge-live/', git(self.repo, 'branch', '--list'))
+        self.assertTrue(done['publication']['branch'].startswith('claude/'))
+
 
 if __name__ == '__main__':
     unittest.main()

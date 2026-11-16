@@ -127,6 +127,47 @@ def place(repo: Path, source: Path, commit: str, mode: str, branch: str, worktre
     return {"mode": mode, "branch": branch, "path": str(path if mode == "worktree" else repo), "commit": commit}
 
 
+LIVE = "aabridge-live/"
+
+
+def live_preview(repo: Path, source: Path, base: str, name: str) -> dict:
+    """Show a build in progress: point `aabridge-live/<name>` at a snapshot of the worker's files.
+
+    The worker commits only when its turn ends. This writes the snapshot through
+    a separate index, so the worker's checkout, index and branch are untouched.
+    The live branch is AABridge's own and is replaced on every refresh.
+    """
+    import tempfile
+    require(source.is_dir() and (source / ".git").is_dir() and not (source / ".git").is_symlink(), "The worker’s copy is not available on this Mac.", "publish_blocked")
+    head = git(source, "rev-parse", "HEAD")
+    with tempfile.TemporaryDirectory(prefix="aabridge-live-") as folder:
+        environment = {"PATH": "/usr/bin:/bin", "HOME": str(source), "LANG": "C.UTF-8", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+                       "GIT_CONFIG_COUNT": "0", "GIT_ATTR_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_INDEX_FILE": str(Path(folder) / "index")}
+
+        def staged(*arguments: str) -> str:
+            process = subprocess.run(["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-C", str(source), *arguments],
+                                     env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            require(process.returncode == 0, "Could not snapshot the work in progress.", "git_failed")
+            return process.stdout.decode(errors="replace").strip()
+        staged("read-tree", head)
+        staged("add", "--all")
+        tree = staged("write-tree")
+    commit = head if tree == git(source, "rev-parse", head + "^{tree}") else git(
+        source, "commit-tree", tree, "-p", head, "-m", "AABridge live preview: work in progress, not the final commit")
+    git(source, "update-ref", "refs/aabridge/live", commit)
+    branch = LIVE + name
+    require(branch not in _worktrees(repo), f"`{branch}` is checked out in your project, so it can’t be refreshed. Switch to another branch to keep following the build.", "publish_blocked")
+    git(repo, "fetch", "--quiet", "--no-tags", "--force", str(source), "+refs/aabridge/live:refs/heads/" + branch)
+    return {"branch": branch, "commit": commit, "files": len(git(source, "diff", "--name-only", base, commit).splitlines())}
+
+
+def drop_preview(repo: Path, name: str) -> None:
+    """Remove the live branch once the real branch has the finished build."""
+    branch = LIVE + name
+    if _ref(repo, branch) is not None and branch not in _worktrees(repo):
+        git(repo, "update-ref", "-d", "refs/heads/" + branch)
+
+
 def free_branch(repo: Path, branch: str) -> str:
     """A new placement never adopts a branch somebody else already made."""
     candidate, number = branch, 2

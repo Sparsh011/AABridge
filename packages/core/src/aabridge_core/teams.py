@@ -113,7 +113,7 @@ def public(room, before=None):
     # A follow-up clears this round's outputs; the saved work is still the result.
     work = room.get('outputs', {}).get('work') or room.get('previous_result')
     result['result'] = ({k: work[k] for k in ('branch', 'worktree', 'result_commit', 'base_commit')} if work else None)
-    for key in ('approval', 'placement', 'gate', 'publication', 'verdict', 'fixes', 'max_fixes', 'failure', 'answered', 'stage_started'):
+    for key in ('approval', 'placement', 'gate', 'publication', 'verdict', 'fixes', 'max_fixes', 'failure', 'answered', 'stage_started', 'preview'):
         result[key] = room.get(key)
     result['title'] = shown_title(room)
     result['notes_waiting'] = len(waiting_notes(room))
@@ -445,6 +445,20 @@ class TeamRunner:
             await self.call('snapshot_part', {'project_id': upload['project'], 'upload': upload['upload'], 'index': index,
                                               'data': base64.b64encode(raw[index * PART:(index + 1) * PART]).decode('ascii')}, target)
 
+    async def mirror(self, room, task):
+        """While a worker on this Mac builds, keep a live branch of its unfinished files in the admin's project."""
+        if time.time() - room.get('preview_checked', 0) < 20:
+            return
+        room['preview_checked'] = time.time()
+        from aabridge_workspace import publish as delivery
+        try:
+            found = await asyncio.to_thread(delivery.live_preview, self.repository(room), self.state / 'workspaces' / task['id'],
+                                            room['follower_project']['base_commit'], room['id'][-6:])
+            room['preview'] = {**found, 'time': time.time()}
+        except Exception as exc:
+            # Observational, like the activity feed: it never fails the build.
+            room['preview'] = {'error': getattr(exc, 'message', 'Could not refresh the live branch.'), 'time': time.time()}
+
     def repository(self, room):
         from aabridge_core.config import load_config
         local = next(room[role] for role in ('follower', 'leader') if room[role]['target'] == 'local')
@@ -734,6 +748,8 @@ class TeamRunner:
             task = await self.call('status', {'task_id': room['task_id']}, target)
             room = get(self.store, room_id)
             await self.relay_activity(room, task, member)
+            if stage == 'work' and target == 'local' and task['status'] == 'running' and room.get('placement', {}).get('mode', 'sandbox') != 'sandbox':
+                await self.mirror(room, task)
             if get(self.store, room_id)['status'] == 'stopping':
                 room['status'] = 'stopping'
             if room['status'] == 'stopping':
@@ -795,6 +811,13 @@ class TeamRunner:
                     room['last_diff'] = room['diff']
                     if room.get('placement', {}).get('mode', 'sandbox') != 'sandbox':
                         await self.deliver(room, task)
+                    if room.pop('preview', None):
+                        # The finished build is on the real branch (or saved in AABridge); the live one is done.
+                        from aabridge_workspace.publish import drop_preview
+                        try:
+                            await asyncio.to_thread(drop_preview, self.repository(room), room['id'][-6:])
+                        except Exception:
+                            pass
                 elif stage == 'review':
                     from aabridge_workspace.publish import comment
                     room.setdefault('publication', {}).pop('review_errors', None)
