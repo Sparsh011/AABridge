@@ -464,10 +464,6 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('over its direct connection', error)
         self.assertNotIn('Remote Login', error)
 
-
-if __name__ == '__main__':
-    unittest.main()
-
     async def test_review_disagreement_reaches_the_admin_without_spending_the_fix_rounds(self):
         self.assertEqual(verdict('Open question: metric or imperial.\nVERDICT: NEEDS_ADMIN'), 'admin')
         # The worker disputes the review and changes nothing; the leader repeats itself.
@@ -541,3 +537,6 @@ if __name__ == '__main__':
         self.assertEqual(shown['earlier_messages'], 0)
         self.assertTrue(shown['stage_started'])
 
+
+if __name__ == '__main__':
+    unittest.main()

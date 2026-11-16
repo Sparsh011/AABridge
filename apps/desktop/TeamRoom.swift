@@ -8,7 +8,7 @@ struct TeamEntry: Decodable, Identifiable {
 }
 struct TeamResult: Decodable { let branch: String; let worktree: String; let result_commit: String; let base_commit: String }
 struct TeamPlacement: Codable { var mode: String; var pull_request: Bool? = nil }
-struct TeamGate: Decodable { let kind: String; let reason: String }
+struct TeamGate: Decodable { let kind: String; let reason: String; var cause: String? = nil }
 /// Why a stage stopped, and the one thing to do about it.
 struct TeamFailure: Decodable { let problem: String; let fix: String; let machine: String; let project: String; let retry: Bool }
 struct TeamPublication: Decodable {
@@ -36,6 +36,14 @@ struct TeamRoom: Decodable, Identifiable {
     var publication: TeamPublication? = nil; var verdict: String? = nil
     var fixes: Int? = nil; var max_fixes: Int? = nil; var notes_waiting: Int? = nil
     var failure: TeamFailure? = nil
+    var title: String? = nil; var answered: Bool? = nil; var earlier_messages: Int? = nil; var stage_started: Double? = nil
+    /// The task keeps its first name; a follow-up message does not rename it.
+    var displayTitle: String { title?.isEmpty == false ? title! : objective }
+    var running: Bool { ["running", "stopping"].contains(status) }
+    /// Finished, but the leader's last review did not approve the work.
+    var unapproved: Bool { status == "completed" && approval != nil && verdict != "approved" && !(answered == true && verdict == nil) }
+    /// The leader answered a question and no code was written in this task.
+    var onlyAnswered: Bool { status == "completed" && answered == true && verdict == nil }
 }
 struct TeamChoice: Identifiable {
     let id: String; let label: String; let member: TeamMember

@@ -59,6 +59,7 @@ struct TeamLiveState: Decodable {
     let role: String; let agent: String; let target: String; let stage: String
     let status: String; let checked_at: Double; let supported: Bool
     let activity: WorkerActivity?; let stream_error: String?; let model_settings: AgentModelSettings?
+    var started_at: Double? = nil
 }
 struct LiveActivityEntry: Decodable, Identifiable {
     let id: String; let cursor: Int; let role: String; let agent: String; let target: String
@@ -66,69 +67,109 @@ struct LiveActivityEntry: Decodable, Identifiable {
 }
 struct LiveActivityPage: Decodable { let entries: [LiveActivityEntry]; let cursor: Int; let has_more: Bool }
 
+func stageVerb(_ stage: String) -> String { stage == "plan" ? "Planning" : stage == "work" ? "Building" : "Reviewing" }
+
+/// "42s", "3m 05s", "1h 12m": how long an agent has been on its current step.
+func elapsedText(_ seconds: Int) -> String {
+    let value = max(0, seconds)
+    if value < 60 { return "\(value)s" }
+    if value < 3600 { return "\(value / 60)m \(String(format: "%02d", value % 60))s" }
+    return "\(value / 3600)h \(String(format: "%02d", value % 3600 / 60))m"
+}
+
+/// Pinned above the composer, so who is working and what it is doing stays on
+/// screen however far the chat is scrolled. The log stays readable afterwards.
 struct LiveActivityView: View {
     @ObservedObject var model: TeamRoomModel
+    @AppStorage("teamActivityOpen") private var openWhileWorking = true
+    @State private var openLog = false
     @State private var follow = true
-    @State private var expanded = true
     private var live: TeamLiveState? { model.room?.live }
     private var active: Bool { ["running", "stopping"].contains(model.room?.status ?? "") }
+    private var expanded: Bool { active ? openWhileWorking : openLog }
+
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 10) {
-                if let live = live {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        let last = model.liveEntries.last?.time ?? live.activity?.time ?? live.checked_at
-                        let age = max(0, Int(context.date.timeIntervalSince1970 - last))
-                        HStack(alignment: .top) {
-                            if active { ProgressView().controlSize(.small) }
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("\(live.role == "follower" ? "Worker" : "Leader") · \(live.agent == "claude" ? "Claude" : "Codex") · \(model.deviceLabel(live.target))")
-                                    .font(.bridge(.headline))
-                                Text(live.activity?.message ?? (live.status == "queued" ? "Waiting for the agent to become available" : live.status.capitalized))
-                                if active { Text("Last agent update \(age)s ago · service checked \(max(0, Int(context.date.timeIntervalSince1970 - live.checked_at)))s ago").font(.bridge(.caption)).foregroundStyle(.secondary) }
-                            }
-                            Spacer()
+        VStack(alignment: .leading, spacing: 0) {
+            Button { if active { openWhileWorking.toggle() } else { openLog.toggle() } } label: { summary }.buttonStyle(.plain)
+            if expanded {
+                if let live = live, active {
+                    if !live.supported { Text("This Mac needs the live-activity update to show each action. Finish its active tasks before updating it.").font(.bridge(.caption)).foregroundStyle(.orange).padding(.top, 6) }
+                    if let error = live.stream_error { Text(error).font(.bridge(.caption)).foregroundStyle(.orange).padding(.top, 6) }
+                }
+                if !model.liveNotice.isEmpty { Text(model.liveNotice).font(.bridge(.caption)).foregroundStyle(.orange).padding(.top, 6) }
+                feed.padding(.top, 10)
+            }
+        }.padding(.horizontal, 24).padding(.vertical, 10).background(active ? Color.accentColor.opacity(0.06) : Color.primary.opacity(0.025))
+    }
+
+    private var summary: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let now = context.date.timeIntervalSince1970
+            HStack(spacing: 10) {
+                if active { ProgressView().controlSize(.small) } else { Image(systemName: "list.bullet.rectangle").foregroundStyle(.secondary) }
+                if active, let live = live {
+                    Text("\(agentName(live.agent)) · \(live.role == "follower" ? "Worker" : "Leader") · \(model.deviceLabel(live.target))").font(.bridge(.callout).bold())
+                    Text(current(live)).font(.bridge(.callout)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 8)
+                    let last = model.liveEntries.last?.time ?? live.activity?.time ?? live.checked_at
+                    let quiet = Int(now - last)
+                    if let started = live.started_at { Text(stageVerb(live.stage) + " for " + elapsedText(Int(now - started))).font(.bridge(.caption)).foregroundStyle(.secondary) }
+                    Text(quiet < 5 ? "live" : "quiet for " + elapsedText(quiet)).font(.bridge(.caption).bold()).foregroundStyle(quiet > 120 ? Color.orange : Color.green)
+                        .help("Time since the agent last reported an action. Long quiet periods are normal while a model is thinking or a command runs.")
+                } else if active {
+                    Text("Starting the agent…").font(.bridge(.callout))
+                    Spacer(minLength: 8)
+                } else {
+                    Text("Activity log").font(.bridge(.callout).bold())
+                    Text("\(model.liveEntries.count) action\(model.liveEntries.count == 1 ? "" : "s") from this task").font(.bridge(.callout)).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                }
+                Image(systemName: expanded ? "chevron.down" : "chevron.up").font(.bridge(.caption)).foregroundStyle(.secondary)
+            }.contentShape(Rectangle())
+        }
+    }
+
+    /// The newest thing the agent reported, in one line.
+    private func current(_ live: TeamLiveState) -> String {
+        if let entry = model.liveEntries.last(where: { $0.kind != "message" && $0.stage == live.stage && $0.role == live.role }) { return entry.text }
+        return live.activity?.message ?? (live.status == "queued" ? "Waiting for the agent to become available" : stageVerb(live.stage) + "…")
+    }
+
+    private var feed: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Each action the agents report: commands, file edits and progress notes. Private reasoning is never shown.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                Spacer()
+                if active { Toggle("Follow live", isOn: $follow).toggleStyle(.switch).controlSize(.small) }
+            }
+            ScrollViewReader { reader in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(model.liveEntries) { entry in
+                            HStack(alignment: .top, spacing: 9) {
+                                Image(systemName: entry.kind == "file" ? "doc.text" : entry.kind == "tool" ? "terminal" : entry.kind == "message" ? "bubble.left" : "circle.dotted")
+                                    .foregroundStyle(entry.state == "failed" ? Color.orange : entry.role == "follower" ? Color.teal : Color.purple).frame(width: 18)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Group {
+                                        if entry.kind == "message" { MarkdownText(text: entry.text) } else { Text(entry.text).textSelection(.enabled) }
+                                    }.font(.bridge(.callout)).frame(maxWidth: .infinity, alignment: .leading)
+                                    HStack(spacing: 4) {
+                                        Text("\(agentName(entry.agent)) · \(entry.role == "follower" ? "Worker" : "Leader") · \(stageVerb(entry.stage))")
+                                        Text("·")
+                                        Text(Date(timeIntervalSince1970: entry.time), style: .time)
+                                    }.font(.bridge(.caption)).foregroundStyle(.secondary)
+                                }
+                            }.padding(.vertical, 5).padding(.horizontal, 8).background(Color.primary.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius: 8)).id(entry.id)
+                        }
+                        if model.liveEntries.isEmpty {
+                            Text(active ? "Waiting for the agent’s first action. A model can think for a minute or more before it reports one." : "This task has no recorded actions.")
+                                .font(.bridge(.callout)).foregroundStyle(.secondary).padding(8)
                         }
                     }
-                    if !live.supported {
-                        Text("This participant needs the live-activity update. Finish its active tasks before updating that Mac.").foregroundStyle(.orange)
-                    }
-                    if let error = live.stream_error { Text(error).foregroundStyle(.orange) }
-                }
-                if !model.liveNotice.isEmpty { Text(model.liveNotice).foregroundStyle(.orange) }
-                HStack {
-                    Text("Actions and progress messages").font(.bridge(.caption)).foregroundStyle(.secondary)
-                    Spacer()
-                    Toggle("Follow live", isOn: $follow).toggleStyle(.switch).controlSize(.small)
-                }
-                ScrollViewReader { reader in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10) {
-                            ForEach(model.liveEntries) { entry in
-                                HStack(alignment: .top, spacing: 9) {
-                                    Image(systemName: entry.kind == "file" ? "doc.text" : entry.kind == "tool" ? "terminal" : entry.kind == "message" ? "bubble.left" : "circle.dotted")
-                                        .foregroundStyle(entry.state == "failed" ? Color.orange : Color.accentColor)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        HStack {
-                                            Text("\(entry.role == "follower" ? "Worker" : "Leader") · \(entry.agent == "claude" ? "Claude" : "Codex") · \(entry.stage == "plan" ? "Planning" : entry.stage == "work" ? "Building" : "Reviewing")")
-                                            Spacer()
-                                            Text(Date(timeIntervalSince1970: entry.time), style: .time)
-                                        }.font(.bridge(.caption)).foregroundStyle(.secondary)
-                                        Group {
-                                            if entry.kind == "message" { MarkdownText(text: entry.text) } else { Text(entry.text).textSelection(.enabled) }
-                                        }.frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                }.padding(9).background(Color.primary.opacity(0.025)).clipShape(RoundedRectangle(cornerRadius: 8)).id(entry.id)
-                            }
-                            if model.liveEntries.isEmpty { Text(active ? "Waiting for the agent’s first update…" : "Activity will appear here when a task starts.").foregroundStyle(.secondary).padding(12) }
-                        }
-                    }.frame(height: 190)
-                        .onAppear { if follow, let id = model.liveEntries.last?.id { reader.scrollTo(id, anchor: .bottom) } }
-                        .onChange(of: model.liveEntries.last?.cursor) { _ in if follow, let id = model.liveEntries.last?.id { reader.scrollTo(id, anchor: .bottom) } }
-                }
-            }.padding(.top, 12)
-        } label: {
-            Label("Live activity", systemImage: "waveform.path").font(.bridge(.headline))
-        }.padding(16).background(Color.accentColor.opacity(0.045)).clipShape(RoundedRectangle(cornerRadius: 12))
+                }.frame(height: 170)
+                    .onAppear { if let id = model.liveEntries.last?.id { reader.scrollTo(id, anchor: .bottom) } }
+                    .onChange(of: model.liveEntries.last?.cursor) { _ in if follow || !active, let id = model.liveEntries.last?.id { reader.scrollTo(id, anchor: .bottom) } }
+            }
+        }
     }
 }
