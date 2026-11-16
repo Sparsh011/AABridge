@@ -253,9 +253,13 @@ def device_status(state: Path) -> dict:
     """Keep this Mac's saved bridge running and report which paired Macs answer."""
     if not (state / "config.json").exists():
         return {"service": False, "listening": False, "service_error": "Set up this Mac in Settings first.", "devices": []}
-    status = {"service": True, "listening": False, "service_error": None}
+    from aabridge_core.config import release
+    # The app reads its bundled wheel; the service runs what was installed and
+    # keeps it until restarted. Reporting both makes a stale service visible.
+    status = {"service": True, "listening": False, "service_error": None, "app_release": release(), "service_release": None}
     try:
         start_daemon(state)
+        status["service_release"] = send(state, request("ping", {}), None).get("release", "older")
     except BridgeError as exc:
         status.update(service=False, service_error=exc.message)
     config = load_config(state)
@@ -269,7 +273,7 @@ def device_status(state: Path) -> dict:
         # Legacy SSH would open a login shell on every poll; it is checked when used.
         if remote.get("transport") == "tls":
             try:
-                send(state, request("ping", {}), name)
+                device["release"] = send(state, request("ping", {}), name).get("release", "older")
                 device["online"] = True
             except BridgeError:
                 device["online"] = False

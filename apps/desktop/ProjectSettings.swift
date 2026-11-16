@@ -137,6 +137,18 @@ struct ProjectSettingsView: View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
             Text("Add your project").font(.bridge(.title).bold())
             Text("Choose the folder this Mac will work on and the agent it will use. Add the same project on your other Mac, using the same committed version.").foregroundStyle(.secondary)
+            if model.projects.count < 2 {
+                Card(tint: .accentColor) {
+                    Label(model.projects.isEmpty ? "No projects yet" : "One more to make a team", systemImage: "folder.badge.plus").font(.bridge(.headline))
+                    Text(model.projects.isEmpty ? "A project tells AABridge which Git folder an agent may work on. A team needs two: one for the leader’s agent and one for the worker’s."
+                         : "You have one project. A team needs a second agent: add the same folder again with the other agent, or add it on a paired Mac.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("1.  Choose your Git folder below and pick Codex or Claude, then Save.")
+                        Text("2.  Choose “Add a new project”, pick the same folder with the other agent, and Save again.")
+                        Text("3.  Open Team and start a task. Both entries then appear as leader and worker choices.")
+                    }.font(.bridge(.callout)).foregroundStyle(.secondary)
+                }
+            }
             HStack {
                 Picker("Project", selection: $model.selected) {
                     Text("Add a new project").tag("")

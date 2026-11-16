@@ -1,3 +1,4 @@
+import ServiceManagement
 import AppKit
 import Foundation
 import SwiftUI
@@ -271,6 +272,8 @@ struct SetupView: View {
             Text("Set up this Mac installs the bundled bridge for \(model.workerName). Pair your Macs in Devices, then choose the projects they can use. Existing repositories, keys, and provider credentials are preserved.")
                 .font(.bridge(.caption)).foregroundStyle(.secondary)
             Divider()
+            LoginItemToggle()
+            Divider()
             VStack(alignment: .leading, spacing: 5) {
                 Text("Connect directly in Devices").font(.bridge(.headline))
                 Text("Exchange connection cards to use AABridge’s encrypted app connection. Keep both Macs reachable on the same network or a VPN.")
@@ -293,6 +296,28 @@ struct SetupView: View {
             Text("Use Tasks & conversations to browse saved messages, supplied context and task events. Viewing does not start a model turn.")
                 .font(.bridge(.caption)).foregroundStyle(.secondary)
         }.padding(28).frame(minWidth: 820, idealWidth: 880, minHeight: 700)
+    }
+}
+
+/// Opens AABridge when you log in, so paired Macs reconnect after a restart without anyone opening the app.
+struct LoginItemToggle: View {
+    @State private var enabled = SMAppService.mainApp.status == .enabled
+    @State private var problem = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Toggle("Open AABridge when I log in", isOn: Binding(get: { enabled }, set: { wanted in
+                do {
+                    if wanted { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                    problem = ""
+                } catch {
+                    problem = "macOS didn’t accept the change: \(error.localizedDescription) Move AABridge to the Applications folder and try again, or add it yourself in System Settings → General → Login Items."
+                }
+                enabled = SMAppService.mainApp.status == .enabled
+            }))
+            Text("Keeps this Mac’s bridge running after a restart, so your other Macs can reach it and running teams can continue.")
+                .font(.bridge(.caption)).foregroundStyle(.secondary)
+            if !problem.isEmpty { Text(problem).font(.bridge(.caption)).foregroundStyle(.orange).textSelection(.enabled) }
+        }
     }
 }
 
@@ -323,6 +348,7 @@ struct AABridgeDesktop: App {
             room.live = TeamLiveState(role: "follower", agent: "claude", target: "mini", stage: "work", status: "running", checked_at: now, supported: true,
                                       activity: WorkerActivity(phase: "tool", message: "Running a project command", time: now - 2), stream_error: nil, model_settings: follower.model_settings)
             room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true); room.fixes = 1; room.max_fixes = 3; room.notes_waiting = 1
+            room.preview = TeamPreview(branch: "aabridge-live/3f9c2a", files: 4, time: now - 6)
             team.room = room; team.rooms = [room]; team.selected = room.id
             team.liveEntries = [LiveActivityEntry(id: "1", cursor: 1, role: "leader", agent: "codex", target: "local", stage: "plan", kind: "message", text: "Checking the existing booking flow before writing the plan.", state: "completed", time: now - 25),
                                 LiveActivityEntry(id: "2", cursor: 2, role: "follower", agent: "claude", target: "mini", stage: "work", kind: "status", text: "Selected model: opus · effort: medium", state: "completed", time: now - 15),
@@ -389,11 +415,23 @@ struct AABridgeDesktop: App {
             }
             exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--preview-devices"), CommandLine.arguments.count > index + 1 {
+            let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
+            let devices = DeviceStatusModel(activity: activity)
+            devices.report = DeviceReport(service: true, listening: true, service_error: nil, devices: [])
+            exit(renderOwnView(DevicesView(model: TeamRoomModel(activity: activity), devices: devices), output: CommandLine.arguments[index + 1]) ? 0 : 1)
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-connections"), CommandLine.arguments.count > index + 1 {
             let devices = DeviceStatusModel(activity: TaskBrowserModel(resources: Bundle.main.resourceURL!))
             devices.report = DeviceReport(service: true, listening: true, service_error: nil,
                                           devices: [PairedDevice(id: "mbp", label: "Sparsh’s MBP", host: "Sparsh-MBP.local", online: true),
                                                     PairedDevice(id: "mini", label: "Mac mini", host: "Mac-mini.local", online: false)])
+            if CommandLine.arguments.contains("--outdated") {
+                devices.report = DeviceReport(service: true, listening: true, service_error: nil,
+                                              devices: [PairedDevice(id: "mbp", label: "Sparsh’s MBP", host: "Sparsh-MBP.local", online: true, release: "older"),
+                                                        PairedDevice(id: "mini", label: "Mac mini", host: "Mac-mini.local", online: true, release: "0.3.0.dev6")],
+                                              app_release: "0.3.0.dev6", service_release: "0.3.0.dev5")
+            }
             let sample = "## Plan\n\nAdd **WeightEntryScreen** with `validate()` and a [guide](https://example.com). Unsafe [link](file:///etc/hosts) stays plain.\n\n1. Save to the store\n2. Show entries\n   - last *seven*\n\n- [x] Tests\n- [ ] Docs\n\n> Keep main untouched.\n\n```swift\nlet weight = 72.5\n```\n\n| File | Change |\n|---|---|\n| `App.swift` | **new** |\n\n---\nVERDICT line stays text."
             let panel = VStack(alignment: .leading, spacing: 18) {
                 DeviceToolbarStatus(model: devices) {}

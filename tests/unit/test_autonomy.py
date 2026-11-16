@@ -44,6 +44,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.idle_work = False  # A fix round that disputes the review and commits nothing.
         self.plans = []  # Leader plan-turn output, when a test needs a specific one.
         self.asks = None  # A stage whose agent stops to ask the admin a question first.
+        self.parts, self.uploaded, self.big = {}, [], False  # Review bundles sent in parts; whether the worker writes a large file.
         self.branch_lines = {}  # Extra output line per stage, e.g. a BRANCH_NAME: choice.
         self.runner = TeamRunner(self.state, self.store)
         self.runner.call = self.call
@@ -59,6 +60,9 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
 
     def turn(self, task, mode):
         path = Path(task['result']['worktree'])
+        if mode == 'work' and self.big:
+            import os
+            (path / f'asset-{task["revision"]}.bin').write_bytes(os.urandom(130_000))
         if mode == 'work' and not self.idle_work:
             (path / f'change-{task["revision"]}.txt').write_text('work')
             git(path, 'add', '--all'); git(path, 'commit', '-m', 'Work ' + str(task['revision']))
@@ -74,6 +78,20 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.requests.append((op, body, target, key))
         if op == 'projects':
             return {'app': {**self.project, 'adapter': 'codex' if target == 'mini' else 'claude', 'worker': 'codex' if target == 'mini' else 'claude'}}
+        if op == 'snapshot_part':
+            import base64
+            self.parts.setdefault(body['upload'], {})[body['index']] = base64.b64decode(body['data'])
+            return {}
+        if op in {'submit', 'revise'} and (body.get('review_snapshot') or {}).get('upload'):
+            # Stand in for the receiving service: assemble the parts into the bundle the review imports.
+            import base64, hashlib
+            snapshot = body['review_snapshot']
+            raw = b''.join(self.parts[snapshot['upload']][index] for index in range(snapshot['parts']))
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), snapshot['sha256'])
+            self.uploaded.append(len(raw))
+            (self.state / 'snapshots').mkdir(exist_ok=True)
+            (self.state / 'snapshots' / (snapshot['sha256'] + '.bundle')).write_bytes(raw)
+            body = {**body, 'review_snapshot': {'commit': snapshot['commit'], 'bundle': '', 'file': snapshot['sha256']}}
         if op == 'submit':
             if key not in self.tasks:
                 task_id = 'task-' + str(len(self.tasks))
@@ -271,7 +289,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
             calls.append(('pr', branch, existing))
             return {'url': 'https://github.com/o/r/pull/7', 'base': 'main'}
         with patch('aabridge_workspace.publish.pull_request', side_effect=opened), \
-             patch('aabridge_workspace.publish.comment', side_effect=lambda *a: calls.append(('comment',))), \
+             patch('aabridge_workspace.publish.review', side_effect=lambda *a: calls.append(('comment',))), \
              patch('aabridge_workspace.publish.merge', side_effect=lambda *a: calls.append(('merge',))) as merge:
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
@@ -322,7 +340,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
     async def test_review_post_failure_is_visible_in_chat_and_saved_state(self):
         self.reviews = ['VERDICT: APPROVED']
         with patch('aabridge_workspace.publish.pull_request', return_value={'url': 'https://github.com/o/r/pull/7'}), \
-             patch('aabridge_workspace.publish.comment', side_effect=BridgeError('publish_failed', 'GitHub rejected the comment')):
+             patch('aabridge_workspace.publish.review', side_effect=BridgeError('publish_failed', 'GitHub rejected the comment')):
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
         self.assertIn('GitHub rejected the comment', done['publication']['review_errors']['https://github.com/o/r/pull/7'])
@@ -407,7 +425,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         def pull(repo, branch, title, body, existing=None):
             opened.append((Path(repo).name, existing))
             return {'url': 'https://github.com/o/' + Path(repo).name + '/pull/1', 'base': 'main'}
-        with patch('aabridge_workspace.publish.pull_request', side_effect=pull), patch('aabridge_workspace.publish.comment'), \
+        with patch('aabridge_workspace.publish.pull_request', side_effect=pull), patch('aabridge_workspace.publish.review', return_value='review'), \
              patch('aabridge_workspace.publish.merge', side_effect=lambda repo, url, commit: merged.append(url)):
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
@@ -580,6 +598,84 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((len(first['messages']), first['earlier_messages'], first['messages'][0]['text']), (22, 0, 'Add a weight input screen'))
         with self.assertRaises(BridgeError):
             validate_request({'version': 1, 'op': 'team_status', 'key': 'k1', 'body': {'team_id': 'team-1', 'before': 0}})
+
+    async def test_large_change_is_sent_to_the_leader_in_parts_and_reviewed(self):
+        self.big, self.reviews = True, ['1. Fix it\nVERDICT: CHANGES_REQUESTED', 'VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        blocked = await self.run_until(room['id'])  # An older leader cannot take the upload.
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertIn('Update AABridge on the leader Mac', blocked['error'])
+        self.assertEqual([mode for _, mode in self.stages()], ['plan', 'work'])
+        self.project['capabilities']['review_snapshot_parts'] = True
+        self.admin('team_retry', {'team_id': room['id']})
+        done = await self.run_until(room['id'])
+        self.assertEqual((done['status'], done['verdict']), ('completed', 'approved'))
+        self.assertEqual(len(self.uploaded), 2)  # First review, then the re-review of the fix.
+        self.assertTrue(all(size > 60000 for size in self.uploaded))
+        self.assertEqual(list((self.state / 'outbox').iterdir()), [])
+        self.assertNotIn('snapshot_upload', done)
+        review = next(t for t in self.tasks.values() if t['mode'] == 'review')
+        self.assertTrue((Path(review['result']['worktree']) / 'asset-2.bin').is_file())
+
+    async def test_unfinished_work_is_visible_on_a_live_branch_without_touching_the_worker(self):
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto', placement={'mode': 'branch'})
+        for _ in range(10):
+            await self.runner.step(room['id'])
+            if get(self.store, room['id'])['stage'] == 'work':
+                break
+        self.pending = True  # The worker's turn is still running.
+        await self.runner.step(room['id'])
+        work = next(t for t in self.tasks.values() if t['mode'] == 'work')
+        path = Path(work['result']['worktree'])
+        (path / 'half-done.txt').write_text('not committed yet')
+        before = (git(path, 'rev-parse', 'HEAD'), git(path, 'status', '--porcelain'), git(path, 'diff', '--cached', '--name-only'))
+        saved = get(self.store, room['id']); saved['preview_checked'] = 0
+        from aabridge_core.teams import save
+        save(self.store, saved)
+        await self.runner.step(room['id'])
+        shown = self.store.handle(request('team_status', {'team_id': room['id']}), 'local', {})['preview']
+        self.assertEqual(shown['branch'], 'aabridge-live/' + room['id'][-6:])
+        self.assertEqual(git(self.repo, 'show', shown['branch'] + ':half-done.txt'), 'not committed yet')
+        self.assertEqual(git(self.repo, 'branch', '--show-current'), 'main')
+        # The worker's own checkout, index and branch are exactly as it left them.
+        self.assertEqual((git(path, 'rev-parse', 'HEAD'), git(path, 'status', '--porcelain'), git(path, 'diff', '--cached', '--name-only')), before)
+        (path / 'half-done.txt').unlink()
+        work['status'] = 'completed'; self.pending = False
+        done = await self.run_until(room['id'])
+        self.assertEqual(done['status'], 'completed')
+        self.assertNotIn('preview', done)
+        self.assertNotIn('aabridge-live/', git(self.repo, 'branch', '--list'))
+        self.assertTrue(done['publication']['branch'].startswith('claude/'))
+
+    def test_leader_review_is_posted_as_a_github_review_and_falls_back_when_refused(self):
+        summary = '1. Negative weights pass.\nINLINE: app/save.py:12: reject values below zero\nINLINE: other/file.py:3: not part of this change\nVERDICT: CHANGES_REQUESTED'
+        comments = publish.inline_comments(summary, ['app/save.py'])
+        self.assertEqual(comments, [{'path': 'app/save.py', 'line': 12, 'side': 'RIGHT', 'body': 'reject values below zero'}])
+        url, sent = 'https://github.com/o/r/pull/7', []
+        def gh(refuse):
+            def run(repo, *arguments, stdin=None, failure=''):
+                if arguments[0] == 'api':
+                    import json
+                    payload = json.loads(stdin)
+                    sent.append((arguments[3], payload['event'], len(payload.get('comments', [])), '- `app/save.py:12` reject' in payload['body']))
+                    if (payload['event'], bool(payload.get('comments'))) in refuse:
+                        raise BridgeError('publish_failed', failure)
+                else:
+                    sent.append((arguments[0], arguments[1]))
+                return ''
+            return run
+        with patch('aabridge_workspace.publish._gh', side_effect=gh(set())):
+            self.assertEqual(publish.review(self.repo, url, summary, 'changes', 'a' * 40, comments), 'change request with inline comments')
+        self.assertEqual(sent, [('repos/o/r/pulls/7/reviews', 'REQUEST_CHANGES', 1, False)])
+        sent.clear()  # The author of a pull request may only comment on it, and the line is outside the diff.
+        with patch('aabridge_workspace.publish._gh', side_effect=gh({('REQUEST_CHANGES', True), ('COMMENT', True)})):
+            self.assertEqual(publish.review(self.repo, url, summary, 'changes', 'a' * 40, comments), 'review')
+        self.assertEqual([entry[1:] for entry in sent], [('REQUEST_CHANGES', 1, False), ('COMMENT', 1, False), ('COMMENT', 0, True)])
+        sent.clear()  # Nothing accepted as a review: the plain comment still carries it.
+        with patch('aabridge_workspace.publish._gh', side_effect=gh({('APPROVE', False), ('COMMENT', False)})):
+            self.assertEqual(publish.review(self.repo, url, 'Fine.', 'approved', 'a' * 40, []), 'comment')
+        self.assertEqual(sent[-1], ('pr', 'comment'))
 
 
 if __name__ == '__main__':

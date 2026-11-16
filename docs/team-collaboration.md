@@ -521,3 +521,55 @@ that task and the stage continues with the same task and key. `team_status`
 accepts an optional `before` index (validator and request schema) and returns
 the previous 60 messages. The desktop posts a local notification on a status
 change to awaiting_admin, blocked, failed or completed while it is inactive.
+
+## Large review bundles, version reporting and login item · 0.3.0.dev6
+
+Open items: [production-readiness.md](production-readiness.md).
+
+New operation `snapshot_part` (`project_id`, `upload`, `index` 0–255, base64
+`data` up to 60,000 raw bytes). `review_snapshot` may now carry an empty
+`bundle` with `upload`, `parts` and `sha256`. The admin Mac spools an oversized
+bundle in `state/outbox`, sends the parts, then submits or revises the review;
+the spool is removed after the request is accepted. The receiver keeps parts in
+SQLite per authenticated sender (512 waiting parts at most, dropped after a
+day), checks count, digest and bundle header, writes
+`state/snapshots/<sha256>.bundle` and stores `{commit, bundle: "", file}` on
+the task. `import_snapshot` re-hashes that file before use. Receivers
+advertise `review_snapshot_parts`; without it the old 60,000-byte limit and an
+update instruction apply. Validator, request schema and task schema changed
+together. Result fetching already allowed 64 MiB and is unchanged.
+
+`ping` returns `release`. The `devices` action returns `app_release` (the
+app's bundled wheel), `service_release` (the running service, `older` when it
+predates this field) and a `release` per reachable Mac. The version must be
+bumped for every build that changes service behaviour, or a stale service is
+not detected.
+
+Settings has an Open at login toggle (`SMAppService.mainApp`).
+
+Validation: 242 deterministic tests, including a receiver test with a missing
+part, a damaged part and a changed bundle file, and a team run that reviews a
+130 KB binary change twice. Swift compiled for arm64 and x86_64 and the
+warning was rendered offscreen. Not run: `scripts/build_desktop.py`, a two-Mac
+transfer, the login item, any model call. Nothing installed was replaced.
+
+Added to 0.3.0.dev6 before merge:
+
+- `publish.live_preview` snapshots a local worker's files through a temporary
+  `GIT_INDEX_FILE`, writes `refs/aabridge/live` in the task clone and
+  force-fetches it to `refs/heads/aabridge-live/<room id suffix>` in the
+  admin's project. `TeamRunner.mirror` runs it at most every 20 seconds while a
+  local work task is running and placement is not sandbox; failures are stored
+  in `room.preview.error` and never fail the build. The branch is deleted when
+  the work stage completes. `team_status` adds `preview`.
+- `publish.review` posts through `gh api repos/{owner}/{repo}/pulls/{n}/reviews`
+  and falls back: verdict event with inline comments, COMMENT with inline
+  comments, COMMENT with the inline notes in the body, then `pr comment`. How
+  it was posted is saved in `publication.review_posts`. The review prompt asks
+  for `INLINE: path:line: text` lines only when a pull request exists.
+- Desktop: `NearbyMacs` publishes and browses `_aabridge._tcp` (Info.plist
+  gains `NSBonjourServices` and `NSLocalNetworkUsageDescription`); empty states
+  in Projects and Devices; `build_desktop.py --sign-identity/--notary-profile`.
+
+244 deterministic tests pass. Not run: a real GitHub review, Bonjour between
+two Macs, Developer ID signing, `scripts/build_desktop.py`, any model call.

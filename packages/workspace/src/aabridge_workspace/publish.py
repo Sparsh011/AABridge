@@ -8,7 +8,9 @@ Merge request.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -127,6 +129,47 @@ def place(repo: Path, source: Path, commit: str, mode: str, branch: str, worktre
     return {"mode": mode, "branch": branch, "path": str(path if mode == "worktree" else repo), "commit": commit}
 
 
+LIVE = "aabridge-live/"
+
+
+def live_preview(repo: Path, source: Path, base: str, name: str) -> dict:
+    """Show a build in progress: point `aabridge-live/<name>` at a snapshot of the worker's files.
+
+    The worker commits only when its turn ends. This writes the snapshot through
+    a separate index, so the worker's checkout, index and branch are untouched.
+    The live branch is AABridge's own and is replaced on every refresh.
+    """
+    import tempfile
+    require(source.is_dir() and (source / ".git").is_dir() and not (source / ".git").is_symlink(), "The worker’s copy is not available on this Mac.", "publish_blocked")
+    head = git(source, "rev-parse", "HEAD")
+    with tempfile.TemporaryDirectory(prefix="aabridge-live-") as folder:
+        environment = {"PATH": "/usr/bin:/bin", "HOME": str(source), "LANG": "C.UTF-8", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+                       "GIT_CONFIG_COUNT": "0", "GIT_ATTR_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_INDEX_FILE": str(Path(folder) / "index")}
+
+        def staged(*arguments: str) -> str:
+            process = subprocess.run(["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-C", str(source), *arguments],
+                                     env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            require(process.returncode == 0, "Could not snapshot the work in progress.", "git_failed")
+            return process.stdout.decode(errors="replace").strip()
+        staged("read-tree", head)
+        staged("add", "--all")
+        tree = staged("write-tree")
+    commit = head if tree == git(source, "rev-parse", head + "^{tree}") else git(
+        source, "commit-tree", tree, "-p", head, "-m", "AABridge live preview: work in progress, not the final commit")
+    git(source, "update-ref", "refs/aabridge/live", commit)
+    branch = LIVE + name
+    require(branch not in _worktrees(repo), f"`{branch}` is checked out in your project, so it can’t be refreshed. Switch to another branch to keep following the build.", "publish_blocked")
+    git(repo, "fetch", "--quiet", "--no-tags", "--force", str(source), "+refs/aabridge/live:refs/heads/" + branch)
+    return {"branch": branch, "commit": commit, "files": len(git(source, "diff", "--name-only", base, commit).splitlines())}
+
+
+def drop_preview(repo: Path, name: str) -> None:
+    """Remove the live branch once the real branch has the finished build."""
+    branch = LIVE + name
+    if _ref(repo, branch) is not None and branch not in _worktrees(repo):
+        git(repo, "update-ref", "-d", "refs/heads/" + branch)
+
+
 def free_branch(repo: Path, branch: str) -> str:
     """A new placement never adopts a branch somebody else already made."""
     candidate, number = branch, 2
@@ -158,6 +201,47 @@ def pull_request(repo: Path, branch: str, title: str, body: str, existing: str |
 
 def comment(repo: Path, url: str, body: str) -> None:
     _gh(repo, "pr", "comment", url, "--body-file", "-", stdin=body[:60000], failure="Could not post the review on the pull request.")
+
+
+PULL = re.compile(r"https://([A-Za-z0-9.-]+)/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)/?\Z")
+INLINE = re.compile(r"^\W*INLINE:\s*`?([^\s:`]+):(\d+)`?\s*[:\-–—]?\s*(\S.*)$", re.MULTILINE)
+
+
+def inline_comments(summary: str, changed: list[str]) -> list[dict]:
+    """`INLINE: path:line: text` lines from a review, kept only for files the change touched."""
+    allowed, found = set(changed), []
+    for path, line, text in INLINE.findall(summary or ""):
+        if path in allowed and 0 < int(line) < 1_000_000 and len(found) < 20:
+            found.append({"path": path, "line": int(line), "side": "RIGHT", "body": text.strip()[:4000]})
+    return found
+
+
+def review(repo: Path, url: str, body: str, verdict: str | None, commit: str, comments: list[dict]) -> str:
+    """Post the leader's review on the pull request and say how it was posted.
+
+    GitHub refuses an approval or a change request from the pull request's own
+    author, and refuses inline comments on lines outside the diff. Each refusal
+    falls back one step, ending at a plain comment, so a review is never lost.
+    """
+    match = PULL.match(url)
+    event = {"approved": "APPROVE", "changes": "REQUEST_CHANGES"}.get(verdict or "", "COMMENT")
+    attempts = [(event, comments), ("COMMENT", comments), ("COMMENT", [])] if match else []
+    tried = set()
+    for kind, inline in attempts:
+        if (kind, bool(inline)) in tried:
+            continue
+        tried.add((kind, bool(inline)))
+        notes = "" if inline or not comments else "\n\n" + "\n".join(f"- `{c['path']}:{c['line']}` {c['body']}" for c in comments)
+        host, owner, name, number = match.groups()
+        payload = {"commit_id": commit, "body": (body + notes)[:60000], "event": kind, **({"comments": inline} if inline else {})}
+        try:
+            _gh(repo, "api", *(("--hostname", host) if host != "github.com" else ()), "--method", "POST", f"repos/{owner}/{name}/pulls/{number}/reviews", "--input", "-",
+                stdin=json.dumps(payload), failure="GitHub did not accept the review.")
+            return {"APPROVE": "approval", "REQUEST_CHANGES": "change request"}.get(kind, "review") + (" with inline comments" if inline else "")
+        except BridgeError:
+            continue
+    comment(repo, url, body)
+    return "comment"
 
 
 def merge(repo: Path, url: str, commit: str) -> None:

@@ -680,6 +680,7 @@ struct WorkLocationBar: View {
                         }
                         Spacer(minLength: 0)
                     }
+                    liveRow
                     note(publication.merge == "merged" ? "Merged on GitHub." : building ? "The worker is changing its private copy. This branch updates when the build step finishes."
                          : "This branch has the worker’s latest finished build. Check it out with: git switch \(branch)")
                     ForEach(publication.linked ?? []) { link in
@@ -687,7 +688,9 @@ struct WorkLocationBar: View {
                     }
                 } else if mode != "sandbox" {
                     row("arrow.triangle.branch", room.running || room.status == "awaiting_admin" ? "No branch yet" : "No branch was created")
+                    liveRow
                     note(mode == "current" ? "The commits are added to your checked-out branch when the first build step finishes. Until then the worker uses a private copy."
+                         : room.preview?.branch != nil ? "AABridge creates the real \(room.follower.agent)/… branch in your project when this build step finishes."
                          : "AABridge creates \(room.follower.agent)/… in your project when the first build step finishes. Until then the worker uses a private copy, so nothing appears in your folder.")
                 } else if let result = room.result {
                     HStack(spacing: 8) {
@@ -709,6 +712,24 @@ struct WorkLocationBar: View {
                     Label("Couldn’t deliver the latest build: " + error, systemImage: "exclamationmark.triangle").font(.bridge(.caption)).foregroundStyle(.orange).textSelection(.enabled)
                 }
             }.font(.bridge(.callout)).padding(.horizontal, 24).padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading).background(Color.primary.opacity(0.025))
+        }
+    }
+    /// The unfinished build, refreshed every 20 seconds while a worker on this Mac is building.
+    @ViewBuilder private var liveRow: some View {
+        if building, let preview = room.preview {
+            if let branch = preview.branch {
+                HStack(spacing: 8) {
+                    Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(.green)
+                    Text("Live:").font(.bridge(.callout).bold())
+                    Text(branch).font(.bridge(.callout, design: .monospaced)).textSelection(.enabled).lineLimit(1)
+                    Button("Copy") { copy(branch) }.buttonStyle(.borderless)
+                    Text("\(preview.files ?? 0) file\(preview.files == 1 ? "" : "s") changed so far").foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                note("Work in progress, refreshed every 20 seconds. See it with: git diff main...\(branch)   It is removed when the build step finishes and the real branch is updated.")
+            } else if let error = preview.error {
+                note("Live view of the build is paused: " + error)
+            }
         }
     }
     private func row(_ icon: String, _ text: String) -> some View {

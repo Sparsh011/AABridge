@@ -84,6 +84,10 @@ def main():
     payload_source.add_argument("--payload-dir", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--replace", action="store_true", help="Replace an existing AABridge app after successful verification.")
+    parser.add_argument("--sign-identity", default=os.environ.get("AABRIDGE_SIGN_IDENTITY", "-"),
+                        help='Code-signing identity, e.g. "Developer ID Application: Your Name (TEAMID)". Default "-" signs ad hoc, for your own Macs only.')
+    parser.add_argument("--notary-profile", default=os.environ.get("AABRIDGE_NOTARY_PROFILE", ""),
+                        help="Keychain profile saved with `xcrun notarytool store-credentials`. Notarizes and staples the app; needs --sign-identity.")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     output = args.output.absolute()
@@ -112,7 +116,10 @@ def main():
                  "CFBundleName": "AABridge", "CFBundleDisplayName": "AABridge",
                  "CFBundlePackageType": "APPL", "CFBundleShortVersionString": release.split(".dev")[0],
                  "CFBundleVersion": build, "LSMinimumSystemVersion": "13.0",
-                 "NSHighResolutionCapable": True}
+                 "NSHighResolutionCapable": True,
+                 # Devices finds other Macs running AABridge with Bonjour.
+                 "NSBonjourServices": ["_aabridge._tcp"],
+                 "NSLocalNetworkUsageDescription": "AABridge looks for your other Macs running AABridge on this network and connects to the ones you paired."}
         (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
         # Compile one source snapshot so concurrent agent edits cannot change a
         # compiler input halfway through the universal build.
@@ -129,9 +136,19 @@ def main():
                             *map(str, sorted(sources.glob("*.swift"))), "-o", str(image)], check=True)
             images.append(str(image))
         subprocess.run(["/usr/bin/lipo", "-create", *images, "-output", str(binary)], check=True)
-        subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True)
+        developer = args.sign_identity != "-"
+        if args.notary_profile and not developer:
+            raise SystemExit("Notarization needs --sign-identity with a Developer ID Application certificate.")
+        # A Developer ID build needs the hardened runtime and a secure timestamp to pass notarization.
+        subprocess.run(["/usr/bin/codesign", "--force", *(["--options", "runtime", "--timestamp"] if developer else []), "--sign", args.sign_identity, str(app)], check=True)
         subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)], check=True)
         subprocess.run([str(binary), "--smoke-test"], check=True)
+        if args.notary_profile:
+            upload = work / "AABridge-notarize.zip"
+            subprocess.run(["/usr/bin/ditto", "-c", "-k", "--keepParent", str(app), str(upload)], check=True)
+            subprocess.run(["/usr/bin/xcrun", "notarytool", "submit", str(upload), "--keychain-profile", args.notary_profile, "--wait"], check=True)
+            subprocess.run(["/usr/bin/xcrun", "stapler", "staple", str(app)], check=True)
+            subprocess.run(["/usr/sbin/spctl", "--assess", "--type", "execute", str(app)], check=True)
         if output.suffix == ".app":
             publish_app(app, output, replace=args.replace)
         else:

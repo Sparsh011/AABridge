@@ -9,7 +9,9 @@ from pathlib import Path
 
 from aabridge_protocol.messages import BridgeError, HISTORY_READS, MUTATIONS, Request, canonical, require
 from aabridge_protocol.titles import compact_title
-from .config import authorize, read_private, write_private
+from .config import authorize, read_private, release, write_private
+
+RELEASE = release()  # Read once: a running service keeps the code it started with.
 
 
 def new_id(prefix: str) -> str:
@@ -218,13 +220,13 @@ class Store:
             from .teams import handle
             return handle(self, request, identity)
         if request.op == "ping":
-            return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1", "direct_transport": True, "shared_task_history": True, "pid": os.getpid()}
+            return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1", "direct_transport": True, "shared_task_history": True, "pid": os.getpid(), "release": RELEASE}
         if request.op == "projects":
             peer = config["peers"][identity]
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
             # Peers see linked project names and access, never their local paths.
-            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "task_titles": True, "model_settings": project.get("permission_profile") == "coding-v1"},
+            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "review_snapshot_parts": True, "task_titles": True, "model_settings": project.get("permission_profile") == "coding-v1"},
                            "links": [{"name": link["name"], "access": link["access"]} for link in project.get("links", [])],
                            **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
@@ -249,6 +251,8 @@ class Store:
                 summary = {key: task[key] for key in ("id", "project_id", "status", "recipient", "sender", "revision", "created_at", "updated_at")}
                 output.append({**summary, 'title': title or task.get('title') or compact_title(task['objective']), 'mode': task.get('mode'), "objective": task["objective"][:300], "cursor": seq, 'permissions': self.permissions(task, identity)})
             return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True, 'history_work_review': True}}
+        if request.op == "snapshot_part":
+            return self.snapshot_part(request.body, identity, authorize(config, identity, request.body["project_id"]))
         require(request.op != "shutdown" or identity == "local", "Only the local operator may stop the daemon.", "permission_denied")
         if request.op == "shutdown":
             return {"stopping": True}
@@ -284,8 +288,49 @@ class Store:
             result = {**result, 'cleanup_pending': finish(self, self.get(request.body['task_id']))}
         return result
 
+    def snapshot_part(self, body: dict, identity: str, project: dict) -> dict:
+        """Hold one part of a review bundle too large for a single request.
+
+        Parts are keyed by the authenticated sender, so one peer cannot complete
+        or overwrite another's upload. Storing the same part again is harmless.
+        """
+        import base64
+        require(project.get("permission_profile") == "coding-v1", "Snapshots require a full coding project.", "permission_denied")
+        self.db.execute("CREATE TABLE IF NOT EXISTS snapshot_parts (owner TEXT, upload TEXT, idx INTEGER, data BLOB, created REAL, PRIMARY KEY(owner,upload,idx))")
+        self.db.execute("DELETE FROM snapshot_parts WHERE created<?", (time.time() - 86400,))
+        held = self.db.execute("SELECT COUNT(*) FROM snapshot_parts WHERE owner=? AND NOT (upload=? AND idx=?)", (identity, body["upload"], body["index"])).fetchone()[0]
+        require(held < 512, "Too many review bundle parts are waiting. Retry after the current review starts.", "rate_limited")
+        data = base64.b64decode(body["data"], validate=True)
+        self.db.execute("INSERT OR REPLACE INTO snapshot_parts VALUES (?,?,?,?,?)", (identity, body["upload"], body["index"], data, time.time()))
+        return {"upload": body["upload"], "index": body["index"], "size": len(data)}
+
+    def resolve_snapshot(self, snapshot: dict, identity: str) -> dict:
+        """Turn an uploaded snapshot into a verified bundle file in this state folder."""
+        if "upload" not in snapshot:
+            return snapshot
+        import hashlib
+        self.db.execute("CREATE TABLE IF NOT EXISTS snapshot_parts (owner TEXT, upload TEXT, idx INTEGER, data BLOB, created REAL, PRIMARY KEY(owner,upload,idx))")
+        rows = self.db.execute("SELECT idx,data FROM snapshot_parts WHERE owner=? AND upload=? ORDER BY idx", (identity, snapshot["upload"])).fetchall()
+        require([row[0] for row in rows] == list(range(snapshot["parts"])), "The review bundle did not arrive completely. Press Try again to send it again.", "review_unavailable")
+        raw = b"".join(row[1] for row in rows)
+        require(hashlib.sha256(raw).hexdigest() == snapshot["sha256"] and raw.startswith((b"# v2 git bundle\n", b"# v3 git bundle\n")),
+                "The review bundle was damaged in transfer. Press Try again to send it again.", "review_unavailable")
+        folder = self.state / "snapshots"
+        folder.mkdir(mode=0o700, exist_ok=True)
+        require(not folder.is_symlink(), "Snapshot folder was replaced by a symlink.", "unsafe_workspace")
+        for stale in folder.glob("*.bundle"):
+            # A review imports its bundle when its turn starts; two weeks covers a paused task.
+            if not stale.is_symlink() and stale.stat().st_mtime < time.time() - 14 * 86400:
+                stale.unlink()
+        write_private(folder / (snapshot["sha256"] + ".bundle"), raw)
+        self.db.execute("DELETE FROM snapshot_parts WHERE owner=? AND upload=?", (identity, snapshot["upload"]))
+        # The file name is this service's own digest of the bytes, never a received path.
+        return {"commit": snapshot["commit"], "bundle": "", "file": snapshot["sha256"]}
+
     def _apply(self, request: Request, identity: str, project: dict, config: dict) -> dict:
         body, op = request.body, request.op
+        if "review_snapshot" in body:
+            body = {**body, "review_snapshot": self.resolve_snapshot(body["review_snapshot"], identity)}
         if op == "submit":
             require(body["base_commit"] == project["base_commit"], "Base commit is not the locally approved project baseline.", "permission_denied")
             require(body["permission_profile"] == project.get("permission_profile", "proposal-v1"), "Task execution mode differs from the locally enabled project.", "permission_denied")

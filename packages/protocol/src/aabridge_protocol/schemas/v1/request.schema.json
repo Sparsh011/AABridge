@@ -137,12 +137,26 @@
               "type": "string",
               "maxLength": 80000,
               "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+            },
+            "upload": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "parts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 256
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
             }
           },
           "required": [
             "commit",
             "bundle"
-          ]
+          ],
+          "description": "Inline bundle, or an empty bundle with upload/parts/sha256 naming parts sent earlier with snapshot_part."
         },
         "title": {
           "type": "string",
@@ -397,12 +411,26 @@
                   "type": "string",
                   "maxLength": 80000,
                   "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                },
+                "upload": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+                },
+                "parts": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 256
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
                 }
               },
               "required": [
                 "commit",
                 "bundle"
-              ]
+              ],
+              "description": "Inline bundle, or an empty bundle with upload/parts/sha256 naming parts sent earlier with snapshot_part."
             },
             "title": {
               "type": "string",
@@ -764,12 +792,26 @@
                   "type": "string",
                   "maxLength": 80000,
                   "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                },
+                "upload": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+                },
+                "parts": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 256
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
                 }
               },
               "required": [
                 "commit",
                 "bundle"
-              ]
+              ],
+              "description": "Inline bundle, or an empty bundle with upload/parts/sha256 naming parts sent earlier with snapshot_part."
             }
           },
           "required": [
@@ -1737,6 +1779,59 @@
           },
           "required": [
             "task_id"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "snapshot_part"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "upload": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "data": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 88000,
+              "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+            }
+          },
+          "required": [
+            "project_id",
+            "upload",
+            "index",
+            "data"
           ]
         }
       },

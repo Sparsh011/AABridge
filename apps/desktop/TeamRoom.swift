@@ -9,6 +9,8 @@ struct TeamEntry: Decodable, Identifiable {
 }
 struct TeamResult: Decodable { let branch: String; let worktree: String; let result_commit: String; let base_commit: String }
 struct TeamPlacement: Codable { var mode: String; var pull_request: Bool? = nil }
+/// A build in progress, mirrored to a branch AABridge owns in the admin's project.
+struct TeamPreview: Decodable { var branch: String? = nil; var files: Int? = nil; var time: Double? = nil; var error: String? = nil }
 struct TeamGate: Decodable { let kind: String; let reason: String; var cause: String? = nil }
 /// Why a stage stopped, and the one thing to do about it.
 struct TeamFailure: Decodable { let problem: String; let fix: String; let machine: String; let project: String; let retry: Bool }
@@ -37,6 +39,7 @@ struct TeamRoom: Decodable, Identifiable {
     var publication: TeamPublication? = nil; var verdict: String? = nil
     var fixes: Int? = nil; var max_fixes: Int? = nil; var notes_waiting: Int? = nil
     var failure: TeamFailure? = nil
+    var preview: TeamPreview? = nil
     var title: String? = nil; var answered: Bool? = nil; var earlier_messages: Int? = nil; var stage_started: Double? = nil
     /// The task keeps its first name; a follow-up message does not rename it.
     var displayTitle: String { title?.isEmpty == false ? title! : objective }
@@ -365,10 +368,19 @@ struct TeamRoomView: View {
 struct DevicesView: View {
     @ObservedObject var model: TeamRoomModel
     @ObservedObject var devices: DeviceStatusModel
+    @StateObject private var nearby = NearbyMacs()
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
             Text("Connect your Macs").font(.bridge(.title).bold())
             Text("Optional. Skip this if both agents run on this Mac. To use a second Mac, exchange a connection card once in each direction. Either Mac can then lead or do the work.").foregroundStyle(.secondary)
+            if devices.report != nil && devices.devices.isEmpty {
+                Card(tint: .accentColor) {
+                    Label("No Macs paired, and you may not need one", systemImage: "laptopcomputer.and.arrow.down").font(.bridge(.headline))
+                    Text("Codex and Claude can both run on this Mac: add the project twice in Projects, once for each agent, and start a task. Pair a second Mac only if you want one agent to work there.")
+                    Text("To pair: open AABridge on the other Mac, create its card there, paste it in step 2 below, then do the same in the other direction. It takes about a minute and is done once.").foregroundStyle(.secondary)
+                }
+            }
+            NearbyMacsView(nearby: nearby, paired: devices.devices)
             if !devices.devices.isEmpty {
                 GroupBox { VStack(alignment: .leading, spacing: 12) {
                     Text("Paired Macs").font(.bridge(.headline))

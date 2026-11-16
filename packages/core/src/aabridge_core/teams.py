@@ -113,7 +113,7 @@ def public(room, before=None):
     # A follow-up clears this round's outputs; the saved work is still the result.
     work = room.get('outputs', {}).get('work') or room.get('previous_result')
     result['result'] = ({k: work[k] for k in ('branch', 'worktree', 'result_commit', 'base_commit')} if work else None)
-    for key in ('approval', 'placement', 'gate', 'publication', 'verdict', 'fixes', 'max_fixes', 'failure', 'answered', 'stage_started'):
+    for key in ('approval', 'placement', 'gate', 'publication', 'verdict', 'fixes', 'max_fixes', 'failure', 'answered', 'stage_started', 'preview'):
         result[key] = room.get(key)
     result['title'] = shown_title(room)
     result['notes_waiting'] = len(waiting_notes(room))
@@ -155,7 +155,7 @@ def handle(store, request, identity):
             intro = ('The leader plans, then waits for your OK before the worker builds. After each review that asks for fixes, '
                      'you decide what happens next. Send a note at any time to change direction.')
         else:
-            intro = 'You are the admin. The leader plans and reviews. The follower implements. Either Mac can take either role.'
+            intro = 'You are the admin. The leader plans and reviews. The worker implements. Either Mac can take either role.'
         message(room, 'AABridge', intro)
         store.db.execute('INSERT INTO teams VALUES (?,?,?)', (room['id'], request.key, canonical(room)))
         return public(room)
@@ -351,6 +351,9 @@ class TeamRunner:
             context = ['Your plan:\n' + room['outputs']['plan']['summary'][:12000],
                        'Follower report:\n' + room['outputs']['work']['summary'][:24000],
                        'Follower diff:\n' + room.get('diff', '')[:64000]] + noted
+        if stage == 'review' and pull_requests(room.get('publication') or {}):
+            objective += ('\nYour review is posted on the pull request. For a finding about one specific line that this change added or modified, also write a line '
+                          '"INLINE: path/to/file:LINE: comment", using the line number in the new version of the file. Each becomes an inline comment on that line.')
         if stage == 'plan':
             objective += ('\nInclude one plain line TASK_TITLE: followed by a descriptive 4–8 word task title, at most 80 characters. '
                           'Describe the work, without role instructions, device IDs or paths. This is display metadata, not a replacement for your implementation plan.')
@@ -368,7 +371,11 @@ class TeamRunner:
                 worker_task = next(item['task_id'] for item in reversed(room['stage_tasks']) if item['stage'] == 'work')
                 source_path = work['worktree'] if room['follower']['target'] == 'local' else self.state / 'reviews' / worker_task
             source = Path(source_path)
-            snapshot = export_snapshot(source, work['base_commit'], work['result_commit'])
+            # A change too large for one request is spooled here and sent in parts before the review starts.
+            spool = self.state / 'outbox' if project.get('capabilities', {}).get('review_snapshot_parts') else None
+            snapshot = export_snapshot(source, work['base_commit'], work['result_commit'], spool)
+            if snapshot.get('upload'):
+                room['snapshot_upload'] = {'upload': snapshot['upload'], 'parts': snapshot['parts'], 'project': room['leader']['project']}
             # The checkout now contains the actual implementation; don't spend
             # the request budget duplicating its full diff in prose.
             context = [entry for entry in context if not entry.startswith(('Full diff from the baseline:', 'Follower diff:'))]
@@ -423,6 +430,37 @@ class TeamRunner:
             # Activity is observational. Losing it must never fail or replay an
             # implementation task or discard a model result.
             room['live']['stream_error'] = 'Live updates are temporarily unavailable; the task continues.'
+
+    async def send_snapshot(self, room, upload, target):
+        """Send a spooled review bundle to the leader in parts. Re-sending a part is harmless."""
+        import base64
+        from aabridge_workspace.review import PART
+        spooled = self.state / 'outbox' / (upload['upload'] + '.bundle')
+        if not spooled.is_file():
+            # The spool was lost (cleanup or a moved state folder): export it again on retry.
+            for key in ('stage_body', 'stage_operation', 'stage_key', 'snapshot_upload'):
+                room.pop(key, None)
+            room['attempted'] = False
+            save_runtime(self.store, room)
+            raise BridgeError('review_unavailable', 'The prepared review bundle is no longer on this Mac. Press Try again to prepare it again. No leader turn was started.')
+        raw = spooled.read_bytes()
+        for index in range(upload['parts']):
+            await self.call('snapshot_part', {'project_id': upload['project'], 'upload': upload['upload'], 'index': index,
+                                              'data': base64.b64encode(raw[index * PART:(index + 1) * PART]).decode('ascii')}, target)
+
+    async def mirror(self, room, task):
+        """While a worker on this Mac builds, keep a live branch of its unfinished files in the admin's project."""
+        if time.time() - room.get('preview_checked', 0) < 20:
+            return
+        room['preview_checked'] = time.time()
+        from aabridge_workspace import publish as delivery
+        try:
+            found = await asyncio.to_thread(delivery.live_preview, self.repository(room), self.state / 'workspaces' / task['id'],
+                                            room['follower_project']['base_commit'], room['id'][-6:])
+            room['preview'] = {**found, 'time': time.time()}
+        except Exception as exc:
+            # Observational, like the activity feed: it never fails the build.
+            room['preview'] = {'error': getattr(exc, 'message', 'Could not refresh the live branch.'), 'time': time.time()}
 
     def repository(self, room):
         from aabridge_core.config import load_config
@@ -593,7 +631,7 @@ class TeamRunner:
         if not approval:
             room['status'] = 'completed'
             room.pop('diff', None)
-            message(room, 'AABridge', 'Leader review complete. You decide what to keep or change. The follower result branch is ready for review; nothing was pushed or merged.')
+            message(room, 'AABridge', 'Leader review complete. You decide what to keep or change. The worker’s result branch is ready for review; nothing was pushed or merged.')
             return
         room['verdict'] = found = verdict(result['summary'])
         fixes, limit = room.get('fixes', 0), room.get('max_fixes', 3)
@@ -660,6 +698,7 @@ class TeamRunner:
                     # Within a round each role continues its own task, so an agent
                     # remembers its earlier plan, work or review.
                     resume = room.get('resume', {}).get(stage) or (room.get('continuation') if stage == 'work' else None)
+                    room.pop('snapshot_upload', None)
                     room['stage_body'] = self.stage_body(room, project, resumed=bool(resume) and stage != 'work')
                     room['stage_operation'] = 'submit'
                     room['stage_key'] = room['id'] + '-' + str(room['round']) + '-' + stage + '-' + str(len(room['stage_tasks']))
@@ -690,8 +729,14 @@ class TeamRunner:
                 room['attempted'] = True
                 save_runtime(self.store, room)
                 key = room.get('stage_key') or room['id'] + '-' + str(room['round']) + '-' + stage
+                upload = room.get('snapshot_upload')
+                if upload:
+                    await self.send_snapshot(room, upload, target)
                 task = await self.call(room.get('stage_operation', 'submit'), room['stage_body'], target, key)
+                if upload:
+                    (self.state / 'outbox' / (upload['upload'] + '.bundle')).unlink(missing_ok=True)
                 room = get(self.store, room_id)  # Preserve an admin stop received during network I/O.
+                room.pop('snapshot_upload', None)
                 room['task_id'] = task['id']
                 room['stage_tasks'].append({'target': target, 'task_id': task['id'], 'stage': stage})
                 room['stage_started'] = time.time()  # The chat shows who is working from this, not from a saved message.
@@ -706,6 +751,8 @@ class TeamRunner:
             task = await self.call('status', {'task_id': room['task_id']}, target)
             room = get(self.store, room_id)
             await self.relay_activity(room, task, member)
+            if stage == 'work' and target == 'local' and task['status'] == 'running' and room.get('placement', {}).get('mode', 'sandbox') != 'sandbox':
+                await self.mirror(room, task)
             if get(self.store, room_id)['status'] == 'stopping':
                 room['status'] = 'stopping'
             if room['status'] == 'stopping':
@@ -767,15 +814,27 @@ class TeamRunner:
                     room['last_diff'] = room['diff']
                     if room.get('placement', {}).get('mode', 'sandbox') != 'sandbox':
                         await self.deliver(room, task)
+                    if room.pop('preview', None):
+                        # The finished build is on the real branch (or saved in AABridge); the live one is done.
+                        from aabridge_workspace.publish import drop_preview
+                        try:
+                            await asyncio.to_thread(drop_preview, self.repository(room), room['id'][-6:])
+                        except Exception:
+                            pass
                 elif stage == 'review':
-                    from aabridge_workspace.publish import comment
+                    from aabridge_workspace.publish import inline_comments, review
                     room.setdefault('publication', {}).pop('review_errors', None)
                     publication = room.get('publication') or {}
                     for repository, url, _ in pull_requests(publication):
                         try:
                             entry = publication if publication.get('pull_request') == url else next(item for item in publication.get('linked', []) if item.get('pull_request') == url)
                             reviewed_commit = entry.get('commit', room['outputs']['work']['result_commit'])
-                            await asyncio.to_thread(comment, Path(repository), url, f'**Leader review · {member["agent"]} · implementation {reviewed_commit}**\n\n' + result['summary'])
+                            main = publication.get('pull_request') == url
+                            changed = room['outputs']['work'].get('changed_paths', []) if main else next(
+                                (link.get('changed_paths', []) for link in room['outputs']['work'].get('linked', []) if link['name'] == entry.get('name')), [])
+                            posted = await asyncio.to_thread(review, Path(repository), url, f'**Leader review · {member["agent"]} · implementation {reviewed_commit}**\n\n' + result['summary'],
+                                                             verdict(result['summary']) if room.get('approval') else None, reviewed_commit, inline_comments(result['summary'], changed))
+                            room['publication'].setdefault('review_posts', {})[url] = posted
                         except Exception as exc:
                             error = getattr(exc, 'message', 'Could not post the leader review on GitHub.')
                             room['publication'].setdefault('review_errors', {})[url] = error

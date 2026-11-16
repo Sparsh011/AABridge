@@ -375,6 +375,23 @@
           "type": "string",
           "maxLength": 80000,
           "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+        },
+        "upload": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "parts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       },
       "required": [
