@@ -32,6 +32,7 @@ struct StatusPill: View {
     var body: some View {
         Label(status.text, systemImage: status.icon).font(.bridge(.caption).bold()).foregroundStyle(status.color)
             .padding(.horizontal, 10).padding(.vertical, 5).background(status.color.opacity(0.12)).clipShape(Capsule())
+            .accessibilityElement(children: .ignore).accessibilityLabel("Task status: " + status.text)
     }
 }
 
@@ -101,6 +102,7 @@ struct TeamSidebar: View {
             Button { model.showAssignment = true; model.draft = ""; model.refresh(discover: true) } label: {
                 Label("New task", systemImage: "plus").frame(maxWidth: .infinity)
             }.buttonStyle(.borderedProminent).controlSize(.large).disabled(model.busy || model.hasPending)
+                .keyboardShortcut("n", modifiers: .command).help("New task (⌘N)")
             Text("TASKS").font(.bridge(.caption).bold()).foregroundStyle(.secondary).padding(.top, 6)
             ScrollView { VStack(spacing: 8) {
                 ForEach(model.rooms) { room in
@@ -118,7 +120,9 @@ struct TeamSidebar: View {
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
                             .background(chosen ? Color.accentColor.opacity(0.13) : Color.primary.opacity(0.035)).clipShape(RoundedRectangle(cornerRadius: 12))
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(chosen ? Color.accentColor.opacity(0.5) : Color.clear))
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.plain).accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(room.displayTitle). \(status.text). \(agentName(room.leader.agent)) leads, \(agentName(room.follower.agent)) builds.")
+                        .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
                 }
                 if model.rooms.isEmpty {
                     Text("No tasks yet. Choose New task to give your team its first job.").font(.bridge(.callout)).foregroundStyle(.secondary).padding(.vertical, 8)
@@ -146,7 +150,7 @@ struct NewTeamTaskView: View {
                     Text("Tell your team what you want. The leader plans and reviews, the worker writes the code, and you stay in charge.").foregroundStyle(.secondary)
                 }
                 Spacer()
-                if model.room != nil { Button("Cancel") { model.showAssignment = false; model.draft = "" } }
+                if model.room != nil { Button("Cancel") { model.showAssignment = false; model.draft = "" }.keyboardShortcut(.cancelAction) }
             }.padding(.horizontal, 32).padding(.vertical, 24)
             Divider()
             ScrollView { VStack(alignment: .leading, spacing: 30) {
@@ -157,7 +161,7 @@ struct NewTeamTaskView: View {
                         RolePicker(title: "Leader", detail: "Plans the work and reviews it", icon: "crown.fill", choices: model.choices, selection: $model.leader,
                                    agent: model.leaderChoice?.member.agent ?? "codex", modelID: $model.leaderModel, effort: $model.leaderEffort)
                         Button { let lead = model.leader; model.leader = model.follower; model.follower = lead } label: { Image(systemName: "arrow.left.arrow.right") }
-                            .help("Swap leader and worker").padding(.top, 44)
+                            .help("Swap leader and worker").accessibilityLabel("Swap leader and worker").padding(.top, 44)
                         RolePicker(title: "Worker", detail: "Writes the code and runs checks", icon: "hammer.fill", choices: model.choices, selection: $model.follower,
                                    agent: model.followerChoice?.member.agent ?? "claude", modelID: $model.followerModel, effort: $model.followerEffort)
                     }
@@ -393,6 +397,12 @@ struct TeamChatView: View {
                     if let placement = room.placement, let option = PlacementOption.all.first(where: { $0.id == placement.mode }) {
                         chip(option.title + (placement.pull_request == true ? " + PR" : ""), option.icon)
                     }
+                    ForEach(["leader", "follower"], id: \.self) { role in
+                        if let used = room.usage?[role], used.total > 0 {
+                            chip("\(role == "leader" ? "Leader" : "Worker") · \(TeamUsage.short(used.total)) tokens", "gauge.with.dots.needle.33percent")
+                                .help(used.detail).accessibilityLabel("\(role == "leader" ? "Leader" : "Worker") used \(used.total) tokens. \(used.detail)")
+                        }
+                    }
                 }
             }
             Spacer()
@@ -474,6 +484,7 @@ struct TeamChatView: View {
             }
             HStack(alignment: .bottom, spacing: 12) {
                 TextField(placeholder, text: $model.draft, axis: .vertical).lineLimit(1...5).textFieldStyle(.roundedBorder).font(.bridge(.body))
+                    .accessibilityLabel(model.terminal ? "Message to the team" : room.gate?.kind == "question" ? "Your answer" : model.waiting ? "Optional note with your decision" : "Note to the team")
                     .disabled(model.hasPending)
                 if model.terminal {
                     Button("Send") { model.send() }.buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command)
@@ -483,6 +494,7 @@ struct TeamChatView: View {
                         .keyboardShortcut(.return, modifiers: .command)
                         .disabled(model.busy || model.trimmedDraft.isEmpty || model.draft.count > 3000 || model.hasPending || room.status == "stopping")
                     Button("Stop", role: .destructive) { model.control("team_cancel") }.disabled(model.busy || room.status == "stopping" || model.hasPending)
+                        .keyboardShortcut(".", modifiers: .command).help("Stop the task (⌘.)")
                 } else {
                     Button("Stop", role: .destructive) { model.control("team_cancel") }.disabled(model.busy || model.hasPending)
                 }
@@ -534,6 +546,15 @@ struct TeamProgress: View {
                     .padding(.horizontal, 8).padding(.vertical, 4).background(Color.orange.opacity(0.12)).clipShape(Capsule()).padding(.leading, 12)
             }
         }.padding(14).background(Color.primary.opacity(0.025)).clipShape(RoundedRectangle(cornerRadius: 12))
+            .accessibilityElement(children: .ignore).accessibilityLabel(spoken)
+    }
+
+    /// The whole strip as one sentence, since the colours and ticks carry its meaning.
+    var spoken: String {
+        let parts = steps.enumerated().map { index, step in
+            index < current ? "\(step.1) done" : index == current && !halted ? (room.unapproved ? "review not approved" : room.status == "awaiting_admin" ? "\(step.1) waiting for you" : "\(step.1) in progress") : "\(step.1) not started"
+        }
+        return "Progress: " + parts.joined(separator: ", ") + ((room.fixes ?? 0) > 0 ? ". Fix round \(room.fixes!) of \(room.max_fixes ?? room.fixes!)" : "")
     }
 }
 
@@ -557,10 +578,11 @@ struct TeamMessageRow: View {
     private var answerOnly: Bool { isLeader && entry.text.uppercased().range(of: #"(?m)^\W*NEXT:\W*ANSWER[ _]ONLY\W*$"#, options: .regularExpression) != nil }
     /// Lines the agents write for AABridge, not for the reader.
     private static let markers = #"^\W*(TASK_TITLE|BRANCH_NAME|NEXT|VERDICT):.*$"#
-    private var body_: String {
-        entry.text.components(separatedBy: "\n").filter { $0.range(of: Self.markers, options: [.regularExpression, .caseInsensitive]) == nil }
+    static func readable(_ text: String) -> String {
+        text.components(separatedBy: "\n").filter { $0.range(of: markers, options: [.regularExpression, .caseInsensitive]) == nil }
             .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    private var body_: String { Self.readable(entry.text) }
     private func badge(_ text: String, _ icon: String, _ color: Color) -> some View {
         Label(text, systemImage: icon).font(.bridge(.caption).bold()).foregroundStyle(color)
             .padding(.horizontal, 8).padding(.vertical, 4).background(color.opacity(0.12)).clipShape(Capsule())
@@ -574,16 +596,17 @@ struct TeamMessageRow: View {
                 Text(Self.linked(entry.text)).font(.bridge(.callout)).foregroundStyle(.secondary).textSelection(.enabled)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 8)
                 .background(Color.primary.opacity(0.02)).clipShape(RoundedRectangle(cornerRadius: 10))
+                .accessibilityElement(children: .combine).accessibilityLabel("AABridge notice: " + entry.text)
         } else {
             HStack(alignment: .top, spacing: 10) {
                 if isAdmin { Spacer(minLength: 90) }
                 else {
                     Image(systemName: isLeader ? "crown.fill" : "hammer.fill").foregroundStyle(.white).frame(width: 30, height: 30)
-                        .background(Circle().fill(isLeader ? Color.purple : Color.teal))
+                        .background(Circle().fill(isLeader ? Color.purple : Color.teal)).accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text(title).font(.bridge(.headline)).foregroundStyle(isAdmin ? Color.accentColor : Color.primary)
+                        Text(title).font(.bridge(.headline)).foregroundStyle(isAdmin ? Color.accentColor : Color.primary).accessibilityAddTraits(.isHeader)
                         Spacer()
                         Text(Date(timeIntervalSince1970: entry.time), style: .time).font(.bridge(.caption)).foregroundStyle(.secondary)
                     }
@@ -641,6 +664,7 @@ struct WorkingRow: View {
             }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.primary.opacity(0.035)).overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.accentColor.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
+                .accessibilityElement(children: .ignore).accessibilityLabel("\(agentName(member.agent)), the \(worker ? "worker" : "leader"), is \(stageVerb(room.stage).lowercased()). \(detail)")
             Spacer(minLength: 40)
         }
     }

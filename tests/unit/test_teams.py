@@ -156,6 +156,25 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(BridgeError):
             self.store.handle(request('team_activity',{'team_id':room['id'],'cursor':0}),'mini',{})
 
+    async def test_token_use_is_totalled_per_role_and_a_replayed_page_counts_once(self):
+        room, _ = self.start()
+        self.project['capabilities'] = {'activity':True}
+        self.pending = True
+        original = self.runner.call
+        async def streamed(op, body, target, key=None):
+            if op == 'activity':
+                texts = ['Tokens used: 1200 in, 300 out, 900 cached, cost $0.0125', 'Tokens used: 800 in, 200 out, 0 cached', 'Tokens used: lots']
+                entries = [{'cursor':n,'id':'usage','kind':'status','text':text,'state':'completed','task_id':body['task_id'],'revision':1,'time':1234.0}
+                           for n, text in enumerate(texts, 1) if n > body['cursor']]
+                return {'entries':entries,'cursor':3,'has_more':False}
+            return await original(op, body, target, key)
+        self.runner.call = streamed
+        await self.runner.step(room['id'])
+        stored = get(self.store,room['id']); stored['activity_cursors'] = {}; save(self.store,stored)
+        await self.runner.step(room['id'])  # The same page again.
+        usage = self.store.handle(request('team_status',{'team_id':room['id']}),'local',{})['usage']
+        self.assertEqual(usage, {'leader': {'input':2000,'output':500,'cached':900,'cost':0.0125,'priced':True}})
+
     async def test_activity_failure_keeps_the_model_task_running(self):
         room, _ = self.start()
         self.project['capabilities'] = {'activity':True}

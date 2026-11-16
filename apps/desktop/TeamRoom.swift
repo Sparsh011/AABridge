@@ -11,6 +11,18 @@ struct TeamResult: Decodable { let branch: String; let worktree: String; let res
 struct TeamPlacement: Codable { var mode: String; var pull_request: Bool? = nil }
 /// A build in progress, mirrored to a branch AABridge owns in the admin's project.
 struct TeamPreview: Decodable { var branch: String? = nil; var files: Int? = nil; var time: Double? = nil; var error: String? = nil }
+/// Tokens one role reported over the whole task. `cost` is the CLI's own estimate, when it gives one.
+struct TeamUsage: Decodable {
+    let input: Int; let output: Int; let cached: Int; var cost: Double? = nil; var priced: Bool? = nil
+    var total: Int { input + output }
+    /// "842", "12.3k", "1.2M"
+    static func short(_ value: Int) -> String {
+        value < 1000 ? "\(value)" : value < 1_000_000 ? String(format: "%.1fk", Double(value) / 1000) : String(format: "%.1fM", Double(value) / 1_000_000)
+    }
+    var detail: String {
+        "\(input) in, \(output) out, \(cached) read from cache" + (priced == true && cost != nil ? String(format: ". The agent’s own cost estimate: $%.2f (not a bill; subscription plans are not charged per token)", cost!) : "")
+    }
+}
 struct TeamGate: Decodable { let kind: String; let reason: String; var cause: String? = nil }
 /// Why a stage stopped, and the one thing to do about it.
 struct TeamFailure: Decodable { let problem: String; let fix: String; let machine: String; let project: String; let retry: Bool }
@@ -40,6 +52,7 @@ struct TeamRoom: Decodable, Identifiable {
     var fixes: Int? = nil; var max_fixes: Int? = nil; var notes_waiting: Int? = nil
     var failure: TeamFailure? = nil
     var preview: TeamPreview? = nil
+    var usage: [String: TeamUsage]? = nil
     var title: String? = nil; var answered: Bool? = nil; var earlier_messages: Int? = nil; var stage_started: Double? = nil
     /// The task keeps its first name; a follow-up message does not rename it.
     var displayTitle: String { title?.isEmpty == false ? title! : objective }

@@ -326,6 +326,9 @@ struct AABridgeDesktop: App {
     @StateObject private var model: SetupModel
 
     init() {
+        if let index = CommandLine.arguments.firstIndex(of: "--self-test") {
+            exit(runSelfTest(fixture: CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : nil) ? 0 : 1)
+        }
         let payload = Bundle.main.resourceURL!.appendingPathComponent("SetupPayload")
         for (flag, panel) in [("--preview-task-info", "info"), ("--preview-task-edit", "edit")] {
             if let index = CommandLine.arguments.firstIndex(of: flag), CommandLine.arguments.count > index + 1 {

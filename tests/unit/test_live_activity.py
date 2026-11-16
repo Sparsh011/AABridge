@@ -19,6 +19,16 @@ class PublicActivityTests(unittest.TestCase):
         self.events = []
         self.stream = ActivityStream(self.events.append)
 
+    def test_token_counts_are_reported_in_one_fixed_line_for_both_agents(self):
+        self.stream.codex({'type':'turn.completed','usage':{'input_tokens':1200,'cached_input_tokens':900,'output_tokens':300}})
+        self.stream.claude({'type':'result','is_error':False,'total_cost_usd':0.01254,
+                            'usage':{'input_tokens':40,'output_tokens':7,'cache_read_input_tokens':100,'cache_creation_input_tokens':20}})
+        self.stream.claude({'type':'result','is_error':False,'usage':{'input_tokens':'many','output_tokens':-5}})
+        from aabridge_core.teams import USAGE
+        texts = [event['text'] for event in self.events if event['id'] == 'usage']
+        self.assertEqual(texts, ['Tokens used: 1200 in, 300 out, 900 cached', 'Tokens used: 40 in, 7 out, 120 cached, cost $0.0125', 'Tokens used: 0 in, 0 out, 0 cached'])
+        self.assertTrue(all(USAGE.match(text) for text in texts))
+
     def test_codex_tools_files_and_public_messages_without_private_payloads(self):
         for event in [
             {'type':'item.started','item':{'id':'command','type':'command_execution','command':'echo never-show-this-command-secret'}},

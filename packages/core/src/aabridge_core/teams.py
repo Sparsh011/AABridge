@@ -33,6 +33,7 @@ TERMINAL = {'completed', 'failed', 'cancelled'}
 VERDICT = re.compile(r'VERDICT:\W*(APPROVED|CHANGES[ _]REQUESTED|NEEDS[ _]ADMIN)', re.I)
 NEXT = re.compile(r'^\W*NEXT:\W*(ANSWER[ _]ONLY|BUILD)\W*$', re.I | re.M)
 # Progress rows older builds saved as chat messages. They are hidden when read.
+USAGE = re.compile(r'^Tokens used: (\d+) in, (\d+) out, (\d+) cached(?:, cost \$(\d+(?:\.\d+)?))?$')
 TRANSIENT = {'Leader is planning…', 'Follower is implementing…', 'Leader is reviewing…'}
 BRANCH_RULE = ('\nInclude one plain line BRANCH_NAME: followed by the Git branch name you choose for this work: 2–6 lowercase words joined by hyphens, at most 48 characters, '
                'with no slashes. Decide it yourself from the feature, not from the wording of the request or from any name in the instructions you received. '
@@ -116,8 +117,18 @@ def public(room, before=None):
     for key in ('approval', 'placement', 'gate', 'publication', 'verdict', 'fixes', 'max_fixes', 'failure', 'answered', 'stage_started', 'preview'):
         result[key] = room.get(key)
     result['title'] = shown_title(room)
+    result['usage'] = usage_totals(room)
     result['notes_waiting'] = len(waiting_notes(room))
     return result
+
+
+def usage_totals(room):
+    """Tokens each role reported, summed over every turn of the task."""
+    totals = {}
+    for role, turns in (room.get('usage') or {}).items():
+        totals[role] = {key: round(sum(turn.get(key, 0) for turn in turns.values()), 4) for key in ('input', 'output', 'cached', 'cost')}
+        totals[role]['priced'] = any('cost' in turn for turn in turns.values())
+    return totals
 
 
 def shown_title(room):
@@ -422,6 +433,11 @@ class TeamRunner:
                             'role': role, 'agent': member['agent'], 'target': member['target'], 'stage': room['stage']}
                 self.store.db.execute('INSERT OR IGNORE INTO team_activity(team_id,source,source_cursor,document) VALUES (?,?,?,?)',
                                       (room['id'], source, seq, canonical(document)))
+                found = USAGE.match(entry['text']) if entry['id'] == 'usage' else None
+                if found:
+                    # Keyed by its place in the stream, so a replayed page is counted once.
+                    room.setdefault('usage', {}).setdefault(role, {})[source + '/' + str(seq)] = {
+                        'input': int(found[1]), 'output': int(found[2]), 'cached': int(found[3]), **({'cost': float(found[4])} if found[4] else {})}
                 cursor = seq
             require(page['cursor'] == cursor, 'Activity page did not advance correctly.')
             room['activity_cursors'][source] = cursor
