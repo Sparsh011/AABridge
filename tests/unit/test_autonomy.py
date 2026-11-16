@@ -44,6 +44,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.idle_work = False  # A fix round that disputes the review and commits nothing.
         self.plans = []  # Leader plan-turn output, when a test needs a specific one.
         self.asks = None  # A stage whose agent stops to ask the admin a question first.
+        self.bases, self.pulls = {}, None  # A Mac whose saved project commit differs; what a pull brings each Mac to.
         self.parts, self.uploaded, self.big = {}, [], False  # Review bundles sent in parts; whether the worker writes a large file.
         self.branch_lines = {}  # Extra output line per stage, e.g. a BRANCH_NAME: choice.
         self.runner = TeamRunner(self.state, self.store)
@@ -77,7 +78,13 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
     async def call(self, op, body, target, key=None):
         self.requests.append((op, body, target, key))
         if op == 'projects':
-            return {'app': {**self.project, 'adapter': 'codex' if target == 'mini' else 'claude', 'worker': 'codex' if target == 'mini' else 'claude'}}
+            return {'app': {**self.project, 'adapter': 'codex' if target == 'mini' else 'claude', 'worker': 'codex' if target == 'mini' else 'claude',
+                            **({'base_commit': self.bases[target]} if target in self.bases else {})}}
+        if op == 'project_baseline':
+            if self.pulls is not None:
+                self.bases[target] = self.pulls[target]
+            return {'base_commit': self.bases.get(target, self.base), 'branch': 'main', 'dirty': False, 'pulled': self.pulls is not None and target == 'mini',
+                    'ahead': 2 if self.pulls is None and target == 'local' else 0, 'tracked': True, 'note': ''}
         if op == 'snapshot_part':
             import base64
             self.parts.setdefault(body['upload'], {})[body['index']] = base64.b64decode(body['data'])
@@ -676,6 +683,106 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         with patch('aabridge_workspace.publish._gh', side_effect=gh({('APPROVE', False), ('COMMENT', False)})):
             self.assertEqual(publish.review(self.repo, url, 'Fine.', 'approved', 'a' * 40, []), 'comment')
         self.assertEqual(sent[-1], ('pr', 'comment'))
+
+    async def test_follow_up_continues_the_leader_session_and_carries_the_conversation(self):
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        await self.run_until(room['id'])
+        self.reviews = ['VERDICT: APPROVED']
+        self.admin('team_reply', {'team_id': room['id'], 'text': 'Now use that for the export too.'})
+        await self.run_until(room['id'])
+        plans = [(op, body) for op, body, _, _ in self.requests if op in {'submit', 'revise'} and (body.get('mode') == 'plan' or body.get('task_id') == 'task-0')]
+        self.assertEqual([op for op, _ in plans], ['submit', 'revise'])  # Same leader task, so the same agent session.
+        follow_up = plans[1][1]['text']
+        self.assertIn('same session', follow_up)
+        self.assertIn('Admin task: Now use that for the export too.', follow_up)
+        self.assertIn('Conversation so far in this task', follow_up)
+        self.assertIn('Admin: Add a weight input screen', follow_up)  # The original request is not lost.
+        self.assertIn('Leader (codex): TASK_TITLE: Fix weight validation', follow_up)
+        self.assertEqual(follow_up.count('Now use that for the export too.'), 1)
+        # When that session can no longer be resumed, a new one still gets the whole conversation.
+        next(t for t in self.tasks.values() if t['id'] == 'task-0')['status'] = 'failed'
+        self.reviews = ['VERDICT: APPROVED']
+        self.admin('team_reply', {'team_id': room['id'], 'text': 'And add a test.'})
+        done = await self.run_until(room['id'])
+        self.assertEqual(done['status'], 'completed')
+        fresh = [body for op, body, _, _ in self.requests if op == 'submit' and body['mode'] == 'plan'][-1]
+        self.assertIn('Admin task: And add a test.', fresh['objective'])
+        context = '\n'.join(fresh['context'])
+        self.assertIn('Admin: Add a weight input screen', context)
+        self.assertIn('Admin: Now use that for the export too.', context)
+        self.assertNotIn('plan_continuation', done)
+
+    def test_long_conversations_keep_the_first_request_and_the_latest_messages(self):
+        from aabridge_core.teams import history, message
+        room = {'objective': 'Latest ask', 'messages': []}
+        message(room, 'You · admin', 'ORIGINAL REQUEST')
+        message(room, 'AABridge', 'system notice')
+        for number in range(40):
+            message(room, 'claude · follower', f'report {number} ' + 'x' * 600)
+        message(room, 'You · admin', 'Latest ask')
+        text = history(room)[0]
+        self.assertLessEqual(len(text), 9400)
+        self.assertIn('Admin: ORIGINAL REQUEST', text)
+        self.assertIn('report 39', text)
+        self.assertNotIn('report 0 ', text)
+        self.assertIn('earlier messages left out', text)
+        self.assertNotIn('system notice', text)
+        self.assertNotIn('Latest ask', text)
+        self.assertEqual(history({'objective': 'First', 'messages': [{'speaker': 'You · admin', 'text': 'First'}]}), [])
+
+    async def test_commit_mismatch_is_fixed_in_one_step_or_explained(self):
+        self.project['capabilities']['baseline_refresh'] = True
+        self.bases = {'mini': 'c' * 40}
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        blocked = await self.run_until(room['id'])
+        shown = self.store.handle(request('team_status', {'team_id': room['id']}), 'local', {})
+        self.assertEqual((blocked['status'], shown['error_code']), ('blocked', 'baseline_mismatch'))
+        self.assertEqual(self.stages(), [])
+        # Pulling does not help while this Mac has commits it never pushed: say exactly that.
+        self.admin('team_align', {'team_id': room['id']})
+        await self.runner.step(room['id'])
+        still = self.store.handle(request('team_status', {'team_id': room['id']}), 'local', {})
+        self.assertEqual((still['status'], still['error_code'], still['align']), ('blocked', 'baseline_mismatch', None))
+        self.assertIn('2 commits not pushed', still['error'])
+        self.assertIn('Push from this Mac', still['error'])
+        self.assertEqual(self.stages(), [])
+        # After the push, the same button brings the other Mac forward and the task runs.
+        self.pulls = {'mini': self.base, 'local': self.base}
+        self.admin('team_align', {'team_id': room['id']})
+        done = await self.run_until(room['id'], statuses=('completed', 'awaiting_admin', 'failed'))
+        self.assertEqual((done['status'], done['verdict']), ('completed', 'approved'))
+        self.assertIn('Both project copies are on ' + self.base[:7], '\n'.join(m['text'] for m in done['messages']))
+        with self.assertRaises(BridgeError):  # Nothing to match on a healthy task.
+            self.admin('team_align', {'team_id': room['id']})
+
+    async def test_an_idle_agents_model_can_change_mid_task_but_not_the_one_working(self):
+        self.project['capabilities']['model_settings'] = True
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='ask')
+        self.pending = True
+        await self.runner.step(room['id'])  # The leader is planning.
+        self.assertEqual(self.store.handle(request('team_status', {'team_id': room['id']}), 'local', {})['busy_role'], 'leader')
+        with self.assertRaises(BridgeError) as busy:
+            self.admin('team_models', {'team_id': room['id'], 'leader_settings': {'model': 'gpt-6-sol'}})
+        self.assertIn('middle of a step', busy.exception.message)
+        self.admin('team_models', {'team_id': room['id'], 'follower_settings': {'model': 'sonnet', 'effort': 'high'}})
+        with self.assertRaises(BridgeError):
+            self.admin('team_models', {'team_id': room['id'], 'follower_settings': {'effort': 'ultra'}})  # Not a Claude effort level.
+        self.pending = False
+        next(iter(self.tasks.values()))['status'] = 'completed'
+        waiting = await self.run_until(room['id'])
+        self.assertEqual((waiting['gate']['kind'], self.store.handle(request('team_status', {'team_id': room['id']}), 'local', {})['busy_role']), ('plan', None))
+        self.admin('team_models', {'team_id': room['id'], 'leader_settings': {'model': 'gpt-6-sol'}})  # Both are idle at a decision.
+        self.admin('team_decide', {'team_id': room['id'], 'decision': 'continue'})
+        done = await self.run_until(room['id'])
+        work = next(body for op, body, _, _ in self.requests if op == 'submit' and body['mode'] == 'work')
+        review = next(body for op, body, _, _ in self.requests if op == 'submit' and body['mode'] == 'review')
+        self.assertEqual((work['model_settings'], review['model_settings']), ({'model': 'sonnet', 'effort': 'high'}, {'model': 'gpt-6-sol'}))
+        self.assertIn('the worker uses sonnet · high effort', '\n'.join(m['text'] for m in done['messages']))
+        with self.assertRaises(BridgeError):
+            self.admin('team_models', {'team_id': room['id'], 'leader_settings': {'model': 'gpt-6-sol'}})  # Finished: use the next message.
 
 
 if __name__ == '__main__':

@@ -1841,6 +1841,163 @@
         "key",
         "body"
       ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_align"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "team_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            }
+          },
+          "required": [
+            "team_id"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "team_models"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 2,
+          "properties": {
+            "team_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "leader_settings": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "model": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/\\[\\]-]{0,159}$"
+                },
+                "effort": {
+                  "enum": [
+                    "none",
+                    "minimal",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max",
+                    "ultra",
+                    "ultracode"
+                  ]
+                }
+              },
+              "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
+            },
+            "follower_settings": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "model": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/\\[\\]-]{0,159}$"
+                },
+                "effort": {
+                  "enum": [
+                    "none",
+                    "minimal",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max",
+                    "ultra",
+                    "ultracode"
+                  ]
+                }
+              },
+              "description": "Task-scoped CLI settings. Omit a field to use the agent default. Model/effort availability is checked by the installed agent."
+            }
+          },
+          "required": [
+            "team_id"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "op": {
+          "const": "project_baseline"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,79}$"
+            },
+            "pull": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "project_id"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "op",
+        "key",
+        "body"
+      ]
     }
   ]
 }
