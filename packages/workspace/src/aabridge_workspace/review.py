@@ -12,6 +12,17 @@ from .git import git
 MAX_BUNDLE = 60000  # Base64 fits alongside review instructions in a 128 KiB RPC.
 
 
+def review_diff(source: Path, base: str, commit: str) -> str:
+    """Bound prose evidence, never the implementation available in Git."""
+    diff = git(source, 'diff', '--no-ext-diff', '--no-textconv', base, commit)
+    if len(diff.encode()) <= 48000:
+        return diff
+    summary = git(source, 'diff', '--no-ext-diff', '--no-textconv', '--stat', base, commit)
+    return ('The full diff is too large for inline context. This is a summary, not a complete review. '
+            'Review every changed file in the exact implementation checkout; use git diff per file or hunk. '
+            f'Baseline: {base}; implementation: {commit}. No implementation files were discarded.\n' + summary[:12000])
+
+
 def export_snapshot(source: Path, base: str, commit: str) -> dict:
     require(git(source, 'rev-parse', '--verify', commit + '^{commit}') == commit,
             'The implementation commit is unavailable for review.', 'review_unavailable')
