@@ -25,6 +25,9 @@ STAGES = ('plan', 'work', 'review')
 ACTIVE = {'running', 'stopping'}
 TERMINAL = {'completed', 'failed', 'cancelled'}
 VERDICT = re.compile(r'VERDICT:\W*(APPROVED|CHANGES[ _]REQUESTED)', re.I)
+BRANCH_RULE = ('\nInclude one plain line BRANCH_NAME: followed by the Git branch name you choose for this work: 2–6 lowercase words joined by hyphens, at most 48 characters, '
+               'with no slashes. Decide it yourself from the feature, not from the wording of the request or from any name in the instructions you received. '
+               'AABridge adds the prefix and creates the branch, so do not create one for this.')
 VERDICT_RULE = ('\nEnd your review with one final line: "VERDICT: APPROVED" when it is ready to merge with no blocking defects, '
                 'or "VERDICT: CHANGES_REQUESTED" after a numbered list of what the follower must investigate or fix. '
                 'If you suspect a bug but are not sure, request changes and ask the follower to investigate it; do not approve on hope.')
@@ -56,6 +59,12 @@ def message(room, speaker, content):
 def verdict(summary):
     found = VERDICT.findall(summary or '')
     return None if not found else 'approved' if found[-1].upper() == 'APPROVED' else 'changes'
+
+
+def names_branch(room):
+    """Delivery will create a branch for this task and none is placed yet."""
+    publication = room.get('publication') or {}
+    return (room.get('placement') or {}).get('mode') in {'branch', 'worktree'} and (publication.get('merge') == 'merged' or not publication.get('branch'))
 
 
 def waiting_notes(room):
@@ -185,7 +194,7 @@ def handle(store, request, identity):
         if room.get('outputs', {}).get('work'):
             room['previous_result'] = room['outputs']['work']
             room['continuation'] = next(t for t in reversed(room['stage_tasks']) if t['stage'] == 'work')
-        for key in ('stage_body', 'stage_operation', 'stage_key', 'work_reason'):
+        for key in ('stage_body', 'stage_operation', 'stage_key', 'work_reason', 'branch_names'):
             room.pop(key, None)
         room.pop('failure', None)
         room.update(status='running', stage='plan', round=room['round'] + 1, task_id=None,
@@ -291,6 +300,8 @@ class TeamRunner:
         if stage == 'plan':
             objective += ('\nInclude one plain line TASK_TITLE: followed by a descriptive 4–8 word task title, at most 80 characters. '
                           'Describe the work, without role instructions, device IDs or paths. This is display metadata, not a replacement for your implementation plan.')
+        if names_branch(room) and (stage == 'plan' or (stage == 'work' and room.get('work_reason') not in {'review', 'notes'})):
+            objective += BRANCH_RULE
         snapshot = None
         if stage == 'review':
             require(project.get('capabilities', {}).get('review_snapshot'),
@@ -372,7 +383,8 @@ class TeamRunner:
         previous = room.get('publication') or {}
         if previous.get('merge') == 'merged':
             previous = {}  # A follow-up after a merge starts a fresh branch and pull request.
-        wanted = delivery.branch_name(room['follower']['agent'], room['assignment']['objective'], room['id'])
+        names = room.get('branch_names', {})
+        wanted = delivery.branch_name(room['follower']['agent'], names.get('follower') or names.get('leader'), room['id'])
         publication = {**previous, 'repository': str(repo), 'error': ''}
         body = ('Opened by AABridge for a team task. The leader reviews this pull request; only the admin merges it.\n\n'
                 f'## Task\n{room["objective"]}\n\n## Leader plan\n{room["outputs"]["plan"]["summary"][:6000]}\n\n'
@@ -642,6 +654,11 @@ class TeamRunner:
             elif task['status'] == 'completed':
                 result = task['result']
                 room['outputs'][stage] = result
+                if stage != 'review':
+                    from aabridge_protocol.titles import agent_branch
+                    chosen = agent_branch(result['summary'])
+                    if chosen:
+                        room.setdefault('branch_names', {})['follower' if stage == 'work' else 'leader'] = chosen
                 room.setdefault('resume', {})[stage] = {'target': target, 'task_id': task['id'], 'stage': stage}
                 message(room, member['agent'] + ' · ' + ('follower' if stage == 'work' else 'leader'), result['summary'])
                 if stage == 'work':

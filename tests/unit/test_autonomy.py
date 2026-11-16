@@ -41,6 +41,7 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.tasks, self.requests = {}, []
         self.reviews = []  # Summaries the leader returns, one per review turn.
         self.pending = False
+        self.branch_lines = {}  # Extra output line per stage, e.g. a BRANCH_NAME: choice.
         self.runner = TeamRunner(self.state, self.store)
         self.runner.call = self.call
 
@@ -59,6 +60,8 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
             (path / f'change-{task["revision"]}.txt').write_text('work')
             git(path, 'add', '--all'); git(path, 'commit', '-m', 'Work ' + str(task['revision']))
         summary = {'plan': 'TASK_TITLE: Fix weight validation\nPlan v' + str(task['revision']), 'work': 'Implemented v' + str(task['revision'])}.get(mode)
+        if mode in self.branch_lines:
+            summary += '\n' + self.branch_lines[mode]
         task['result'].update(summary=summary or (self.reviews.pop(0) if self.reviews else 'Looks fine'),
                               result_commit=git(path, 'rev-parse', 'HEAD'))
 
@@ -113,9 +116,14 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(verdict('Fine.\nVERDICT: APPROVED'), 'approved')
         self.assertEqual(verdict('VERDICT: APPROVED\n...\n**VERDICT: CHANGES_REQUESTED**\n1. Fix the bug'), 'changes')
         self.assertIsNone(verdict('Looks good to me'))
-        from aabridge_protocol.titles import compact_title, leader_title
+        from aabridge_protocol.titles import agent_branch, compact_title, leader_title
         self.assertEqual(leader_title('TASK_TITLE: Fix relay shutdown', 'Long instructions'), 'Fix relay shutdown')
         self.assertEqual(leader_title('TASK_TITLE: ' + 'x' * 81, 'Fix relay shutdown'), 'Fix relay shutdown')
+        self.assertEqual(agent_branch('Plan\nBRANCH_NAME: first-name\nBRANCH_NAME: `weight-screen`\n'), 'weight-screen')
+        self.assertEqual(agent_branch('BRANCH_NAME: good-name\nBRANCH_NAME: ../../main'), 'good-name')
+        for bad in ('main;rm -rf', 'feature/weights', 'Weight-Screen', '-leading', 'trailing-', 'two--dashes', 'a.lock', 'x' * 49, ''):
+            self.assertIsNone(agent_branch('BRANCH_NAME: ' + bad), bad)
+        self.assertIsNone(agent_branch('Mentions BRANCH_NAME: inline-only'))
         self.assertEqual(compact_title('You are the follower. Admin task: Fix relay shutdown. Then test it.'), 'Fix relay shutdown')
 
     def test_new_options_are_validated(self):
@@ -197,13 +205,37 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_worktree_placement_and_branch_name_collision(self):
         self.reviews = ['VERDICT: APPROVED']
+        self.branch_lines = {'plan': 'BRANCH_NAME: leader-choice', 'work': 'BRANCH_NAME: weight-screen'}
         room = self.start(approval='auto', placement={'mode': 'worktree'})
-        name = publish.branch_name('claude', 'Add a weight input screen', room['id'])
+        name = 'claude/weight-screen-' + room['id'][-6:]
         git(self.repo, 'branch', name)  # Someone else's branch with the same name.
         done = await self.run_until(room['id'])
         self.assertEqual(done['publication']['branch'], name + '-2')
         self.assertTrue((Path(done['publication']['path']) / 'change-1.txt').exists())
         self.assertEqual(git(self.repo, 'rev-parse', name), self.base)
+
+    async def test_branch_name_falls_back_without_using_the_prompt(self):
+        self.branch_lines = {'plan': 'BRANCH_NAME: leader-choice', 'work': 'BRANCH_NAME: ../../main'}
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto', placement={'mode': 'branch'})
+        done = await self.run_until(room['id'])
+        self.assertEqual(done['publication']['branch'], 'claude/leader-choice-' + room['id'][-6:])
+        self.branch_lines, self.reviews = {'plan': 'BRANCH_NAME: Not Valid'}, ['VERDICT: APPROVED']
+        room = self.start(approval='auto', placement={'mode': 'branch'})
+        done = await self.run_until(room['id'])
+        self.assertEqual(done['publication']['branch'], 'claude/task-' + room['id'][-6:])
+
+    async def test_branch_stays_named_across_fix_rounds_and_only_when_delivery_needs_one(self):
+        self.branch_lines = {'work': 'BRANCH_NAME: first-name'}
+        self.reviews = ['VERDICT: CHANGES_REQUESTED', 'VERDICT: APPROVED']
+        room = self.start(approval='auto', placement={'mode': 'branch'})
+        done = await self.run_until(room['id'])
+        self.assertEqual(done['publication']['branch'], 'claude/first-name-' + room['id'][-6:])
+        asked = [b for op, b, _, _ in self.requests if op == 'submit' and 'BRANCH_NAME:' in b['objective']]
+        self.assertEqual([b['mode'] for b in asked], ['plan', 'work'])
+        self.reviews = ['VERDICT: APPROVED']
+        await self.run_until(self.start(approval='auto')['id'])
+        self.assertEqual(len([b for op, b, _, _ in self.requests if op == 'submit' and 'BRANCH_NAME:' in b['objective']]), 2)
 
     async def test_current_branch_placement_refuses_main_and_fast_forwards_a_feature_branch(self):
         self.reviews = ['VERDICT: APPROVED']

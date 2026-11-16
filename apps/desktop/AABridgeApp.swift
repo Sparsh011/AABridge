@@ -359,7 +359,7 @@ struct AABridgeDesktop: App {
                                 error: nil, result: TeamResult(branch: "claude/task-1", worktree: "/tmp/task", result_commit: "a", base_commit: "b"))
             room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true); room.verdict = gate ? nil : "approved"; room.fixes = gate ? 0 : 1; room.max_fixes = 3
             room.gate = gate ? TeamGate(kind: "plan", reason: "The leader’s plan is ready. Approve it to start building, or ask for changes.") : nil
-            room.publication = gate ? nil : TeamPublication(mode: "branch", branch: "claude/add-a-new-screen-that-takes-weight-as-3f9c2a", path: "/Users/you/Fitness", pull_request: "https://github.com/you/fitness/pull/42")
+            room.publication = gate ? nil : TeamPublication(mode: "branch", branch: "claude/weight-input-screen-3f9c2a", path: "/Users/you/Fitness", pull_request: "https://github.com/you/fitness/pull/42")
             if CommandLine.arguments.contains("--linked") {
                 let branch = "claude/sync-weight-api-3f9c2a"
                 room.publication = TeamPublication(mode: "branch", branch: branch, path: "/Users/you/Sparshur-Service", pull_request: "https://github.com/you/sparshur-service/pull/12",

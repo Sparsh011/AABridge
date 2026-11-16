@@ -9,7 +9,6 @@ Merge request.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 from pathlib import Path
 
@@ -21,17 +20,9 @@ GH = ("/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh")
 PROTECTED = {"main", "master", "trunk", "develop", "production", "release"}
 
 
-def slug(text: str, limit: int = 40) -> str:
-    words: list[str] = []
-    for word in re.findall(r"[a-z0-9]+", text.lower()):
-        if len("-".join([*words, word])) > limit:
-            break
-        words.append(word)
-    return "-".join(words) or "task"
-
-
-def branch_name(agent: str, objective: str, team_id: str) -> str:
-    return f"{agent}/{slug(objective)}-{team_id[-6:]}"
+def branch_name(agent: str, name: str | None, team_id: str) -> str:
+    """`name` is an agent's validated choice; without one the admin's prompt stays out of Git."""
+    return f"{agent}/{name or 'task'}-{team_id[-6:]}"
 
 
 def _ancestor(repo: Path, older: str, newer: str) -> bool:
