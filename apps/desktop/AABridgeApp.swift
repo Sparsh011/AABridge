@@ -374,6 +374,14 @@ struct AABridgeDesktop: App {
                                            fix: "On Sparsh’s MBP, open AABridge → Projects, select “project-sparshur-service-codex” and press Save. Then press Try again here.",
                                            machine: "Sparsh’s MBP", project: "project-sparshur-service-codex", retry: true)
             }
+            if CommandLine.arguments[index + 2] == "question" {
+                // The worker stopped to ask the admin something; older messages are paged out.
+                room = TeamRoom(id: "team-question", objective: room.objective, status: "awaiting_admin", stage: "work", leader: lead, follower: follower,
+                                messages: Array(room.messages!.prefix(3)) + [TeamEntry(id: "q", speaker: "claude · follower", text: "Should weights be stored in kilograms or pounds?", time: now - 30)], error: nil, result: nil)
+                room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true); room.earlier_messages = 12
+                room.gate = TeamGate(kind: "question", reason: "Should weights be stored in kilograms or pounds?", cause: "question")
+            }
+            if CommandLine.arguments[index + 2] == "unapproved" { room.verdict = "changes" }
             team.room = room; team.rooms = [room]; team.selected = room.id
             if CommandLine.arguments.contains("--card-only") {
                 let panel = VStack(spacing: 16) { DeliveryCard(model: team, room: room, confirmMerge: .constant(false)); TeamMessageRow(entry: room.messages!.last!) }.padding(30).frame(width: 1200, height: 820, alignment: .top)

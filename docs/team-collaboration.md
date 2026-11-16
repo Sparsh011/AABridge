@@ -513,3 +513,11 @@ Limits: convergence depends on the leader model following the verdict rules;
 the stalemate check only sees a fix round with no new commit. Validation used
 fixtures and offscreen renders, not a two-Mac model run. The installed app and
 services were not replaced.
+
+Later the same day: a task in `waiting_question` opens a `question` gate
+(`gate.question_id`, `task_id`, `revision`). `team_decide` with `continue` and
+text stores `room.answer`; the runner sends the existing `answer` operation to
+that task and the stage continues with the same task and key. `team_status`
+accepts an optional `before` index (validator and request schema) and returns
+the previous 60 messages. The desktop posts a local notification on a status
+change to awaiting_admin, blocked, failed or completed while it is inactive.

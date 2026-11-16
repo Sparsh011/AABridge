@@ -2,8 +2,8 @@
 
 What AABridge still needs before a new user can pick it up and trust it.
 Sorted hardest first. `[x]` is done on `claude/team-usability`; `[ ]` is open.
-Checked with the deterministic suite (238 tests, four new ones for 1.1, 1.2
-and 2.1) and offscreen renders of the running, finished and new-task screens.
+Checked with the deterministic suite (240 tests, six new ones for 1.1, 1.2,
+1.7, 2.1 and 2.4) and offscreen renders of the running, finished and new-task screens.
 Nothing here was run against two physical Macs or a paid model, and the
 installed app and running services were not replaced. The orchestration
 changes take effect only after the bridge service on the admin Mac is updated
@@ -38,8 +38,12 @@ through Settings → Set up this Mac.
   (today the branch updates after each build round, not during one).
 - [ ] 1.6 Post leader reviews as real GitHub reviews (approve / request
   changes) with inline comments, instead of plain pull-request comments.
-- [ ] 1.7 Let the admin answer a worker’s question in place. Today a question
-  ends the round and needs a follow-up.
+  Blocked while both agents push and review through one GitHub login: GitHub
+  refuses an approve or request-changes review on your own pull request. It
+  needs a second account or a GitHub App for the reviewer.
+- [x] **1.7 A question from an agent ended the round.** The question now
+  appears as a card; the answer resumes the same agent turn, so nothing is
+  restarted. Checked against the test fixture only, not a real agent question.
 - [ ] 1.8 One build round is capped by the 64 KB review diff. Large changes
   need chunked review rather than “review manually”.
 
@@ -54,9 +58,12 @@ through Settings → Set up this Mac.
   every step ticked. It now reads “Finished, not approved”.
 - [x] **2.3 Silent message cut-off.** Only the last 40 messages were shown,
   with no hint. The window is larger and says how many earlier ones are hidden.
-- [ ] 2.4 Page back through earlier messages (needs a `team_status` cursor in
-  the request schema).
-- [ ] 2.5 macOS notification when a task needs the admin or finishes.
+- [x] **2.4 Earlier messages.** “Show earlier messages” pages back through
+  the whole chat (`team_status` takes an optional `before` index).
+- [x] **2.5 Notifications.** A macOS notification when a task needs you, is
+  blocked, fails or finishes while AABridge is in the background. Compiled
+  but not seen firing: it needs the installed app and a real status change.
+  It only watches while the Team tab is the selected section.
 
 ## 3. First-run clarity
 

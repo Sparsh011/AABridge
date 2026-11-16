@@ -354,10 +354,12 @@ struct TeamChatView: View {
             ScrollViewReader { proxy in ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     TeamProgress(room: room)
-                    if let hidden = room.earlier_messages, hidden > 0 {
-                        Text("\(hidden) earlier message\(hidden == 1 ? " is" : "s are") saved but not shown here.").font(.bridge(.caption)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                    if model.hiddenMessages > 0 {
+                        Button { model.loadEarlier() } label: {
+                            Label(model.loadingEarlier ? "Loading…" : "Show earlier messages (\(model.hiddenMessages) more)", systemImage: "arrow.up.circle")
+                        }.buttonStyle(.borderless).disabled(model.loadingEarlier).frame(maxWidth: .infinity)
                     }
-                    ForEach(room.messages ?? []) { entry in TeamMessageRow(entry: entry).id(entry.id) }
+                    ForEach(model.earlier + (room.messages ?? [])) { entry in TeamMessageRow(entry: entry).id(entry.id) }
                     if room.running { WorkingRow(model: model, room: room).id("working") }
                     actionPanel.id("action")
                 }.padding(24)
@@ -404,7 +406,15 @@ struct TeamChatView: View {
     }
 
     @ViewBuilder private var actionPanel: some View {
-        if room.status == "awaiting_admin", let gate = room.gate {
+        if room.status == "awaiting_admin", let gate = room.gate, gate.kind == "question" {
+            Card(tint: .orange) {
+                Label("The \(room.stage == "work" ? "worker" : "leader") has a question for you", systemImage: "questionmark.bubble.fill").font(.bridge(.headline))
+                Text(gate.reason).textSelection(.enabled)
+                Text("Type your answer in the box below. The \(room.stage == "work" ? "worker" : "leader") carries on from where it stopped; nothing is restarted.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                Button { model.decide("continue") } label: { Label("Send answer", systemImage: "paperplane.fill") }.buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command).disabled(model.trimmedDraft.isEmpty || model.busy || model.hasPending)
+            }
+        } else if room.status == "awaiting_admin", let gate = room.gate {
             Card(tint: .orange) {
                 Label(gateTitle(gate), systemImage: "hand.raised.fill").font(.bridge(.headline))
                 Text(gate.reason)
@@ -482,11 +492,12 @@ struct TeamChatView: View {
     }
 
     private var placeholder: String {
-        model.terminal ? "Ask the team a question, or tell it what to change next" : model.waiting ? "Optional note to send with your choice…" : "Send a note to the team, e.g. “Use kilograms, not pounds”"
+        model.terminal ? "Ask the team a question, or tell it what to change next" : room.gate?.kind == "question" ? "Type your answer…" : model.waiting ? "Optional note to send with your choice…" : "Send a note to the team, e.g. “Use kilograms, not pounds”"
     }
 
     private var hint: String {
         if model.terminal { return "Ask a question or request a change. A question is answered without touching code; a change continues on the same branch. ⌘Return sends." }
+        if room.gate?.kind == "question" { return "The team is paused until you answer. ⌘Return sends your answer." }
         if model.waiting { return "The team is paused until you choose above." }
         let waiting = room.notes_waiting ?? 0
         if waiting > 0 { return "\(waiting) note\(waiting == 1 ? "" : "s") waiting. The team gets it when the current step finishes, then adjusts." }
@@ -512,14 +523,14 @@ struct TeamProgress: View {
                         Circle().fill(done || now ? color.opacity(0.16) : Color.primary.opacity(0.05)).frame(width: 30, height: 30)
                         Image(systemName: done ? "checkmark" : now && room.unapproved ? "exclamationmark" : step.2).font(.bridge(.callout).bold()).foregroundStyle(color)
                     }
-                    Text(now && room.unapproved ? "Not approved" : step.1).font(.bridge(.callout).weight(now ? .bold : .regular)).foregroundStyle(done || now ? Color.primary : Color.secondary)
+                    Text(now && room.unapproved ? "Not approved" : step.1).font(.bridge(.callout).weight(now ? .bold : .regular)).foregroundStyle(done || now ? Color.primary : Color.secondary).lineLimit(1).fixedSize()
                 }
                 if index < steps.count - 1 {
                     Rectangle().fill(done ? Color.green.opacity(0.5) : Color.primary.opacity(0.12)).frame(height: 2).frame(maxWidth: .infinity).padding(.horizontal, 8)
                 }
             }
             if let fixes = room.fixes, fixes > 0 {
-                Text("Fix round \(fixes) of \(room.max_fixes ?? fixes)").font(.bridge(.caption).bold()).foregroundStyle(.orange)
+                Text("Fix round \(fixes) of \(room.max_fixes ?? fixes)").font(.bridge(.caption).bold()).foregroundStyle(.orange).lineLimit(1).fixedSize()
                     .padding(.horizontal, 8).padding(.vertical, 4).background(Color.orange.opacity(0.12)).clipShape(Capsule()).padding(.leading, 12)
             }
         }.padding(14).background(Color.primary.opacity(0.025)).clipShape(RoundedRectangle(cornerRadius: 12))
