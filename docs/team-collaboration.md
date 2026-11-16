@@ -486,3 +486,38 @@ device views were rendered and inspected offscreen. The `devices` action reached
 real paired MacBook from the mini. The toolbar placement in a live window and a full
 two-Mac restart were not verified. The installed app and running services were not
 replaced or restarted.
+
+## Review convergence, answer-only follow-ups and visible work · November 17, 2026
+
+Open and finished items are tracked in [production-readiness.md](production-readiness.md).
+
+`teams.py` now ends review loops early. The review prompt separates blocking
+findings from suggestions; a re-review judges the earlier points; the worker
+reports each point as FIXED or DISPUTED. `VERDICT: NEEDS_ADMIN` and a fix round
+that produced no new commit both open the admin gate at once (`gate.cause` is
+`leader`, `dispute`, `limit`, `unclear` or `fixes`). A plan turn ending in
+`NEXT: ANSWER_ONLY` completes the round without build or review, restores the
+previous result and verdict, and sets `answered`. `title` stays the first
+request. Stage progress is no longer saved as chat messages; rows saved by
+older builds are filtered in `public()` and remain in the database.
+`team_status` adds `title`, `answered`, `stage_started` and `live.started_at`;
+`teams` adds `title`, `verdict`, `approval` and `answered`. No request schema
+changed.
+
+Desktop: the live activity panel is pinned above the composer and stays as a
+log after the task; the chat ends with a working row for the active agent; a
+strip under the header shows the branch, folder and pull request for the whole
+task; a completed task without approval reads “Finished, not approved”.
+
+Limits: convergence depends on the leader model following the verdict rules;
+the stalemate check only sees a fix round with no new commit. Validation used
+fixtures and offscreen renders, not a two-Mac model run. The installed app and
+services were not replaced.
+
+Later the same day: a task in `waiting_question` opens a `question` gate
+(`gate.question_id`, `task_id`, `revision`). `team_decide` with `continue` and
+text stores `room.answer`; the runner sends the existing `answer` operation to
+that task and the stage continues with the same task and key. `team_status`
+accepts an optional `before` index (validator and request schema) and returns
+the previous 60 messages. The desktop posts a local notification on a status
+change to awaiting_admin, blocked, failed or completed while it is inactive.

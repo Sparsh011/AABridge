@@ -41,6 +41,9 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         self.tasks, self.requests = {}, []
         self.reviews = []  # Summaries the leader returns, one per review turn.
         self.pending = False
+        self.idle_work = False  # A fix round that disputes the review and commits nothing.
+        self.plans = []  # Leader plan-turn output, when a test needs a specific one.
+        self.asks = None  # A stage whose agent stops to ask the admin a question first.
         self.branch_lines = {}  # Extra output line per stage, e.g. a BRANCH_NAME: choice.
         self.runner = TeamRunner(self.state, self.store)
         self.runner.call = self.call
@@ -56,10 +59,12 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
 
     def turn(self, task, mode):
         path = Path(task['result']['worktree'])
-        if mode == 'work':
+        if mode == 'work' and not self.idle_work:
             (path / f'change-{task["revision"]}.txt').write_text('work')
             git(path, 'add', '--all'); git(path, 'commit', '-m', 'Work ' + str(task['revision']))
         summary = {'plan': 'TASK_TITLE: Fix weight validation\nPlan v' + str(task['revision']), 'work': 'Implemented v' + str(task['revision'])}.get(mode)
+        if mode == 'plan' and self.plans:
+            summary = self.plans.pop(0)
         if mode in self.branch_lines:
             summary += '\n' + self.branch_lines[mode]
         task['result'].update(summary=summary or (self.reviews.pop(0) if self.reviews else 'Looks fine'),
@@ -80,7 +85,10 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
                 if body.get('review_snapshot'):
                     from aabridge_workspace.review import import_snapshot
                     import_snapshot(path, self.base, body['review_snapshot'], 'codex/' + task_id)
-                self.turn(task, body['mode'])
+                if self.asks == body['mode']:
+                    task.update(status='waiting_question', question={'id': 'q1', 'text': 'Kilograms or pounds?'})
+                else:
+                    self.turn(task, body['mode'])
                 self.tasks[key] = task
             return self.tasks[key]
         task = next(t for t in self.tasks.values() if t['id'] == body['task_id'])
@@ -91,6 +99,12 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
                 if body.get('review_snapshot'):
                     from aabridge_workspace.review import import_snapshot
                     import_snapshot(Path(task['result']['worktree']), self.base, body['review_snapshot'], 'codex/' + task['id'])
+                self.turn(task, task['mode'])
+            return task
+        if op == 'answer':
+            if task.get('question'):
+                self.assertEqual((body['question_id'], body['revision']), (task['question']['id'], task['revision']))
+                task.update(status='completed', question=None, answer=body['text'])
                 self.turn(task, task['mode'])
             return task
         if op == 'status':
@@ -459,6 +473,113 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         error = get(self.store, room['id'])['error']
         self.assertIn('over its direct connection', error)
         self.assertNotIn('Remote Login', error)
+
+    async def test_review_disagreement_reaches_the_admin_without_spending_the_fix_rounds(self):
+        self.assertEqual(verdict('Open question: metric or imperial.\nVERDICT: NEEDS_ADMIN'), 'admin')
+        # The worker disputes the review and changes nothing; the leader repeats itself.
+        self.reviews = ['1. Rename it\nVERDICT: CHANGES_REQUESTED'] * 2
+        room = self.start(approval='auto', max_fixes=5)
+        for _ in range(20):
+            await self.runner.step(room['id'])
+            current = get(self.store, room['id'])
+            if current['stage'] == 'work' and current.get('work_reason') == 'review':
+                self.idle_work = True
+            if current['status'] == 'awaiting_admin':
+                break
+        self.assertEqual((current['gate']['kind'], current['gate']['cause'], current['fixes']), ('review', 'dispute', 1))
+        self.assertEqual([mode for _, mode in self.stages()], ['plan', 'work', 'review', 'work', 'review'])
+        rework = next(body['text'] for op, body, _, _ in self.requests if op == 'revise' and 'requested changes' in body.get('text', ''))
+        self.assertIn('FIXED', rework)
+        self.assertIn('DISPUTED', rework)
+        rereview = [body['text'] for op, body, _, _ in self.requests if op == 'revise' and 'This is a re-review' in body.get('text', '')]
+        self.assertEqual(len(rereview), 1)
+        # The admin accepts the work; the task ends without an approval.
+        done = self.admin('team_decide', {'team_id': room['id'], 'decision': 'finish'})
+        self.assertEqual((done['status'], done['verdict']), ('completed', 'changes'))
+
+    async def test_leader_can_hand_an_open_review_point_to_the_admin(self):
+        self.reviews = ['Kilograms or pounds is a product choice.\nVERDICT: NEEDS_ADMIN']
+        room = self.start(approval='auto', max_fixes=5)
+        waiting = await self.run_until(room['id'])
+        self.assertEqual((waiting['status'], waiting['gate']['cause'], waiting['fixes']), ('awaiting_admin', 'leader', 0))
+        self.assertEqual([mode for _, mode in self.stages()], ['plan', 'work', 'review'])
+        self.reviews = ['VERDICT: APPROVED']
+        self.admin('team_decide', {'team_id': room['id'], 'decision': 'continue', 'text': 'Use kilograms.'})
+        self.assertEqual((await self.run_until(room['id']))['verdict'], 'approved')
+
+    async def test_follow_up_question_is_answered_without_a_build_and_keeps_the_result(self):
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        first = self.store.handle(request('team_status', {'team_id': room['id']}), 'local', {})
+        done = await self.run_until(room['id'])
+        self.assertEqual(done['status'], 'completed')
+        commit = done['outputs']['work']['result_commit']
+        self.plans = ['It is approved; nothing is open.\nNEXT: ANSWER_ONLY']
+        self.admin('team_reply', {'team_id': room['id'], 'text': 'Why is the PR not approved?'})
+        answered = await self.run_until(room['id'])
+        self.assertEqual([mode for _, mode in self.stages()], ['plan', 'work', 'review', 'plan'])
+        shown = self.store.handle(request('team_status', {'team_id': room['id']}), 'local', {})
+        self.assertEqual((shown['status'], shown['answered'], shown['verdict'], shown['result']['result_commit']), ('completed', True, 'approved', commit))
+        self.assertEqual((shown['title'], shown['objective']), ('Fix weight validation', 'Why is the PR not approved?'))
+        self.assertTrue(first['title'])
+        listed = self.store.handle(request('teams', {}), 'local', {})['teams'][0]
+        self.assertEqual((listed['title'], listed['answered']), ('Fix weight validation', True))
+        # The next change request still continues the saved implementation.
+        self.reviews = ['VERDICT: APPROVED']
+        self.admin('team_reply', {'team_id': room['id'], 'text': 'Now add pounds.'})
+        again = await self.run_until(room['id'])
+        self.assertEqual([op for op, mode in self.stages() if mode == 'work'], ['submit', 'revise'])
+        self.assertFalse(again.get('answered'))
+
+    async def test_progress_rows_are_not_saved_and_old_ones_are_hidden_not_deleted(self):
+        room = self.start(approval='auto')
+        saved = get(self.store, room['id'])
+        from aabridge_core.teams import message, save
+        message(saved, 'AABridge', 'Leader is planning…')
+        save(self.store, saved)
+        self.reviews = ['VERDICT: APPROVED']
+        done = await self.run_until(room['id'])
+        texts = [m['text'] for m in done['messages']]
+        self.assertEqual(texts.count('Leader is planning…'), 1)  # The old saved row is still in the database.
+        self.assertFalse({'Follower is implementing…', 'Leader is reviewing…'} & set(texts))
+        shown = self.store.handle(request('team_status', {'team_id': room['id']}), 'local', {})
+        self.assertNotIn('Leader is planning…', [m['text'] for m in shown['messages']])
+        self.assertEqual(shown['earlier_messages'], 0)
+        self.assertTrue(shown['stage_started'])
+
+    async def test_worker_question_is_answered_in_place_and_the_same_turn_continues(self):
+        self.asks, self.reviews = 'work', ['VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        waiting = await self.run_until(room['id'])
+        self.assertEqual((waiting['status'], waiting['stage'], waiting['gate']['kind'], waiting['gate']['reason']), ('awaiting_admin', 'work', 'question', 'Kilograms or pounds?'))
+        self.assertIn(('claude · follower', 'Kilograms or pounds?'), [(m['speaker'], m['text']) for m in waiting['messages']])
+        for decision, text in (('finish', None), ('continue', None), ('replan', 'Other plan')):
+            with self.assertRaises(BridgeError):
+                self.admin('team_decide', {'team_id': room['id'], 'decision': decision, **({'text': text} if text else {})})
+        self.admin('team_decide', {'team_id': room['id'], 'decision': 'continue', 'text': 'Kilograms.'})
+        done = await self.run_until(room['id'])
+        self.assertEqual((done['status'], done['verdict']), ('completed', 'approved'))
+        # One build task: the question did not restart it, and the answer was not also sent as a note.
+        self.assertEqual([op for op, body, _, _ in self.requests if op in {'submit', 'revise', 'answer'}], ['submit', 'submit', 'answer', 'submit'])
+        self.assertEqual(next(t for t in self.tasks.values() if t['mode'] == 'work')['answer'], 'Kilograms.')
+        self.assertEqual(done['guidance'], [])
+
+    def test_earlier_messages_can_be_paged_back(self):
+        room = self.start(approval='auto')
+        saved = get(self.store, room['id'])
+        from aabridge_core.teams import message, save
+        for number in range(200):
+            message(saved, 'AABridge', 'Note ' + str(number))
+        save(self.store, saved)
+        status = lambda **extra: self.store.handle(request('team_status', {'team_id': room['id'], **extra}), 'local', {})
+        latest = status()
+        self.assertEqual((len(latest['messages']), latest['earlier_messages'], latest['messages'][-1]['text']), (120, 82, 'Note 199'))
+        page = status(before=latest['earlier_messages'])
+        self.assertEqual((len(page['messages']), page['earlier_messages'], page['messages'][-1]['text']), (60, 22, 'Note 79'))
+        first = status(before=page['earlier_messages'])
+        self.assertEqual((len(first['messages']), first['earlier_messages'], first['messages'][0]['text']), (22, 0, 'Add a weight input screen'))
+        with self.assertRaises(BridgeError):
+            validate_request({'version': 1, 'op': 'team_status', 'key': 'k1', 'body': {'team_id': 'team-1', 'before': 0}})
 
 
 if __name__ == '__main__':

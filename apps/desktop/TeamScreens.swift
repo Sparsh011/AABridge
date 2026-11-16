@@ -18,6 +18,13 @@ struct TeamStatus {
         default: text = "Stopped"; color = .gray; icon = "stop.circle.fill"
         }
     }
+    /// "Done" is reserved for work the leader approved.
+    init(room: TeamRoom) {
+        if room.unapproved { self.init(text: "Finished, not approved", color: .orange, icon: "exclamationmark.circle.fill") }
+        else if room.onlyAnswered { self.init(text: "Answered", color: .green, icon: "checkmark.bubble.fill") }
+        else { self.init(status: room.status, stage: room.stage) }
+    }
+    private init(text: String, color: Color, icon: String) { self.text = text; self.color = color; self.icon = icon }
 }
 
 struct StatusPill: View {
@@ -97,11 +104,11 @@ struct TeamSidebar: View {
             Text("TASKS").font(.bridge(.caption).bold()).foregroundStyle(.secondary).padding(.top, 6)
             ScrollView { VStack(spacing: 8) {
                 ForEach(model.rooms) { room in
-                    let status = TeamStatus(status: room.status, stage: room.stage)
+                    let status = TeamStatus(room: room)
                     let chosen = model.selected == room.id && !model.showAssignment
                     Button { model.selected = room.id; model.showAssignment = false; model.draft = ""; model.refresh() } label: {
                         VStack(alignment: .leading, spacing: 7) {
-                            Text(room.objective).lineLimit(2).font(.bridge(.headline)).multilineTextAlignment(.leading)
+                            Text(room.displayTitle).lineLimit(2).font(.bridge(.headline)).multilineTextAlignment(.leading)
                             HStack(spacing: 6) {
                                 Image(systemName: status.icon).foregroundStyle(status.color)
                                 Text(status.text).foregroundStyle(status.color)
@@ -143,6 +150,7 @@ struct NewTeamTaskView: View {
             }.padding(.horizontal, 32).padding(.vertical, 24)
             Divider()
             ScrollView { VStack(alignment: .leading, spacing: 30) {
+                HowItWorks()
                 if model.choices.count < 2 { GettingStarted(count: model.choices.count, navigate: navigate) }
                 FormStep(number: 1, title: "Pick your team", subtitle: "Any agent on any connected Mac can lead or do the work.") {
                     HStack(alignment: .top, spacing: 12) {
@@ -266,6 +274,43 @@ struct RolePicker: View {
     }
 }
 
+/// The whole product in one row, for someone who has never run a team.
+struct HowItWorks: View {
+    @AppStorage("teamHowItWorksOpen") private var open = true
+    private let steps = [("text.bubble", "You describe", "Say what you want, in plain words."),
+                         ("crown.fill", "Leader plans", "Reads the project. Writes instructions. Edits nothing."),
+                         ("hammer.fill", "Worker builds", "Writes the code in a private copy and runs checks."),
+                         ("checkmark.seal", "Leader reviews", "Checks the real changes. Sends back real defects."),
+                         ("arrow.triangle.merge", "You decide", "Get a branch or pull request. Only you merge.")]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button { open.toggle() } label: {
+                HStack {
+                    Label("How a team works", systemImage: "questionmark.circle").font(.bridge(.headline))
+                    Spacer()
+                    Text(open ? "Hide" : "Show").font(.bridge(.callout)).foregroundStyle(.secondary)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            if open {
+                HStack(alignment: .top, spacing: 6) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Image(systemName: step.0).foregroundStyle(.tint)
+                                Text(step.1).font(.bridge(.callout).bold())
+                            }
+                            Text(step.2).font(.bridge(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }.frame(maxWidth: .infinity, alignment: .topLeading)
+                        if index < steps.count - 1 { Image(systemName: "chevron.right").font(.bridge(.caption)).foregroundStyle(.secondary).padding(.top, 3) }
+                    }
+                }
+                Text("The two agents talk to each other so you don’t relay messages between them. You can watch every action, send a note at any time, and stop the task.")
+                    .font(.bridge(.caption)).foregroundStyle(.secondary)
+            }
+        }.padding(16).background(Color.accentColor.opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
 struct GettingStarted: View {
     let count: Int
     var navigate: (Int) -> Void
@@ -304,15 +349,26 @@ struct TeamChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            WorkLocationBar(model: model, room: room)
             Divider()
             ScrollViewReader { proxy in ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     TeamProgress(room: room)
-                    if ["running", "stopping"].contains(room.status) { LiveActivityView(model: model) }
-                    ForEach(room.messages ?? []) { entry in TeamMessageRow(entry: entry).id(entry.id) }
+                    if model.hiddenMessages > 0 {
+                        Button { model.loadEarlier() } label: {
+                            Label(model.loadingEarlier ? "Loading…" : "Show earlier messages (\(model.hiddenMessages) more)", systemImage: "arrow.up.circle")
+                        }.buttonStyle(.borderless).disabled(model.loadingEarlier).frame(maxWidth: .infinity)
+                    }
+                    ForEach(model.earlier + (room.messages ?? [])) { entry in TeamMessageRow(entry: entry).id(entry.id) }
+                    if room.running { WorkingRow(model: model, room: room).id("working") }
                     actionPanel.id("action")
                 }.padding(24)
-            }.onChange(of: room.messages?.last?.id) { id in if let id = id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } } }
+            }.onChange(of: room.messages?.last?.id) { id in if let id = id { withAnimation { proxy.scrollTo(room.running ? "working" : id, anchor: .bottom) } } }
+                .onChange(of: room.status) { _ in withAnimation { proxy.scrollTo("action", anchor: .bottom) } } }
+            if room.running || !model.liveEntries.isEmpty {
+                Divider()
+                LiveActivityView(model: model)
+            }
             Divider()
             composer
         }.confirmationDialog("Merge this pull request on GitHub?", isPresented: $confirmMerge) {
@@ -324,7 +380,7 @@ struct TeamChatView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(room.objective).font(.bridge(.title2).bold()).lineLimit(2)
+                Text(room.displayTitle).font(.bridge(.title2).bold()).lineLimit(2).help(room.objective)
                 HStack(spacing: 8) {
                     Label(memberName(room.leader) + " · Leader", systemImage: "crown.fill")
                     Image(systemName: "arrow.right").foregroundStyle(.secondary)
@@ -340,7 +396,7 @@ struct TeamChatView: View {
                 }
             }
             Spacer()
-            StatusPill(status: TeamStatus(status: room.status, stage: room.stage))
+            StatusPill(status: TeamStatus(room: room))
         }.padding(.horizontal, 24).padding(.vertical, 18)
     }
 
@@ -350,9 +406,17 @@ struct TeamChatView: View {
     }
 
     @ViewBuilder private var actionPanel: some View {
-        if room.status == "awaiting_admin", let gate = room.gate {
+        if room.status == "awaiting_admin", let gate = room.gate, gate.kind == "question" {
             Card(tint: .orange) {
-                Label(gate.kind == "plan" ? "The plan is ready for your OK" : "Your call: the leader asked for fixes", systemImage: "hand.raised.fill").font(.bridge(.headline))
+                Label("The \(room.stage == "work" ? "worker" : "leader") has a question for you", systemImage: "questionmark.bubble.fill").font(.bridge(.headline))
+                Text(gate.reason).textSelection(.enabled)
+                Text("Type your answer in the box below. The \(room.stage == "work" ? "worker" : "leader") carries on from where it stopped; nothing is restarted.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                Button { model.decide("continue") } label: { Label("Send answer", systemImage: "paperplane.fill") }.buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command).disabled(model.trimmedDraft.isEmpty || model.busy || model.hasPending)
+            }
+        } else if room.status == "awaiting_admin", let gate = room.gate {
+            Card(tint: .orange) {
+                Label(gateTitle(gate), systemImage: "hand.raised.fill").font(.bridge(.headline))
                 Text(gate.reason)
                 Text("You can type a note in the box below first. It’s sent along with the button you press.").font(.bridge(.caption)).foregroundStyle(.secondary)
                 HStack {
@@ -363,7 +427,8 @@ struct TeamChatView: View {
                     } else {
                         Button { model.decide("continue") } label: { Label("Let the worker fix it", systemImage: "wrench.and.screwdriver") }.buttonStyle(.borderedProminent)
                         Button("Change the plan") { model.decide("replan") }.disabled(model.trimmedDraft.isEmpty).help("Type what to change in the box below first.")
-                        Button("Finish here") { model.decide("finish") }
+                        Button(["dispute", "leader"].contains(gate.cause ?? "") ? "Accept the work as it is" : "Finish here") { model.decide("finish") }
+                            .help("Ends the task and keeps the work. The leader’s last review stays unapproved.")
                     }
                 }.disabled(model.busy || model.hasPending)
             }
@@ -383,6 +448,17 @@ struct TeamChatView: View {
                 Text(result.worktree).font(.bridge(.callout, design: .monospaced)).textSelection(.enabled)
                 Text("Send a follow-up below to continue from where the team stopped.").foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private func gateTitle(_ gate: TeamGate) -> String {
+        if gate.kind == "plan" { return "The plan is ready for your OK" }
+        switch gate.cause ?? "" {
+        case "dispute": return "Your call: the leader and the worker disagree"
+        case "leader": return "Your call: the leader needs a decision from you"
+        case "limit": return "Your call: still not approved after \(room.max_fixes ?? 3) fix rounds"
+        case "unclear": return "Your call: the review has no clear verdict"
+        default: return "Your call: the leader asked for fixes"
         }
     }
 
@@ -416,11 +492,12 @@ struct TeamChatView: View {
     }
 
     private var placeholder: String {
-        model.terminal ? "What should the team do next?" : model.waiting ? "Optional note to send with your choice…" : "Send a note to the team, e.g. “Use kilograms, not pounds”"
+        model.terminal ? "Ask the team a question, or tell it what to change next" : room.gate?.kind == "question" ? "Type your answer…" : model.waiting ? "Optional note to send with your choice…" : "Send a note to the team, e.g. “Use kilograms, not pounds”"
     }
 
     private var hint: String {
-        if model.terminal { return "Your next message continues on the same branch, so earlier changes are kept. ⌘Return sends." }
+        if model.terminal { return "Ask a question or request a change. A question is answered without touching code; a change continues on the same branch. ⌘Return sends." }
+        if room.gate?.kind == "question" { return "The team is paused until you answer. ⌘Return sends your answer." }
         if model.waiting { return "The team is paused until you choose above." }
         let waiting = room.notes_waiting ?? 0
         if waiting > 0 { return "\(waiting) note\(waiting == 1 ? "" : "s") waiting. The team gets it when the current step finishes, then adjusts." }
@@ -431,28 +508,29 @@ struct TeamChatView: View {
 struct TeamProgress: View {
     let room: TeamRoom
     private let steps = [("plan", "Plan", "list.bullet.clipboard"), ("work", "Build", "hammer"), ("review", "Review", "checkmark.seal"), ("done", "Done", "flag.checkered")]
-    private var current: Int { room.status == "completed" ? 4 : steps.firstIndex(where: { $0.0 == room.stage }) ?? 0 }
-    private var halted: Bool { ["failed", "cancelled", "blocked"].contains(room.status) }
+    /// A task finished without approval stops at Review; an answered question never left Plan.
+    private var current: Int { room.unapproved ? 2 : room.onlyAnswered ? 1 : room.status == "completed" ? 4 : steps.firstIndex(where: { $0.0 == room.stage }) ?? 0 }
+    private var halted: Bool { ["failed", "cancelled", "blocked"].contains(room.status) || room.onlyAnswered }
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                 let done = index < current
                 let now = index == current && !halted
-                let color: Color = done ? .green : now ? (room.status == "awaiting_admin" ? .orange : .accentColor) : .secondary
+                let color: Color = done ? .green : now ? (room.status == "awaiting_admin" || room.unapproved ? .orange : .accentColor) : .secondary
                 HStack(spacing: 7) {
                     ZStack {
                         Circle().fill(done || now ? color.opacity(0.16) : Color.primary.opacity(0.05)).frame(width: 30, height: 30)
-                        Image(systemName: done ? "checkmark" : step.2).font(.bridge(.callout).bold()).foregroundStyle(color)
+                        Image(systemName: done ? "checkmark" : now && room.unapproved ? "exclamationmark" : step.2).font(.bridge(.callout).bold()).foregroundStyle(color)
                     }
-                    Text(step.1).font(.bridge(.callout).weight(now ? .bold : .regular)).foregroundStyle(done || now ? Color.primary : Color.secondary)
+                    Text(now && room.unapproved ? "Not approved" : step.1).font(.bridge(.callout).weight(now ? .bold : .regular)).foregroundStyle(done || now ? Color.primary : Color.secondary).lineLimit(1).fixedSize()
                 }
                 if index < steps.count - 1 {
                     Rectangle().fill(done ? Color.green.opacity(0.5) : Color.primary.opacity(0.12)).frame(height: 2).frame(maxWidth: .infinity).padding(.horizontal, 8)
                 }
             }
             if let fixes = room.fixes, fixes > 0 {
-                Text("Fix round \(fixes) of \(room.max_fixes ?? fixes)").font(.bridge(.caption).bold()).foregroundStyle(.orange)
+                Text("Fix round \(fixes) of \(room.max_fixes ?? fixes)").font(.bridge(.caption).bold()).foregroundStyle(.orange).lineLimit(1).fixedSize()
                     .padding(.horizontal, 8).padding(.vertical, 4).background(Color.orange.opacity(0.12)).clipShape(Capsule()).padding(.leading, 12)
             }
         }.padding(14).background(Color.primary.opacity(0.025)).clipShape(RoundedRectangle(cornerRadius: 12))
@@ -473,10 +551,19 @@ struct TeamMessageRow: View {
     /// The leader's machine-readable verdict line, shown as a badge instead.
     private var verdict: String? {
         guard isLeader, let line = entry.text.components(separatedBy: "\n").last(where: { $0.uppercased().contains("VERDICT:") }) else { return nil }
-        return line.uppercased().contains("APPROVED") ? "approved" : line.uppercased().contains("CHANGES") ? "changes" : nil
+        let value = line.uppercased()
+        return value.contains("APPROVED") ? "approved" : value.contains("CHANGES") ? "changes" : value.contains("NEEDS") ? "admin" : nil
     }
+    private var answerOnly: Bool { isLeader && entry.text.uppercased().range(of: #"(?m)^\W*NEXT:\W*ANSWER[ _]ONLY\W*$"#, options: .regularExpression) != nil }
+    /// Lines the agents write for AABridge, not for the reader.
+    private static let markers = #"^\W*(TASK_TITLE|BRANCH_NAME|NEXT|VERDICT):.*$"#
     private var body_: String {
-        verdict == nil ? entry.text : entry.text.components(separatedBy: "\n").filter { !$0.uppercased().contains("VERDICT:") }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        entry.text.components(separatedBy: "\n").filter { $0.range(of: Self.markers, options: [.regularExpression, .caseInsensitive]) == nil }
+            .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private func badge(_ text: String, _ icon: String, _ color: Color) -> some View {
+        Label(text, systemImage: icon).font(.bridge(.caption).bold()).foregroundStyle(color)
+            .padding(.horizontal, 8).padding(.vertical, 4).background(color.opacity(0.12)).clipShape(Capsule())
     }
     private var long: Bool { body_.count > 900 }
 
@@ -484,8 +571,9 @@ struct TeamMessageRow: View {
         if isSystem {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "info.circle").foregroundStyle(.secondary)
-                Text(entry.text).font(.bridge(.callout)).foregroundStyle(.secondary).textSelection(.enabled)
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 6)
+                Text(Self.linked(entry.text)).font(.bridge(.callout)).foregroundStyle(.secondary).textSelection(.enabled)
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 8)
+                .background(Color.primary.opacity(0.02)).clipShape(RoundedRectangle(cornerRadius: 10))
         } else {
             HStack(alignment: .top, spacing: 10) {
                 if isAdmin { Spacer(minLength: 90) }
@@ -500,11 +588,10 @@ struct TeamMessageRow: View {
                         Text(Date(timeIntervalSince1970: entry.time), style: .time).font(.bridge(.caption)).foregroundStyle(.secondary)
                     }
                     MarkdownText(text: body_).frame(maxWidth: .infinity, maxHeight: long && !expanded ? 320 : nil, alignment: .topLeading).clipped()
-                    if let verdict = verdict {
-                        Label(verdict == "approved" ? "Approved" : "Changes requested", systemImage: verdict == "approved" ? "checkmark.seal.fill" : "arrow.uturn.backward.circle.fill")
-                            .font(.bridge(.caption).bold()).foregroundStyle(verdict == "approved" ? Color.green : Color.orange)
-                            .padding(.horizontal, 8).padding(.vertical, 4).background((verdict == "approved" ? Color.green : Color.orange).opacity(0.12)).clipShape(Capsule())
-                    }
+                    if verdict == "approved" { badge("Approved", "checkmark.seal.fill", .green) }
+                    else if verdict == "changes" { badge("Changes requested", "arrow.uturn.backward.circle.fill", .orange) }
+                    else if verdict == "admin" { badge("Needs your decision", "hand.raised.fill", .orange) }
+                    else if answerOnly { badge("Answer only · no code changed", "bubble.left.fill", .secondary) }
                     if long {
                         Button(expanded ? "Show less" : "Show more") { expanded.toggle() }.buttonStyle(.borderless).font(.bridge(.callout))
                     }
@@ -514,6 +601,123 @@ struct TeamMessageRow: View {
             }
         }
     }
+}
+
+extension TeamMessageRow {
+    /// AABridge's own notices can carry a pull-request link; make https links clickable.
+    static func linked(_ text: String) -> AttributedString {
+        var result = AttributedString(text)
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return result }
+        for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let url = match.url, url.scheme == "https", let range = Range(match.range, in: text),
+                  let lower = AttributedString.Index(range.lowerBound, within: result), let upper = AttributedString.Index(range.upperBound, within: result) else { continue }
+            result[lower..<upper].link = url
+        }
+        return result
+    }
+}
+
+/// The in-progress bubble at the end of the chat: who has the task right now.
+struct WorkingRow: View {
+    @ObservedObject var model: TeamRoomModel
+    let room: TeamRoom
+    private var worker: Bool { room.stage == "work" }
+    private var member: TeamMember { worker ? room.follower : room.leader }
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: worker ? "hammer.fill" : "crown.fill").foregroundStyle(.white).frame(width: 30, height: 30)
+                .background(Circle().fill(worker ? Color.teal : Color.purple))
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(room.status == "stopping" ? "Stopping \(agentName(member.agent))…" : "\(agentName(member.agent)) · \(worker ? "Worker" : "Leader") is \(stageVerb(room.stage).lowercased())…").font(.bridge(.headline))
+                        if let started = room.live?.started_at ?? room.stage_started {
+                            Text(elapsedText(Int(context.date.timeIntervalSince1970 - started))).font(.bridge(.caption)).foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(detail).font(.bridge(.callout)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.035)).overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.accentColor.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            Spacer(minLength: 40)
+        }
+    }
+    private var detail: String {
+        let place = "on " + model.deviceLabel(member.target)
+        switch room.stage {
+        case "plan": return "Reading the project \(place) and writing instructions for the worker. No files are edited in this step."
+        case "work": return (room.fixes ?? 0) > 0 ? "Fixing what the review found \(place), in its private copy of the project." : "Writing the code \(place), in its private copy of the project. Your folder is not touched while it works."
+        default: return "Checking the worker’s actual changes \(place). It can run checks but cannot edit the code."
+        }
+    }
+}
+
+/// Where the code is right now. Shown for the whole task, not only at the end.
+struct WorkLocationBar: View {
+    @ObservedObject var model: TeamRoomModel
+    let room: TeamRoom
+    private var mode: String { room.placement?.mode ?? "sandbox" }
+    private var building: Bool { room.running && room.stage == "work" }
+
+    var body: some View {
+        if room.onlyAnswered && room.result == nil { EmptyView() } else {
+            VStack(alignment: .leading, spacing: 5) {
+                if let publication = room.publication, let branch = publication.branch {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.triangle.branch").foregroundStyle(.tint)
+                        Text(branch).font(.bridge(.callout, design: .monospaced)).textSelection(.enabled).lineLimit(1)
+                        Button("Copy") { copy(branch) }.buttonStyle(.borderless)
+                        if let path = publication.path {
+                            Text("in " + URL(fileURLWithPath: path).lastPathComponent).foregroundStyle(.secondary)
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }.buttonStyle(.borderless)
+                        }
+                        if let url = publication.pull_request, let link = URL(string: url) {
+                            Text("·").foregroundStyle(.secondary)
+                            Image(systemName: "arrow.triangle.pull").foregroundStyle(.tint)
+                            Link("Pull request" + (link.lastPathComponent.allSatisfy(\.isNumber) ? " #" + link.lastPathComponent : ""), destination: link)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    note(publication.merge == "merged" ? "Merged on GitHub." : building ? "The worker is changing its private copy. This branch updates when the build step finishes."
+                         : "This branch has the worker’s latest finished build. Check it out with: git switch \(branch)")
+                    ForEach(publication.linked ?? []) { link in
+                        if let other = link.branch { note("\(link.name): branch \(other)" + (link.pull_request.map { " · " + $0 } ?? "")) }
+                    }
+                } else if mode != "sandbox" {
+                    row("arrow.triangle.branch", room.running || room.status == "awaiting_admin" ? "No branch yet" : "No branch was created")
+                    note(mode == "current" ? "The commits are added to your checked-out branch when the first build step finishes. Until then the worker uses a private copy."
+                         : "AABridge creates \(room.follower.agent)/… in your project when the first build step finishes. Until then the worker uses a private copy, so nothing appears in your folder.")
+                } else if let result = room.result {
+                    HStack(spacing: 8) {
+                        Image(systemName: "shippingbox").foregroundStyle(.tint)
+                        Text("Kept in AABridge").font(.bridge(.callout).bold())
+                        Text(result.branch).font(.bridge(.callout, design: .monospaced)).textSelection(.enabled).lineLimit(1)
+                        if room.follower.target == "local" {
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: result.worktree)]) }.buttonStyle(.borderless)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    note(room.follower.target == "local" ? "Your project folder is unchanged. The work is a Git checkout at \(result.worktree)"
+                         : "Your project folder is unchanged. The work is saved on \(model.deviceLabel(room.follower.target)).")
+                } else {
+                    row("shippingbox", "Result stays in AABridge")
+                    note("Your project folder is not touched. A saved copy appears here when the first build step finishes.")
+                }
+                if let error = room.publication?.error, !error.isEmpty {
+                    Label("Couldn’t deliver the latest build: " + error, systemImage: "exclamationmark.triangle").font(.bridge(.caption)).foregroundStyle(.orange).textSelection(.enabled)
+                }
+            }.font(.bridge(.callout)).padding(.horizontal, 24).padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading).background(Color.primary.opacity(0.025))
+        }
+    }
+    private func row(_ icon: String, _ text: String) -> some View {
+        HStack(spacing: 8) { Image(systemName: icon).foregroundStyle(.secondary); Text(text).font(.bridge(.callout).bold()) }
+    }
+    private func note(_ text: String) -> some View {
+        Text(text).font(.bridge(.caption)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+    }
+    private func copy(_ text: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
 }
 
 struct DeliveryCard: View {
@@ -530,8 +734,15 @@ struct DeliveryCard: View {
     }
 
     var body: some View {
-        Card(tint: .green) {
-            Label(room.verdict == "approved" ? "Done. The leader approved the work." : "Done", systemImage: "checkmark.seal.fill").font(.bridge(.title3).bold())
+        Card(tint: room.unapproved ? .orange : .green) {
+            if room.unapproved {
+                Label("Finished without the leader’s approval", systemImage: "exclamationmark.circle.fill").font(.bridge(.title3).bold())
+                Text("The work is saved, but the leader’s last review did not approve it. Read that review before you merge, or send a message to keep working on it.").foregroundStyle(.secondary)
+            } else if room.answered == true {
+                Label(room.verdict == "approved" ? "Answered. The approved work is unchanged." : "Answered. No code was changed.", systemImage: "checkmark.bubble.fill").font(.bridge(.title3).bold())
+            } else {
+                Label(room.verdict == "approved" ? "Done. The leader approved the work." : "Done", systemImage: "checkmark.seal.fill").font(.bridge(.title3).bold())
+            }
             let pulls = places.compactMap { $0.pull }
             if !places.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {

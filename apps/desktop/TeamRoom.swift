@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import UserNotifications
 
 struct TeamMember: Codable { let target: String; let project: String; let agent: String; var model_settings: AgentModelSettings? = nil }
 struct TeamEntry: Decodable, Identifiable {
@@ -8,7 +9,7 @@ struct TeamEntry: Decodable, Identifiable {
 }
 struct TeamResult: Decodable { let branch: String; let worktree: String; let result_commit: String; let base_commit: String }
 struct TeamPlacement: Codable { var mode: String; var pull_request: Bool? = nil }
-struct TeamGate: Decodable { let kind: String; let reason: String }
+struct TeamGate: Decodable { let kind: String; let reason: String; var cause: String? = nil }
 /// Why a stage stopped, and the one thing to do about it.
 struct TeamFailure: Decodable { let problem: String; let fix: String; let machine: String; let project: String; let retry: Bool }
 struct TeamPublication: Decodable {
@@ -36,6 +37,14 @@ struct TeamRoom: Decodable, Identifiable {
     var publication: TeamPublication? = nil; var verdict: String? = nil
     var fixes: Int? = nil; var max_fixes: Int? = nil; var notes_waiting: Int? = nil
     var failure: TeamFailure? = nil
+    var title: String? = nil; var answered: Bool? = nil; var earlier_messages: Int? = nil; var stage_started: Double? = nil
+    /// The task keeps its first name; a follow-up message does not rename it.
+    var displayTitle: String { title?.isEmpty == false ? title! : objective }
+    var running: Bool { ["running", "stopping"].contains(status) }
+    /// Finished, but the leader's last review did not approve the work.
+    var unapproved: Bool { status == "completed" && approval != nil && verdict != "approved" && !(answered == true && verdict == nil) }
+    /// The leader answered a question and no code was written in this task.
+    var onlyAnswered: Bool { status == "completed" && answered == true && verdict == nil }
 }
 struct TeamChoice: Identifiable {
     let id: String; let label: String; let member: TeamMember
@@ -72,6 +81,13 @@ final class TeamRoomModel: ObservableObject {
     @Published var maxFixes: Int { didSet { preferences.set(maxFixes, forKey: "teamMaxFixes") } }
     @Published var liveEntries: [LiveActivityEntry] = []
     @Published var liveNotice = ""
+    /// Older messages the admin paged back to, for the selected task only.
+    @Published var earlier: [TeamEntry] = []
+    @Published var loadingEarlier = false
+    private var earlierRoom = ""
+    /// Last status seen per task, so a change can raise a notification once.
+    private var seenStatus: [String: String] = [:]
+    private var askedToNotify = false
     private var liveCursor = 0
     private var liveRoom = ""
     /// A send is in flight. Polling uses `refreshing`, so buttons don't flicker.
@@ -164,6 +180,8 @@ final class TeamRoomModel: ObservableObject {
                 DispatchQueue.main.async {
                     let changed = self.liveRoom != wanted
                     if changed { self.liveEntries = []; self.liveRoom = wanted }
+                    if self.earlierRoom != wanted { self.earlier = []; self.earlierRoom = wanted }
+                    self.announce(rooms)
                     var merged = Dictionary(uniqueKeysWithValues: self.liveEntries.map { ($0.id, $0) })
                     for entry in feed { merged[entry.id] = entry }
                     self.liveEntries = Array(merged.values.sorted { $0.cursor < $1.cursor }.suffix(250))
@@ -181,6 +199,47 @@ final class TeamRoomModel: ObservableObject {
                     }
                 }
             } catch { DispatchQueue.main.async { self.refreshing = false; self.notice = error.localizedDescription } }
+        }
+    }
+    /// Messages not yet on screen: the server's count minus the ones paged in.
+    var hiddenMessages: Int { max(0, (room?.earlier_messages ?? 0) - earlier.count) }
+    func loadEarlier() {
+        guard let room = room, hiddenMessages > 0, !loadingEarlier else { return }
+        loadingEarlier = true
+        let before = hiddenMessages, id = room.id
+        DispatchQueue.global(qos: .userInitiated).async {
+            let page = try? JSONDecoder().decode(TeamRoom.self, from: self.activity.call("team_status", target: "local", input: self.envelope(["team_id": id, "before": before])))
+            DispatchQueue.main.async {
+                self.loadingEarlier = false
+                guard self.earlierRoom == id else { return }
+                if let messages = page?.messages, !messages.isEmpty { self.earlier = messages + self.earlier }
+                else { self.notice = "Couldn’t load earlier messages. Update the bridge service on this Mac in Settings → Set up this Mac, then try again." }
+            }
+        }
+    }
+    /// A macOS notification when a task stops needing only the agents, while AABridge is in the background.
+    private func announce(_ rooms: [TeamRoom]) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let first = seenStatus.isEmpty
+        for room in rooms {
+            let before = seenStatus[room.id]
+            seenStatus[room.id] = room.status
+            guard !first, let before = before, before != room.status, !NSApp.isActive else { continue }
+            let text: String
+            switch room.status {
+            case "awaiting_admin": text = "The team is waiting for your decision."
+            case "blocked": text = "The team is paused and needs a fix."
+            case "failed": text = "The task stopped with an error."
+            case "completed": text = room.unapproved ? "Finished, but the leader did not approve the work." : room.answered == true ? "The leader answered your question." : "Done. The leader approved the work."
+            default: continue
+            }
+            let content = UNMutableNotificationContent()
+            content.title = room.displayTitle; content.body = text; content.sound = .default
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: room.id + "-" + room.status, content: content, trigger: nil))
+        }
+        if !askedToNotify, rooms.contains(where: { ["running", "stopping"].contains($0.status) }) {
+            askedToNotify = true
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
     }
     func deviceLabel(_ target: String) -> String {
