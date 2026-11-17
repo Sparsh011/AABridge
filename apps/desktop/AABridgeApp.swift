@@ -411,6 +411,11 @@ struct AABridgeDesktop: App {
                 room.gate = TeamGate(kind: "question", reason: "Should weights be stored in kilograms or pounds?", cause: "question")
             }
             if CommandLine.arguments[index + 2] == "unapproved" { room.verdict = "changes" }
+            if CommandLine.arguments[index + 2] == "mismatch" {
+                room = TeamRoom(id: "team-mismatch", objective: room.objective, status: "blocked", stage: "plan", leader: lead, follower: follower, messages: Array(room.messages!.prefix(2)),
+                                error: "The two project copies are on different Git commits: this Mac has 168fd34, Mac mini has 2646a64. Check out the same commit on both Macs, save the project in Projects on each, then press Try again.", result: nil)
+                room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true); room.error_code = "baseline_mismatch"
+            }
             team.room = room; team.rooms = [room]; team.selected = room.id
             if CommandLine.arguments.contains("--card-only") {
                 let panel = VStack(spacing: 16) { DeliveryCard(model: team, room: room, confirmMerge: .constant(false)); TeamMessageRow(entry: room.messages!.last!) }.padding(30).frame(width: 1200, height: 820, alignment: .top)

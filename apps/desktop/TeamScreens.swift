@@ -444,6 +444,21 @@ struct TeamChatView: View {
             }
         } else if let failure = room.failure, ["blocked", "failed"].contains(room.status) {
             FailureCard(failure: failure, retry: room.status == "blocked" ? { model.control("team_retry") } : nil, disabled: model.busy || model.hasPending)
+        } else if room.status == "blocked", room.error_code == "baseline_mismatch" {
+            Card(tint: .orange) {
+                Label("The two project copies are on different commits", systemImage: "arrow.triangle.branch").font(.bridge(.headline))
+                Text(room.error?.isEmpty == false ? room.error! : "The leader’s and the worker’s copies of the project differ.").textSelection(.enabled)
+                Text("Match the two copies updates each one from its own remote (a fast-forward pull, only when nothing is uncommitted) and then continues. It never switches branches or discards work.")
+                    .font(.bridge(.caption)).foregroundStyle(.secondary)
+                if room.align == "requested" {
+                    HStack { ProgressView().controlSize(.small); Text("Updating both copies…") }
+                } else {
+                    HStack {
+                        Button { model.control("team_align") } label: { Label("Match the two copies", systemImage: "arrow.triangle.2.circlepath") }.buttonStyle(.borderedProminent)
+                        Button("Try again without changes") { model.control("team_retry") }
+                    }.disabled(model.busy || model.hasPending)
+                }
+            }
         } else if room.status == "blocked" {
             Card(tint: .red) {
                 Label("The team is paused", systemImage: "exclamationmark.triangle.fill").font(.bridge(.headline))
@@ -479,6 +494,29 @@ struct TeamChatView: View {
                     HStack(alignment: .top, spacing: 18) {
                         VStack(alignment: .leading) { Text("Leader").font(.bridge(.headline)); ModelSettingsFields(agent: room.leader.agent, model: $model.leaderModel, effort: $model.leaderEffort) }
                         VStack(alignment: .leading) { Text("Worker").font(.bridge(.headline)); ModelSettingsFields(agent: room.follower.agent, model: $model.followerModel, effort: $model.followerEffort) }
+                    }.padding(.top, 6)
+                }.font(.bridge(.callout))
+            } else {
+                DisclosureGroup("Change an agent’s model") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top, spacing: 18) {
+                            ForEach(["leader", "follower"], id: \.self) { role in
+                                VStack(alignment: .leading) {
+                                    Text(role == "leader" ? "Leader" : "Worker").font(.bridge(.headline))
+                                    if room.busy_role == role {
+                                        Text("Working right now. You can change its model when this step ends.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                                    } else if role == "leader" {
+                                        ModelSettingsFields(agent: room.leader.agent, model: $model.leaderModel, effort: $model.leaderEffort)
+                                    } else {
+                                        ModelSettingsFields(agent: room.follower.agent, model: $model.followerModel, effort: $model.followerEffort)
+                                    }
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        HStack {
+                            Button("Apply from the next step") { model.applyModels() }.disabled(!model.settingsValid || model.busy || model.hasPending || room.status == "stopping")
+                            Text("Takes effect when that agent starts its next step. The step running now is not interrupted.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                        }
                     }.padding(.top, 6)
                 }.font(.bridge(.callout))
             }

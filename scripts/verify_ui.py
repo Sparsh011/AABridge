@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEWS = [("running", ["--preview-live"], []), ("done", ["--preview-done"], ["done"]), ("plan-gate", ["--preview-done"], ["gate"]),
-            ("question", ["--preview-done"], ["question"]), ("unapproved", ["--preview-done"], ["unapproved"]), ("blocked", ["--preview-done"], ["fail"]),
+            ("question", ["--preview-done"], ["question"]), ("unapproved", ["--preview-done"], ["unapproved"]), ("blocked", ["--preview-done"], ["fail"]), ("mismatch", ["--preview-done"], ["mismatch"]),
             ("new-task", ["--preview-team"], []), ("projects", ["--preview-projects"], []), ("devices", ["--preview-devices"], []),
             ("connections", ["--preview-connections"], ["--outdated"])]
 
@@ -65,6 +65,7 @@ def service_fixture(folder: Path) -> Path:
                           publication={"mode": "branch", "branch": "claude/weight-screen-abc123", "path": "/tmp/project", "commit": "a" * 40, "repository": "/tmp/project", "error": "",
                                        "pull_request": "https://github.com/o/r/pull/7", "review_posts": {"https://github.com/o/r/pull/7": "review"}}),
     }
+    rooms["mismatch"] = make("mismatch", status="blocked", stage="plan", error="The two project copies are on different Git commits.", error_code="baseline_mismatch")
     long_room = teams.get(store, make("long")["id"])
     for number in range(200):
         teams.message(long_room, "AABridge", "Note " + str(number))

@@ -813,7 +813,7 @@ class TeamRunner:
                     leader, follower = room['leader_project']['base_commit'], room['follower_project']['base_commit']
                     require(leader == follower,
                             f'The two project copies are on different Git commits: {self.machine(room["leader"]["target"])} has {leader[:7]}, {self.machine(room["follower"]["target"])} has {follower[:7]}. '
-                            'Check out the same commit on both Macs, save the project in Projects on each, then press Try again.', 'baseline_mismatch')
+                            'Press Match the two copies to update each from its remote, or check out the same commit on both Macs yourself and save the project in Projects on each.', 'baseline_mismatch')
                     project = room['follower_project' if stage == 'work' else 'leader_project']
                     # Within a round each role continues its own task, so an agent
                     # remembers its earlier plan, work or review.
