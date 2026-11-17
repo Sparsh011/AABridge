@@ -60,6 +60,8 @@ func runSelfTest(fixture path: String?) -> Bool {
             check(fixture.rooms["delivered"]?.publication?.pull_request != nil && fixture.rooms["delivered"]?.publication?.branch != nil, "delivery decodes")
             check((fixture.rooms["long"]?.earlier_messages ?? 0) > 0, "hidden message count decodes")
             check(fixture.list.allSatisfy { !$0.displayTitle.isEmpty }, "task list rows have titles")
+            check(fixture.rooms["mismatch"]?.error_code == "baseline_mismatch" && fixture.rooms["mismatch"]?.busy_role == "leader", "commit mismatch and busy role decode")
+            check(fixture.rooms["dispute"]?.busy_role == nil && fixture.rooms["building"]?.busy_role == "follower", "idle agents are reported at a decision and during a build")
             check(fixture.devices.app_release != nil && fixture.activity.entries.first?.role == "leader", "device report and activity page decode")
         } catch { check(false, "service output did not decode: \(error)") }
     }

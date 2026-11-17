@@ -53,6 +53,8 @@ struct TeamRoom: Decodable, Identifiable {
     var failure: TeamFailure? = nil
     var preview: TeamPreview? = nil
     var usage: [String: TeamUsage]? = nil
+    /// Why the task is paused, the role in the middle of a step, and a commit match in progress.
+    var error_code: String? = nil; var busy_role: String? = nil; var align: String? = nil
     var title: String? = nil; var answered: Bool? = nil; var earlier_messages: Int? = nil; var stage_started: Double? = nil
     /// The task keeps its first name; a follow-up message does not rename it.
     var displayTitle: String { title?.isEmpty == false ? title! : objective }
@@ -299,6 +301,17 @@ final class TeamRoomModel: ObservableObject {
         guard let room = room else { return }
         mutate(action, body: ["team_id": room.id])
     }
+    /// Change the model of whichever agent is not in the middle of a step. It applies from that agent's next step.
+    func applyModels() {
+        guard let room = room, settingsValid else { return }
+        var body: [String: Any] = ["team_id": room.id]
+        if room.busy_role != "leader" { body["leader_settings"] = settings(leaderModel, leaderEffort) }
+        if room.busy_role != "follower" { body["follower_settings"] = settings(followerModel, followerEffort) }
+        keepDraft = true
+        mutate("team_models", body: body)
+    }
+    /// A note being typed survives an action that is not about the note.
+    private var keepDraft = false
     private func mutate(_ action: String, body: [String: Any]) {
         guard !busy, !hasPending else { return }
         do {
@@ -318,7 +331,9 @@ final class TeamRoomModel: ObservableObject {
                 let room = try JSONDecoder().decode(TeamRoom.self, from: self.activity.call(action, target: "local", input: payload))
                 DispatchQueue.main.async {
                     self.preferences.removeObject(forKey: "teamPendingPayload"); self.preferences.removeObject(forKey: "teamPendingAction")
-                    self.room = room; self.selected = room.id; self.draft = ""; self.showAssignment = false
+                    self.room = room; self.selected = room.id; self.showAssignment = false
+                    if !self.keepDraft { self.draft = "" }
+                    self.keepDraft = false
                     self.busy = false; self.notice = ""; self.refresh()
                 }
             } catch { DispatchQueue.main.async { self.busy = false; self.notice = error.localizedDescription + " Your send is saved; Retry will use the same key." } }

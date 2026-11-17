@@ -89,8 +89,9 @@ def load_config(state: Path) -> dict:
 
 
 def save_config(state: Path, config: dict, *, exclusive: bool = False) -> None:
-    # A local configuration operation, never an RPC. The daemon reloads policy
-    # on every request. Replace atomically so readers never see partial policy.
+    # A local configuration operation. The one RPC that reaches it is
+    # project_baseline, which can only record this Mac's own checked-out commit.
+    # The daemon reloads policy on every request. Replace atomically so readers never see partial policy.
     if exclusive:
         write_private(state / "config.json", canonical(config).encode(), exclusive=True)
         return

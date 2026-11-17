@@ -12,13 +12,13 @@ MAX_MESSAGE = 131_072
 SNAPSHOT_PARTS = 256  # 256 parts of 60,000 bytes: a review bundle of up to about 15 MB.
 ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,79}\Z")
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
-OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity", "task_rename", "task_forget", "task_work", "snapshot_part"})
+OPERATIONS = frozenset({"submit", "status", "events", "conversation", "tasks", "answer", "revise", "cancel", "ping", "projects", "shutdown", "activity", "task_rename", "task_forget", "task_work", "snapshot_part", "project_baseline"})
 TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_cancel", "team_retry", "team_activity",
-                      "team_guide", "team_decide", "team_merge"})
+                      "team_guide", "team_decide", "team_merge", "team_models", "team_align"})
 OPERATIONS = OPERATIONS | TEAM_OPS
 HISTORY_READS = frozenset({'tasks', 'status', 'conversation', 'events', 'activity', 'task_work'})
 MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry",
-                       "team_guide", "team_decide", "team_merge", "task_rename", "task_forget"})
+                       "team_guide", "team_decide", "team_merge", "team_models", "team_align", "task_rename", "task_forget"})
 APPROVALS = ("ask", "auto")
 PLACEMENTS = ("sandbox", "branch", "worktree", "current")
 DECISIONS = ("continue", "replan", "finish")
@@ -204,7 +204,18 @@ def validate_request(value: object) -> Request:
         require(body["decision"] in DECISIONS, "Unknown decision.")
         if "text" in body:
             text(body["text"], 3000)
-    elif op in {"team_status", "team_cancel", "team_retry", "team_reply", "team_merge"}:
+    elif op == "team_models":
+        fields(body, {"team_id"}, {"leader_settings", "follower_settings"})
+        identifier(body["team_id"])
+        require("leader_settings" in body or "follower_settings" in body, "Choose a model for the leader or the worker.")
+        for role in ("leader", "follower"):
+            if role + "_settings" in body:
+                fields(body[role + "_settings"], set(), {"model", "effort"})
+    elif op == "project_baseline":
+        fields(body, {"project_id"}, {"pull"})
+        identifier(body["project_id"])
+        require(type(body.get("pull", False)) is bool, "Pull must be true or false.")
+    elif op in {"team_status", "team_cancel", "team_retry", "team_reply", "team_merge", "team_align"}:
         fields(body, {"team_id"} | ({"text"} if op == "team_reply" else set()), {"leader_settings", "follower_settings"} if op == "team_reply" else {"before"} if op == "team_status" else set())
         identifier(body["team_id"])
         if "before" in body:

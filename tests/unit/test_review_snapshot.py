@@ -96,6 +96,48 @@ class ReviewSnapshotTests(unittest.TestCase):
         with self.assertRaises(BridgeError):
             import_snapshot(workspace.path, self.base, task['review_snapshot'], 'codex/again')
 
+    def test_project_baseline_follows_the_folder_and_only_fast_forwards(self):
+        from aabridge_core.config import save_config
+        from aabridge_workspace.publish import refresh_baseline
+        origin = self.root / 'origin.git'
+        git(self.root, 'clone', '--bare', '--template=', str(self.source), str(origin))
+        mine = self.root / 'mine'
+        git(self.root, 'clone', '--template=', str(origin), str(mine))
+        start = git(mine, 'rev-parse', 'HEAD')
+        self.change('newer on the remote')  # Someone else pushes.
+        git(self.source, 'push', '-q', str(origin), 'HEAD:main')
+        self.assertEqual(refresh_baseline(mine, False)['base_commit'], start)  # Reading does not pull.
+        (mine / 'code.txt').write_text('uncommitted edit')
+        held = refresh_baseline(mine, True)
+        self.assertEqual((held['base_commit'], held['dirty'], held['pulled']), (start, True, False))
+        self.assertIn('uncommitted changes', held['note'])
+        self.assertEqual((mine / 'code.txt').read_text(), 'uncommitted edit')
+        git(mine, 'checkout', '--', 'code.txt')
+        moved = refresh_baseline(mine, True)
+        self.assertEqual((moved['base_commit'], moved['pulled'], moved['ahead'], moved['branch']), (self.commit, True, 0, 'main'))
+        (mine / 'local.txt').write_text('mine'); git(mine, 'add', '--all'); git(mine, 'commit', '-m', 'Local only')
+        self.assertEqual(refresh_baseline(mine, True)['ahead'], 1)  # Never rewound to match the remote.
+
+        state = self.root / 'receiver'; initialize(state)
+        config = load_config(state)
+        limits = {'runtime_seconds': 60, 'max_turns': 10, 'max_revisions': 5}
+        config['projects']['app'] = {'worker': 'codex', 'adapter': 'codex', 'base_commit': start, 'scope': ['*'], 'repository': str(mine.resolve()),
+                                     'permission_profile': 'coding-v1', 'limits': limits, 'execution_enabled': True, 'verification': {'profile': 'repository-v1'}}
+        save_config(state, config)
+        store = Store(state); self.addCleanup(store.close)
+        head = git(mine, 'rev-parse', 'HEAD')
+        self.assertEqual(store.handle(request('project_baseline', {'project_id': 'app'}), 'local', load_config(state))['base_commit'], head)
+        self.assertEqual(load_config(state)['projects']['app']['base_commit'], head)
+        self.assertTrue(store.handle(request('projects', {}), 'local', load_config(state))['app']['capabilities']['baseline_refresh'])
+        with self.assertRaises(BridgeError):  # A Mac without access to this project cannot ask.
+            store.handle(request('project_baseline', {'project_id': 'app'}), 'stranger', load_config(state))
+        body = {'project_id': 'app', 'recipient': 'codex', 'base_commit': head, 'objective': 'Work', 'scope': ['*'], 'acceptance': ['x'],
+                'context': [], 'limits': limits, 'permission_profile': 'coding-v1', 'mode': 'work'}
+        store.handle(request('submit', body, 'busy-task'), 'local', load_config(state))
+        with self.assertRaises(BridgeError) as busy:  # Not while an agent is working from the old baseline.
+            store.handle(request('project_baseline', {'project_id': 'app'}), 'local', load_config(state))
+        self.assertEqual(busy.exception.code, 'project_busy')
+
     def test_dirty_review_is_preserved(self):
         (self.review / 'code.txt').write_text('keep my edits')
         with self.assertRaises(BridgeError):

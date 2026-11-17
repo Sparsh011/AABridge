@@ -592,3 +592,28 @@ two Macs, Developer ID signing, `scripts/build_desktop.py`, any model call.
 
 247 deterministic tests pass; `make ui-check` passes 27 checks and 10 screens.
 Not run: a real agent turn reporting tokens, VoiceOver, a two-Mac task.
+
+## Leader memory, commit matching and mid-task models · 0.3.0.dev7
+
+- `team_reply` records `plan_continuation` (the last plan task). The next plan
+  stage revises that task when it is still `completed`, with a follow-up
+  prompt; otherwise it submits a new one. `history(room)` adds the conversation
+  so far (first request always, newest messages within about 9,000 characters)
+  to every fresh or follow-up plan and to a round's first review.
+- New operation `project_baseline` (`project_id`, optional `pull`), allowed for
+  a peer that was granted the project and refused while the project has an
+  active task. It fast-forwards the checked-out branch from its upstream when
+  no tracked file is modified, then records the folder's HEAD as the project's
+  `base_commit`. It is the only RPC that writes `config.json`; it cannot name a
+  commit. Receivers advertise `baseline_refresh`. See threat model: a paired,
+  granted Mac can cause a fast-forward pull in that project folder.
+- `team_align` (only while blocked with `error_code` `baseline_mismatch`) sets
+  `align: requested`; `TeamRunner.align` calls `project_baseline` on both
+  members and resumes, or reports each Mac's commit, branch, unpushed commits
+  and uncommitted state.
+- `team_models` (`leader_settings` and/or `follower_settings`) is refused for
+  the role in `busy_role` and after the task ends. `team_status` adds
+  `error_code`, `busy_role` and `align`.
+
+252 deterministic tests and `make ui-check` (29 checks, 11 screens) pass. Not
+run: real agents, two Macs, a pull against a real GitHub remote.

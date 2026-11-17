@@ -226,7 +226,7 @@ class Store:
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
             # Peers see linked project names and access, never their local paths.
-            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "review_snapshot_parts": True, "task_titles": True, "model_settings": project.get("permission_profile") == "coding-v1"},
+            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "review_snapshot_parts": True, "baseline_refresh": True, "task_titles": True, "model_settings": project.get("permission_profile") == "coding-v1"},
                            "links": [{"name": link["name"], "access": link["access"]} for link in project.get("links", [])],
                            **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
@@ -251,6 +251,8 @@ class Store:
                 summary = {key: task[key] for key in ("id", "project_id", "status", "recipient", "sender", "revision", "created_at", "updated_at")}
                 output.append({**summary, 'title': title or task.get('title') or compact_title(task['objective']), 'mode': task.get('mode'), "objective": task["objective"][:300], "cursor": seq, 'permissions': self.permissions(task, identity)})
             return {"tasks": output, "cursor": output[-1]["cursor"] if output else cursor, "has_more": False, 'capabilities': {'shared_task_history': True, 'task_titles': True, 'history_management': True, 'history_work_review': True}}
+        if request.op == "project_baseline":
+            return self.project_baseline(request.body, identity, authorize(config, identity, request.body["project_id"]), config)
         if request.op == "snapshot_part":
             return self.snapshot_part(request.body, identity, authorize(config, identity, request.body["project_id"]))
         require(request.op != "shutdown" or identity == "local", "Only the local operator may stop the daemon.", "permission_denied")
@@ -287,6 +289,26 @@ class Store:
             # A cached request also retries any durably staged disk cleanup.
             result = {**result, 'cleanup_pending': finish(self, self.get(request.body['task_id']))}
         return result
+
+    def project_baseline(self, body: dict, identity: str, project: dict, config: dict) -> dict:
+        """Re-read which commit this project starts from, so two copies can be matched for a team.
+
+        A paired Mac that was granted this project may ask. It cannot choose the
+        commit: the baseline becomes whatever this Mac's own folder has checked
+        out, optionally after a fast-forward from that folder's own remote.
+        """
+        from pathlib import Path
+        from aabridge_workspace.publish import refresh_baseline
+        from .config import save_config
+        require(project.get("permission_profile") == "coding-v1", "Only a full coding project can be matched this way.", "permission_denied")
+        require(not self.db.execute("SELECT 1 FROM tasks WHERE project=? AND status NOT IN ('completed','failed','cancelled','interrupted')", (body["project_id"],)).fetchone(),
+                "This project has a task in progress. Wait for it to finish or stop it, then try again.", "project_busy")
+        found = refresh_baseline(Path(project["repository"]), body.get("pull", False))
+        if found["base_commit"] != project["base_commit"]:
+            latest = dict(config)
+            latest["projects"] = {**config["projects"], body["project_id"]: {**project, "base_commit": found["base_commit"]}}
+            save_config(self.state, latest)
+        return found
 
     def snapshot_part(self, body: dict, identity: str, project: dict) -> dict:
         """Hold one part of a review bundle too large for a single request.

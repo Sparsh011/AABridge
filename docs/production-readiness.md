@@ -132,3 +132,24 @@ through Settings → Set up this Mac.
   spoken labels. ⌘N starts a task, ⌘Return sends, ⌘. stops, ⌘L shows or
   hides the activity log, Esc cancels a new task. Labels were added in code
   and compile; they were not listened to with VoiceOver on.
+
+## 5. Found while trying the app · November 17, 2026
+
+- [x] **5.1 The leader forgot the task between messages.** A follow-up started
+  a new leader session that was given only the last report and diff, so it
+  did not know the original request. A follow-up now continues the leader’s
+  own session, and every new leader turn is also given the conversation so
+  far, always including the first request. The worker already kept its
+  session.
+- [x] **5.2 A commit mismatch stopped the task.** The paused card has “Match
+  the two copies”: each Mac fast-forwards its project from its own remote
+  (only when nothing is uncommitted) and re-reads its commit, then the task
+  continues. If they still differ it says why, for example commits on one
+  Mac that were never pushed. It never switches branches or discards work.
+- [x] **5.3 Models could only change between tasks.** “Change an agent’s
+  model” in the message area changes the model of whichever agent is not in
+  the middle of a step; it applies from that agent’s next step.
+
+All three need the 0.3.0.dev7 service on both Macs. Checked with the test
+suite and `make ui-check`; not yet run with real agents or two Macs.
+

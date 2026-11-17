@@ -129,6 +129,42 @@ def place(repo: Path, source: Path, commit: str, mode: str, branch: str, worktre
     return {"mode": mode, "branch": branch, "path": str(path if mode == "worktree" else repo), "commit": commit}
 
 
+def refresh_baseline(repo: Path, pull: bool) -> dict:
+    """Report the commit this project folder is on, after an optional fast-forward from its remote.
+
+    Used to line two copies of a project up for a team. It only ever moves the
+    checked-out branch forward to what its own upstream already has, and only
+    when no tracked file has uncommitted changes. It never picks a commit,
+    switches branches, merges diverged history or discards anything.
+    """
+    require(repo.is_dir() and git(repo, "rev-parse", "--show-toplevel") == str(repo), "The project folder is no longer a Git repository root.", "publish_blocked")
+    branch = git(repo, "branch", "--show-current")
+    dirty = bool(git(repo, "status", "--porcelain", "--untracked-files=no"))
+    note, pulled = "", False
+
+    def upstream() -> str | None:
+        try:
+            return git(repo, "rev-parse", "--verify", "--quiet", "@{upstream}")
+        except BridgeError:
+            return None
+    if pull and branch and upstream():
+        try:
+            _run(["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "fetch", "--quiet", "--no-tags", "origin"],
+                 repo, "Could not fetch from the project’s remote.", timeout=60)
+        except BridgeError as exc:
+            note = exc.message
+        head, target = git(repo, "rev-parse", "HEAD"), upstream()
+        if target and target != head and _ancestor(repo, head, target):
+            if dirty:
+                note = "It is behind its remote but has uncommitted changes, so it was not updated."
+            else:
+                git(repo, "merge", "--ff-only", "--quiet", target)
+                pulled = True
+    head, target = git(repo, "rev-parse", "HEAD"), upstream()
+    ahead = int(git(repo, "rev-list", "--count", target + "..HEAD")) if target else 0
+    return {"base_commit": head, "branch": branch, "dirty": dirty, "pulled": pulled, "ahead": ahead, "tracked": bool(target), "note": note}
+
+
 LIVE = "aabridge-live/"
 
 
