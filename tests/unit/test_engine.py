@@ -119,6 +119,47 @@ class EngineFixture(unittest.TestCase):
         self.assertTrue(self.store.project_interrupted("demo"))
         self.assertEqual(self.store.queued(), [])
 
+    def test_a_step_cut_off_by_a_restart_stops_blocking_the_project_once_its_agent_is_gone(self):
+        import os
+        from unittest.mock import patch
+        stuck = self.submit()
+        self.store.update(stuck["id"], "worker_process", status="running", worker_pid=os.getpid())
+        self.store.recover()
+        waiting = self.submit('request-two')
+        # The recorded agent could still be running: keep waiting, as before.
+        with patch.object(self.store, "worker_may_be_alive", return_value=True):
+            self.assertEqual([t["id"] for t in self.store.reconcile_interrupted("demo")], [stuck["id"]])
+        self.assertTrue(self.store.project_interrupted("demo"))
+        # Once it cannot be, the step is closed with its work kept, and the queue moves.
+        with patch.object(self.store, "worker_may_be_alive", return_value=False):
+            self.assertEqual(self.store.reconcile_interrupted("demo"), [])
+        closed = self.store.get(stuck["id"])
+        self.assertEqual((closed["status"], closed["worker_pid"], closed["error_code"]), ("failed", None, "interrupted"))
+        self.assertFalse(self.store.project_interrupted("demo"))
+        self.assertEqual([t["id"] for t in self.store.queued()], [waiting["id"]])
+
+    def test_an_agent_process_is_ruled_out_by_reboot_exit_or_pid_reuse(self):
+        import os, subprocess, time
+        from unittest.mock import patch
+        task = self.submit()
+        self.assertFalse(self.store.worker_may_be_alive(task))  # No PID recorded.
+        # This test process stands in for the agent: alive, and started before the step recorded it.
+        self.store.update(task["id"], "worker_process", status="running", worker_pid=os.getpid())
+        real = subprocess.run
+        def booted(at):
+            return lambda command, *a, **k: (subprocess.CompletedProcess(command, 0, stdout=f"{{ sec = {int(at)}, usec = 0 }}\n")
+                                             if command[0].endswith("sysctl") else real(command, *a, **k))
+        with patch("subprocess.run", side_effect=booted(0)):
+            self.assertTrue(self.store.worker_may_be_alive(self.store.get(task["id"])))
+        with patch("subprocess.run", side_effect=booted(time.time() + 60)):
+            self.assertFalse(self.store.worker_may_be_alive(self.store.get(task["id"])))  # The Mac restarted since.
+        self.store.db.execute("UPDATE events SET document=json_set(document,'$.time',0) WHERE task_id=? AND kind='worker_process'", (task["id"],))
+        with patch("subprocess.run", side_effect=booted(0)):
+            self.assertFalse(self.store.worker_may_be_alive(self.store.get(task["id"])))  # The PID belongs to a newer process.
+        self.store.update(task["id"], "worker_process", worker_pid=2**22 + 12345)
+        with patch("subprocess.run", side_effect=booted(0)):
+            self.assertFalse(self.store.worker_may_be_alive(self.store.get(task["id"])))  # The PID is gone.
+
     def test_queued_cancellation(self):
         task = self.submit()
         result = self.store.handle(request("cancel", {"task_id": task["id"]}), "local", self.config)

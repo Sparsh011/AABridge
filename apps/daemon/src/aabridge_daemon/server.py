@@ -160,10 +160,16 @@ class Supervisor:
                     self.active.cancel()
             else:
                 for task in self.store.queued():
-                    if not self.store.project_interrupted(task["project_id"]):
-                        self.active_id = task["id"]
-                        self.active = asyncio.create_task(self.run_task(task))
-                        break
+                    if self.store.project_interrupted(task["project_id"]) and self.store.reconcile_interrupted(task["project_id"]):
+                        # Say why it waits, instead of looking queued forever.
+                        message = ("Waiting: an earlier step in this project was cut off by a restart and its agent process may still be running. "
+                                   "Quit that agent or restart this Mac; this step then starts by itself.")
+                        if (task.get("activity") or {}).get("message") != message:
+                            self.store.update(task["id"], "worker_activity", activity={"phase": "blocked", "message": message, "time": time.time()})
+                        continue
+                    self.active_id = task["id"]
+                    self.active = asyncio.create_task(self.run_task(task))
+                    break
             await asyncio.sleep(0.1)
         await self.team_runner
         if self.active:

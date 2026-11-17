@@ -113,12 +113,23 @@ def stop_idle_receiver(state: Path) -> None:
     database = state / "bridge.sqlite3"
     if database.exists() or database.is_symlink():
         Store._validate_database(database)
+        # Close steps a restart cut off whose agent is gone, so they don't block the update forever.
+        try:
+            store = Store(state)
+            try:
+                store.reconcile_interrupted()
+            finally:
+                store.close()
+        except Exception:
+            pass  # An older database layout: the check below still decides.
         connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)
         try:
             for (document,) in connection.execute("SELECT document FROM tasks"):
                 task = json.loads(document)
-                require(task["status"] not in {"running", "queued", "cancelling"} and task.get("worker_pid") is None,
-                        "A receiver task is still active or closing. Wait for it to finish closing, then select Install receiver again. No installation or permissions were changed.")
+                # Queued steps wait safely across the update; only a running agent must finish first.
+                active = task["status"] in {"running", "cancelling"} or (task["status"] != "queued" and task.get("worker_pid") is not None)
+                require(not active, "A step is still running on this Mac. Wait for it to finish, or stop the task, then press Set up this Mac again. "
+                        "No installation or permissions were changed.")
         finally:
             connection.close()
     try:

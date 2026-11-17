@@ -7,6 +7,11 @@ struct AgentModelSettings: Codable {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty || value.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,159}$"#, options: .regularExpression) != nil
     }
+    /// The full ID for a typed short form such as `opus-5-5`, matching what the bridge runs.
+    static func claudeID(_ raw: String) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.range(of: #"^(fable|mythos|opus|sonnet|haiku)-\d+([-.]\d+)*$"#, options: .regularExpression) != nil ? "claude-" + value : nil
+    }
     var dictionary: [String: String] {
         var result: [String: String] = [:]
         if let model = model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty { result["model"] = model }
@@ -21,7 +26,9 @@ struct ModelSettingsFields: View {
     @Binding var effort: String
     @State private var custom = false
     private var models: [(String, String)] {
-        agent == "claude" ? [("Agent default", ""), ("Opus", "opus"), ("Sonnet", "sonnet"), ("Haiku", "haiku")]
+        agent == "claude" ? [("Agent default", ""), ("Claude Fable 5.2", "claude-fable-5-2"), ("Claude Opus 5.5", "claude-opus-5-5"),
+                             ("Claude Sonnet 5.5", "claude-sonnet-5-5"), ("Claude Haiku 5.5", "claude-haiku-5-5"),
+                             ("Latest Opus (alias)", "opus"), ("Latest Sonnet (alias)", "sonnet"), ("Latest Haiku (alias)", "haiku")]
         : [("Agent default", ""), ("GPT-6.1 Sol", "gpt-6.1-sol"), ("GPT-6 Astra", "gpt-6-astra"), ("GPT-6 Sol", "gpt-6-sol"), ("GPT-6 Luna", "gpt-6-luna")]
     }
     private var efforts: [String] { agent == "claude" ? ["low", "medium", "high", "xhigh", "max", "ultracode"] : ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] }
@@ -46,10 +53,13 @@ struct ModelSettingsFields: View {
             if custom || !models.contains(where: { $0.1 == model }) {
                 TextField("Exact model ID supported by your agent", text: $model).textFieldStyle(.roundedBorder)
             }
+            if agent == "claude", let fixed = AgentModelSettings.claudeID(model) {
+                Text("Claude model IDs start with “claude-”. This will run as \(fixed).").font(.bridge(.caption)).foregroundStyle(.secondary)
+            }
             if !AgentModelSettings.validModel(model) {
                 Text("Use a model ID without spaces or command options.").font(.bridge(.caption)).foregroundStyle(.red)
             }
-            Text("Availability and supported effort levels depend on the agent version and your account. Agent default keeps that Mac’s saved settings.")
+            Text("Availability depends on your plan: a model your account can’t use makes that step fail with a message, and you can pick another and retry. Agent default keeps that Mac’s saved settings.")
                 .font(.bridge(.caption)).foregroundStyle(.secondary)
         }.onChange(of: agent) { _ in model = ""; effort = ""; custom = false }
     }

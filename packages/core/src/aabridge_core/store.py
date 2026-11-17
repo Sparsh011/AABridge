@@ -434,5 +434,58 @@ class Store:
         for (task_id,) in self.db.execute("SELECT id FROM tasks WHERE status IN ('running','cancelling')").fetchall():
             self.update(task_id, "restart_interrupted", status="interrupted", error="Supervisor restarted. No replacement worker was started; local reconciliation is required.")
 
+    def worker_may_be_alive(self, task: dict) -> bool:
+        """Whether the process an interrupted task recorded could still be its agent.
+
+        After a restart the old agent may still be running and editing the
+        workspace, so nothing new starts until that is ruled out. It is ruled
+        out when no PID was recorded, the Mac booted after the agent started,
+        the PID is gone, or the PID now belongs to a process that started later.
+        """
+        import subprocess
+        pid = task.get("worker_pid")
+        if not pid:
+            return False
+        row = self.db.execute("SELECT MAX(json_extract(document,'$.time')) FROM events WHERE task_id=? AND kind='worker_process'", (task["id"],)).fetchone()
+        started = row[0] if row and row[0] is not None else task.get("updated_at", 0)
+        try:
+            boot = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.boottime"], capture_output=True, text=True, timeout=5).stdout
+            booted = int(boot.split("sec = ")[1].split(",")[0])
+            if booted > started:
+                return False  # The agent process ended with the restart.
+        except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+            pass
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            pass  # Exists but belongs to someone else, so it is not this agent.
+        try:
+            from datetime import datetime
+            text = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5,
+                                  env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}).stdout.strip()
+            if text and datetime.strptime(" ".join(text.split()), "%a %b %d %H:%M:%S %Y").timestamp() > started + 2:
+                return False  # The number was reused by a newer process.
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        return True
+
+    def reconcile_interrupted(self, project_id: str | None = None) -> list[dict]:
+        """Close interrupted attempts whose agent cannot still be running. The workspace is kept.
+
+        Returns the interrupted tasks that still need a person to check them.
+        """
+        query = "SELECT document FROM tasks WHERE status='interrupted'" + (" AND project=?" if project_id else "")
+        waiting = []
+        for (document,) in self.db.execute(query, (project_id,) if project_id else ()).fetchall():
+            task = json.loads(document)
+            if self.worker_may_be_alive(task):
+                waiting.append(task)
+            else:
+                self.update(task["id"], "locally_reconciled", status="failed", worker_pid=None, error_code="interrupted",
+                            error="This step was cut off when the Mac or AABridge restarted. Its agent is no longer running; the saved work is kept.")
+        return waiting
+
     def project_interrupted(self, project_id: str) -> bool:
         return self.db.execute("SELECT 1 FROM tasks WHERE project=? AND status='interrupted'", (project_id,)).fetchone() is not None

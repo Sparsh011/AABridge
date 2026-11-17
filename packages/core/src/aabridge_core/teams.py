@@ -120,7 +120,7 @@ def public(room, before=None):
     result['usage'] = usage_totals(room)
     result['error_code'] = room.get('error_code') if room.get('error') else None
     # The role in the middle of a turn; the other one's model can be changed now.
-    paused = room['status'] == 'awaiting_admin' and (room.get('gate') or {}).get('kind') != 'question'
+    paused = room['status'] == 'blocked' or (room['status'] == 'awaiting_admin' and (room.get('gate') or {}).get('kind') != 'question')
     result['busy_role'] = None if paused or room['status'] in TERMINAL else 'follower' if room['stage'] == 'work' else 'leader'
     result['notes_waiting'] = len(waiting_notes(room))
     return result
@@ -712,6 +712,10 @@ class TeamRunner:
             problem, fix, retry = f'The {role}’s step was cancelled on {mac}.', 'Press Try again to run it again.', True
         else:
             problem, fix, retry = f'The {role} ({agent} on {mac}) couldn’t {step}: {detail or "it stopped without a reason"}', 'Press Try again, or send a follow-up with more guidance.', True
+            chosen = (member.get('model_settings') or {}).get('model')
+            if chosen:
+                fix = (f'It was set to use the model “{chosen}”, which your {agent} account may not offer. Pick another model under '
+                       '“Change an agent’s model” (or Agent default), then press Try again.')
         return {'problem': problem, 'fix': fix, 'machine': mac, 'project': project, 'code': code or task['status'], 'retry': retry}
 
     def wait(self, room, kind, reason, cause=''):

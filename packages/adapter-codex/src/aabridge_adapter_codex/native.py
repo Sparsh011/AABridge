@@ -17,6 +17,15 @@ from aabridge_core.config import private_directory, read_private
 from aabridge_protocol.messages import BridgeError, canonical, require
 
 
+
+def claude_model(name: str) -> str:
+    """Claude's model IDs start with `claude-`. A typed `opus-5-5` means `claude-opus-5-5`.
+
+    Bare aliases (`opus`, `sonnet`) and full IDs pass through unchanged.
+    """
+    import re
+    return 'claude-' + name if re.fullmatch(r'(?:fable|mythos|opus|sonnet|haiku)-\d+(?:[-.]\d+)*', name) else name
+
 class NativeWorker:
     def __init__(self, state, task, project, on_session, on_pid):
         self.state, self.task, self.project = state, task, project
@@ -50,7 +59,7 @@ class NativeWorker:
         readonly = self.task.get('mode', 'work') != 'work' and not review
         session = self.task.get('thread_id')
         settings = self.task.get('model_settings', {})
-        selected = ['--model', settings['model']] if settings.get('model') else []
+        selected = ['--model', claude_model(settings['model']) if agent == 'claude' else settings['model']] if settings.get('model') else []
         from aabridge_workspace import linked
         links = linked.paths(self.state, self.task, self.project) if self.project.get('links') else []
         if agent == 'codex':
