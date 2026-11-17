@@ -160,6 +160,17 @@ class EngineFixture(unittest.TestCase):
         with patch("subprocess.run", side_effect=booted(0)):
             self.assertFalse(self.store.worker_may_be_alive(self.store.get(task["id"])))  # The PID is gone.
 
+    def test_a_step_that_failed_before_its_agent_ran_can_continue(self):
+        setup = self.submit()
+        self.store.update(setup["id"], "failed", status="failed", thread_id="kept-thread", error_code="adapter_changed", error="The agent was updated.")
+        again = self.store.handle(request("revise", {"task_id": setup["id"], "revision": 1, "text": "Next change"}, "revise-setup"), "local", self.config)
+        self.assertEqual((again["status"], again["revision"], again["thread_id"], again.get("error_code")), ("queued", 2, "kept-thread", None))
+        # The agent ran and may have left partial edits: that step cannot be continued this way.
+        ran = self.submit("request-two")
+        self.store.update(ran["id"], "failed", status="failed", error_code="worker_failed", error="The agent failed mid-turn.")
+        with self.assertRaisesRegex(BridgeError, "Only a completed result"):
+            self.store.handle(request("revise", {"task_id": ran["id"], "revision": 1, "text": "Next change"}, "revise-ran"), "local", self.config)
+
     def test_queued_cancellation(self):
         task = self.submit()
         result = self.store.handle(request("cancel", {"task_id": task["id"]}), "local", self.config)

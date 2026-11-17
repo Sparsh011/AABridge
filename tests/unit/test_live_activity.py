@@ -29,6 +29,21 @@ class PublicActivityTests(unittest.TestCase):
         self.assertEqual(texts, ['Tokens used: 1200 in, 300 out, 900 cached', 'Tokens used: 40 in, 7 out, 120 cached, cost $0.0125', 'Tokens used: 0 in, 0 out, 0 cached'])
         self.assertTrue(all(USAGE.match(text) for text in texts))
 
+    def test_an_updated_agent_is_accepted_only_when_signed_by_its_publisher(self):
+        import subprocess
+        from unittest.mock import patch
+        from aabridge_adapter_codex.native import signed_by
+        good = 'Identifier=codex\nAuthority=Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2)\nAuthority=Developer ID Certification Authority\nTeamIdentifier=2DC432GLL2\n'
+        def codesign(details, verified=True):
+            return lambda command, **k: subprocess.CompletedProcess(command, 0 if verified else 1, stdout='', stderr=details if '-dv' in command else '')
+        with patch('subprocess.run', side_effect=codesign(good)):
+            self.assertTrue(signed_by('/x/codex', 'codex'))
+            self.assertFalse(signed_by('/x/claude', 'claude'))  # Right signature, wrong publisher for this agent.
+        with patch('subprocess.run', side_effect=codesign(good, verified=False)):
+            self.assertFalse(signed_by('/x/codex', 'codex'))  # Modified after signing.
+        with patch('subprocess.run', side_effect=codesign(good.replace('Developer ID Application', 'Apple Development'))):
+            self.assertFalse(signed_by('/x/codex', 'codex'))  # Not a Developer ID release.
+
     def test_short_claude_model_ids_get_their_prefix(self):
         from aabridge_adapter_codex.native import claude_model
         for typed, runs in (('opus-5-5', 'claude-opus-5-5'), ('fable-5-2', 'claude-fable-5-2'), ('sonnet-5.5', 'claude-sonnet-5.5'),

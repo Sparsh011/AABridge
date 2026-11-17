@@ -840,7 +840,17 @@ class TeamRunner:
                     room['stage_key'] = room['id'] + '-' + str(room['round']) + '-' + stage + '-' + str(len(room['stage_tasks']))
                     if resume:
                         previous = await self.call('status', {'task_id': resume['task_id']}, target)
-                        require(previous['status'] == 'completed', 'The previous result is no longer ready for a revision.', 'invalid_state')
+                        if previous['status'] != 'completed':
+                            # Continuing keeps the agent's memory and earlier changes. A step that failed
+                            # before its agent ran can continue once the cause is fixed; say what to fix.
+                            setup = previous['status'] == 'failed' and previous.get('error_code') in {'adapter_changed', 'adapter_unavailable', 'execution_disabled'}
+                            mac = self.machine(target)
+                            if not setup:
+                                raise BridgeError('invalid_state', f'The {"worker" if stage == "work" else "leader"}’s earlier step on {mac} ended as “{previous["status"]}”, so its session can’t be continued. '
+                                                  'Send a follow-up message to start a fresh step with the conversation so far.')
+                            if not project.get('capabilities', {}).get('revise_after_setup_failure'):
+                                raise BridgeError('upgrade_required', f'{mac} runs an older AABridge that can’t continue this step. On {mac}, open Settings and press Set up this Mac, then press Try again here.')
+                            message(room, 'AABridge', f'Continuing the {"worker" if stage == "work" else "leader"}’s earlier step on {mac}, which stopped before its agent ran.')
                         room['stage_operation'] = 'revise'
                         draft = room['stage_body']
                         revision_text = draft['objective'] + '\n' + '\n'.join(draft['context'])

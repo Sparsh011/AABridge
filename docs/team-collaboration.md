@@ -642,3 +642,28 @@ chosen says to pick another one.
 255 deterministic tests pass, including PID reuse and reboot detection. The
 rule was checked against the real stuck step on the Mac mini read-only; it was
 not applied there.
+
+## Agent updates and retrying a failed continuation · 0.3.0.dev9
+
+A follow-up continues the worker's earlier task. When Codex had updated itself
+on the worker's Mac, that step failed with `adapter_changed` before Codex ran.
+Try again then checked that the earlier step was `completed`, found it
+`failed`, and stopped with "The previous result is no longer ready for a
+revision" on every attempt, even after the project was saved again.
+
+- `NativeWorker.executable` still pins the binary's SHA-256, but accepts a
+  changed binary when `codesign --verify --strict` passes and the signature is
+  a Developer ID Application from that agent's publisher (OpenAI 2DC432GLL2,
+  Anthropic Q6L2SF6YDW). Anything else still fails with `adapter_changed`.
+- `revise` is allowed on a task that failed with `adapter_changed`,
+  `adapter_unavailable` or `execution_disabled`: those fail before the agent
+  runs, so the last result is untouched. It clears the old error. Receivers
+  advertise `revise_after_setup_failure`.
+- On retry, `TeamRunner.step` continues such a step, asks for an update when
+  the receiver lacks that capability, and otherwise says the session can't be
+  continued and to send a follow-up, instead of repeating a check that can
+  never pass.
+
+259 deterministic tests pass. The signature rule was checked against the real
+Codex and Claude binaries on the Mac mini. Not run against the MacBook's
+failed step yet.

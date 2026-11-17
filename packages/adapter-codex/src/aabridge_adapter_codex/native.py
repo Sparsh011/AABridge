@@ -26,6 +26,25 @@ def claude_model(name: str) -> str:
     import re
     return 'claude-' + name if re.fullmatch(r'(?:fable|mythos|opus|sonnet|haiku)-\d+(?:[-.]\d+)*', name) else name
 
+# The publisher each agent binary must be signed by (Apple Developer ID team).
+PUBLISHERS = {'codex': ('2DC432GLL2', 'OpenAI'), 'claude': ('Q6L2SF6YDW', 'Anthropic')}
+
+
+def signed_by(path, agent):
+    """True when macOS verifies `path` as an intact Developer ID build from this agent's publisher."""
+    import subprocess
+    team = PUBLISHERS.get(agent, ('',))[0]
+    try:
+        environment = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
+        if subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(path)], capture_output=True, timeout=20, env=environment).returncode:
+            return False
+        details = subprocess.run(['/usr/bin/codesign', '-dv', '--verbose=2', str(path)], capture_output=True, text=True, timeout=20, env=environment).stderr
+    except (OSError, subprocess.SubprocessError):
+        return False
+    lines = details.splitlines()
+    return bool(team) and 'TeamIdentifier=' + team in lines and any(line.startswith('Authority=Developer ID Application:') and line.endswith('(' + team + ')') for line in lines)
+
+
 class NativeWorker:
     def __init__(self, state, task, project, on_session, on_pid):
         self.state, self.task, self.project = state, task, project
@@ -39,8 +58,12 @@ class NativeWorker:
         path = Path(self.project[agent + '_executable'])
         require(path.is_absolute() and path.is_file() and os.access(path, os.X_OK),
                 'The selected agent is unavailable. Choose its location in Settings.', 'adapter_unavailable')
-        require(hashlib.sha256(path.read_bytes()).hexdigest() == self.project[agent + '_sha256'],
-                'The agent was updated. Save this project again to revalidate it.', 'adapter_changed')
+        if hashlib.sha256(path.read_bytes()).hexdigest() != self.project[agent + '_sha256']:
+            # Codex and Claude update themselves often. An update is accepted when macOS
+            # verifies it as signed by the same publisher; anything else still stops here.
+            require(signed_by(path, agent),
+                    'The agent was updated and its signature could not be verified as ' + PUBLISHERS.get(agent, ('', 'its publisher'))[1] + '’s. '
+                    'Save this project again in Projects to trust this version.', 'adapter_changed')
         return str(path)
 
     async def start(self):
