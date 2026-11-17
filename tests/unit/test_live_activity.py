@@ -29,6 +29,12 @@ class PublicActivityTests(unittest.TestCase):
         self.assertEqual(texts, ['Tokens used: 1200 in, 300 out, 900 cached', 'Tokens used: 40 in, 7 out, 120 cached, cost $0.0125', 'Tokens used: 0 in, 0 out, 0 cached'])
         self.assertTrue(all(USAGE.match(text) for text in texts))
 
+    def test_short_claude_model_ids_get_their_prefix(self):
+        from aabridge_adapter_codex.native import claude_model
+        for typed, runs in (('opus-5-5', 'claude-opus-5-5'), ('fable-5-2', 'claude-fable-5-2'), ('sonnet-5.5', 'claude-sonnet-5.5'),
+                            ('opus', 'opus'), ('claude-opus-5-5', 'claude-opus-5-5'), ('gpt-6-sol', 'gpt-6-sol'), ('opus-latest', 'opus-latest')):
+            self.assertEqual(claude_model(typed), runs, typed)
+
     def test_codex_tools_files_and_public_messages_without_private_payloads(self):
         for event in [
             {'type':'item.started','item':{'id':'command','type':'command_execution','command':'echo never-show-this-command-secret'}},

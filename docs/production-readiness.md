@@ -152,4 +152,11 @@ through Settings → Set up this Mac.
 
 All three need the 0.3.0.dev7 service on both Macs. Checked with the test
 suite and `make ui-check`; not yet run with real agents or two Macs.
+- [x] **5.4 A restart mid-step stalled the project.** A step cut off by a
+  shutdown blocked every later step in that project, and blocked Set up this
+  Mac, until a hidden CLI command was run. It now clears itself once the old
+  agent can’t still be running, and the waiting step says why it waits.
+- [x] **5.5 Claude models without versions.** The model list names Claude
+  Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5, and `opus-5-5` typed by hand
+  runs as `claude-opus-5-5`.
 

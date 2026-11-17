@@ -37,6 +37,7 @@ func runSelfTest(fixture path: String?) -> Bool {
     check(elapsedText(42) == "42s" && elapsedText(185) == "3m 05s" && elapsedText(4320) == "1h 12m" && elapsedText(-5) == "0s", "elapsed time text")
     check(TeamUsage.short(842) == "842" && TeamUsage.short(12_340) == "12.3k" && TeamUsage.short(1_200_000) == "1.2M", "token count text")
     check(AgentModelSettings.validModel("gpt-6.1-sol") && !AgentModelSettings.validModel("opus --dangerous"), "model IDs reject options")
+    check(AgentModelSettings.claudeID("opus-5-5") == "claude-opus-5-5" && AgentModelSettings.claudeID("opus") == nil && AgentModelSettings.claudeID("claude-opus-5-5") == nil, "short Claude IDs are completed")
 
     // Stale-service detection.
     func report(_ app: String?, _ service: String?) -> DeviceReport {
@@ -60,7 +61,7 @@ func runSelfTest(fixture path: String?) -> Bool {
             check(fixture.rooms["delivered"]?.publication?.pull_request != nil && fixture.rooms["delivered"]?.publication?.branch != nil, "delivery decodes")
             check((fixture.rooms["long"]?.earlier_messages ?? 0) > 0, "hidden message count decodes")
             check(fixture.list.allSatisfy { !$0.displayTitle.isEmpty }, "task list rows have titles")
-            check(fixture.rooms["mismatch"]?.error_code == "baseline_mismatch" && fixture.rooms["mismatch"]?.busy_role == "leader", "commit mismatch and busy role decode")
+            check(fixture.rooms["mismatch"]?.error_code == "baseline_mismatch" && fixture.rooms["mismatch"]?.busy_role == nil, "commit mismatch decodes, and a paused task has no busy agent")
             check(fixture.rooms["dispute"]?.busy_role == nil && fixture.rooms["building"]?.busy_role == "follower", "idle agents are reported at a decision and during a build")
             check(fixture.devices.app_release != nil && fixture.activity.entries.first?.role == "leader", "device report and activity page decode")
         } catch { check(false, "service output did not decode: \(error)") }

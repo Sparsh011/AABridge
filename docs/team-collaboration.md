@@ -617,3 +617,28 @@ Not run: a real agent turn reporting tokens, VoiceOver, a two-Mac task.
 
 252 deterministic tests and `make ui-check` (29 checks, 11 screens) pass. Not
 run: real agents, two Macs, a pull against a real GitHub remote.
+
+## Steps stuck after a restart, and Claude model IDs · 0.3.0.dev8
+
+A Mac that shut down mid-step left that task `interrupted` with its agent's
+PID. The scheduler then refused every queued step in the project until someone
+ran `aabridge project reconcile`, which the app never offered, and Set up this
+Mac refused to update while any task was queued or held a PID. A follow-up
+therefore sat queued, and the service stayed on the old version.
+
+`Store.reconcile_interrupted` now closes an interrupted step as failed (error
+code `interrupted`, workspace kept) when its agent cannot still be running: no
+PID, the Mac booted after the agent started, the PID is gone, or the PID
+belongs to a process that started later. The scheduler runs it before skipping
+a project and otherwise labels the queued step with why it waits. Setup runs it
+too, and no longer refuses an update for queued steps; running or cancelling
+steps still block it.
+
+Claude model presets name versions (`claude-opus-5-5` and so on) next to the
+aliases. A typed short form such as `opus-5-5` runs as `claude-opus-5-5`. A
+paused task can change either agent's model, and a failed step that had a model
+chosen says to pick another one.
+
+255 deterministic tests pass, including PID reuse and reboot detection. The
+rule was checked against the real stuck step on the Mac mini read-only; it was
+not applied there.

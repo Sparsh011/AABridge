@@ -125,13 +125,19 @@ class InstallerTests(unittest.TestCase):
         initialize(state)
         store = Store(state)
         try:
-            for status, pid in (("running", 123), ("queued", None), ("cancelled", 123)):
+            for status, pid in (("running", 123), ("cancelling", None), ("cancelled", 123)):
                 store.db.execute("DELETE FROM tasks")
                 store.db.execute("INSERT INTO tasks VALUES (?,?,?,?,?)", ("task-fixture", "demo", "macbook", status,
                                  json.dumps({"status": status, "worker_pid": pid})))
-                with patch("aabridge_cli.actions.send") as send, self.assertRaisesRegex(BridgeError, "still active or closing"):
+                with patch("aabridge_cli.actions.send") as send, self.assertRaisesRegex(BridgeError, "still running on this Mac"):
                     installer.stop_idle_receiver(state)
                 send.assert_not_called()
+            # A queued step has no agent running; it waits across the update and starts on the new service.
+            store.db.execute("DELETE FROM tasks")
+            store.db.execute("INSERT INTO tasks VALUES (?,?,?,?,?)", ("task-fixture", "demo", "macbook", "queued", json.dumps({"status": "queued", "worker_pid": None})))
+            with patch("aabridge_cli.actions.send") as send:
+                installer.stop_idle_receiver(state)
+            send.assert_called_once()
         finally:
             store.close()
 
