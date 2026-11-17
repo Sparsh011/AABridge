@@ -11,6 +11,7 @@ from aabridge_protocol.messages import BridgeError, HISTORY_READS, MUTATIONS, Re
 from aabridge_protocol.titles import compact_title
 from .config import authorize, read_private, release, write_private
 
+SETUP_FAILURES = frozenset({"adapter_changed", "adapter_unavailable", "execution_disabled"})
 RELEASE = release()  # Read once: a running service keeps the code it started with.
 
 
@@ -226,7 +227,7 @@ class Store:
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
             # Peers see linked project names and access, never their local paths.
-            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "review_snapshot_parts": True, "baseline_refresh": True, "task_titles": True, "model_settings": project.get("permission_profile") == "coding-v1"},
+            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "review_snapshot_parts": True, "baseline_refresh": True, "revise_after_setup_failure": True, "task_titles": True, "model_settings": project.get("permission_profile") == "coding-v1"},
                            "links": [{"name": link["name"], "access": link["access"]} for link in project.get("links", [])],
                            **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
@@ -417,7 +418,12 @@ class Store:
             task["pending"] = {"kind": "answer", "question_id": body["question_id"], "text": body["text"]}
             task["question"] = None
         elif op == "revise":
-            require(task["status"] == "completed", "Only a completed result can be revised.", "invalid_state")
+            # A step that failed before its agent ran (the agent was updated or unavailable,
+            # or the project was switched off) left the last result untouched, so it can continue.
+            setup = task["status"] == "failed" and task.get("error_code") in SETUP_FAILURES
+            require(task["status"] == "completed" or setup, "Only a completed result can be revised.", "invalid_state")
+            task.pop("error", None)
+            task.pop("error_code", None)
             require(task["revision"] <= task["limits"]["max_revisions"], "Revision limit reached.", "limit_exceeded")
             task["revision"] += 1
             task["attempt_id"] = new_id("attempt")

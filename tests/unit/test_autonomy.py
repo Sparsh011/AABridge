@@ -784,6 +784,51 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(BridgeError):
             self.admin('team_models', {'team_id': room['id'], 'leader_settings': {'model': 'gpt-6-sol'}})  # Finished: use the next message.
 
+    async def test_retry_continues_a_follow_up_step_that_failed_before_its_agent_ran(self):
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        await self.run_until(room['id'])
+        work = next(t for t in self.tasks.values() if t['mode'] == 'work')
+        original = self.call
+        async def updated(op, body, target, key=None):
+            # The worker's agent was updated: its next attempt fails before running.
+            if op == 'revise' and body.get('task_id') == work['id'] and not self.trusted:
+                work.update(status='failed', error_code='adapter_changed', error='The agent was updated. Save this project again to revalidate it.', revision=work['revision'] + 1)
+                return work
+            if op == 'revise' and body.get('task_id') == work['id'] and work['status'] == 'failed':
+                self.assertTrue(self.project['capabilities'].get('revise_after_setup_failure'))
+                work.update(status='completed')  # The receiver allows continuing a setup failure.
+            return await original(op, body, target, key)
+        self.trusted = False
+        self.runner.call = updated
+        self.reviews = ['VERDICT: APPROVED']
+        self.admin('team_reply', {'team_id': room['id'], 'text': 'Add pounds too.'})
+        blocked = await self.run_until(room['id'])
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertIn('was updated on', blocked['failure']['problem'])
+        # An older receiver: say to update it, instead of the old dead end.
+        self.admin('team_retry', {'team_id': room['id']})
+        stuck = await self.run_until(room['id'])
+        self.assertIn('older AABridge that can’t continue this step', stuck['error'])
+        self.assertNotIn('no longer ready', stuck['error'])
+        # Updated receiver, agent trusted again: the same worker session continues with its earlier changes.
+        self.project['capabilities']['revise_after_setup_failure'] = True
+        self.trusted = True
+        self.admin('team_retry', {'team_id': room['id']})
+        done = await self.run_until(room['id'])
+        self.assertEqual((done['status'], done['verdict']), ('completed', 'approved'))
+        self.assertEqual(len([t for t in self.tasks.values() if t['mode'] == 'work']), 1)
+        self.assertIn('stopped before its agent ran', '\n'.join(m['text'] for m in done['messages']))
+
+    async def test_a_session_that_ended_badly_is_not_retried_forever(self):
+        self.reviews = ['VERDICT: APPROVED']
+        room = self.start(approval='auto')
+        await self.run_until(room['id'])
+        next(t for t in self.tasks.values() if t['mode'] == 'work')['status'] = 'cancelled'
+        self.admin('team_reply', {'team_id': room['id'], 'text': 'Add pounds too.'})
+        blocked = await self.run_until(room['id'])
+        self.assertIn('can’t be continued. Send a follow-up message', blocked['error'])
+
 
 if __name__ == '__main__':
     unittest.main()

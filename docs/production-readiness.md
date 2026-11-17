@@ -159,4 +159,9 @@ suite and `make ui-check`; not yet run with real agents or two Macs.
 - [x] **5.5 Claude models without versions.** The model list names Claude
   Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5, and `opus-5-5` typed by hand
   runs as `claude-opus-5-5`.
+- [x] **5.6 Try again could never recover a follow-up.** When the worker’s
+  agent had updated itself, its step failed before running and every retry
+  hit “The previous result is no longer ready for a revision”. Retry now
+  continues that step once the cause is fixed, and agent updates signed by
+  OpenAI or Anthropic are accepted without re-saving the project.
 
