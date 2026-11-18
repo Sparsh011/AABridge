@@ -89,7 +89,7 @@ final class SetupModel: ObservableObject {
             let folder = try prepare()
             // The token travels only over the installer's stdin, never argv or files.
             let token = claudeToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            let sendToken = !diagnose && worker == "claude" && !token.isEmpty
+            let sendToken = !diagnose && !token.isEmpty
             launch(executable: URL(fileURLWithPath: "/bin/zsh"),
                    arguments: [folder.appendingPathComponent("Setup.command").path, "--worker", worker, "--coding"]
                        + (diagnose ? ["--diagnose"] : []) + (sendToken ? ["--claude-token-stdin"] : []),
@@ -182,7 +182,7 @@ final class SetupModel: ObservableObject {
                         self.headline = kind == "setup" && self.ready ? "This Mac is ready" : (kind == "status" ? "Bridge supervisor is responding" : "Isolation checks passed")
                         self.detail = kind == "setup" ? "Open Devices to connect your other Mac, then add a project. Either Mac can lead or receive work."
                             : (kind == "status" ? "See Details for the supervisor response. This does not verify a remote agent session."
-                               : "\(self.workerName) was found and all six sandbox canaries passed. Account and SSH access have not been checked.")
+                               : "An agent was found and all six sandbox canaries passed. Details lists each agent. Account and SSH access have not been checked.")
                     } else {
                         self.headline = kind == "status" ? "The supervisor is not responding" : "\(kind.capitalized) needs attention"
                         if !self.detail.contains("INCOMPLETE:") {
@@ -230,15 +230,10 @@ struct SetupView: View {
             Text("Install the bridge on this Mac. Agents are found automatically; choose a location below if needed. Add your real projects in Projects after setup.")
             GroupBox {
                 VStack(alignment: .leading, spacing: 18) {
-                    Picker("Worker agent", selection: $model.worker) {
-                        ForEach(SetupModel.workers, id: \.0) { Text($0.1).tag($0.0) }
-                    }.frame(maxWidth: 360)
-                    Text(model.worker == "claude"
-                         ? "Use your existing Claude login on this Mac."
-                         : "Use your existing Codex login on this Mac.")
-                        .font(.bridge(.callout)).foregroundStyle(.secondary)
-                    if model.worker == "claude" {
-                        DisclosureGroup("Advanced: subscription token for proposal mode") {
+                    Text("AABridge uses every agent it finds on this Mac: Codex, Claude Code, or both, each with its own login. Choose which ones work on a project when you add it.")
+                        .font(.bridge(.callout)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Group {
+                        DisclosureGroup("Advanced: Claude subscription token for small-proposal mode") {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Claude subscription token").font(.bridge(.headline))
                             SecureField(model.claudeTokenStored ? "Stored on this Mac · paste a new token to replace it" : "Paste the sk-ant-oat01-… token from claude setup-token", text: $model.claudeToken)
@@ -264,12 +259,12 @@ struct SetupView: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
             HStack {
                 Button("Check prerequisites") { model.run(diagnose: true) }
+                // Full coding uses each agent's normal login; the proposal-mode token is optional.
                 Button("Set up this Mac") { model.run(diagnose: false) }.buttonStyle(.borderedProminent)
-                    .disabled(model.worker == "claude" && !model.claudeTokenStored && model.claudeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Spacer()
                 Button("Refresh status") { model.refreshStatus() }
             }.disabled(model.busy)
-            Text("Set up this Mac installs the bundled bridge for \(model.workerName). Pair your Macs in Devices, then choose the projects they can use. Existing repositories, keys, and provider credentials are preserved.")
+            Text("Set up this Mac installs the bundled bridge. Pair your Macs in Devices, then add your projects from the sidebar. Existing repositories, keys, and provider credentials are preserved.")
                 .font(.bridge(.caption)).foregroundStyle(.secondary)
             Divider()
             LoginItemToggle()
@@ -293,7 +288,7 @@ struct SetupView: View {
                     }
                 }
             }
-            Text("Use Tasks & conversations to browse saved messages, supplied context and task events. Viewing does not start a model turn.")
+            Text("Use All agent tasks in the sidebar to browse saved messages, supplied context and task events. Viewing does not start a model turn.")
                 .font(.bridge(.caption)).foregroundStyle(.secondary)
         }.padding(28).frame(minWidth: 820, idealWidth: 880, minHeight: 700)
     }
@@ -365,7 +360,8 @@ struct AABridgeDesktop: App {
                          ProjectLink(name: "sparshur-mac", repository: "/Users/you/Sparshur-Mac", access: "read")]
             projects.projects = [LocalProject(id: "sparshur-service-claude", repository: "/Users/you/Sparshur-Service", adapter: "claude", scope: ["*"],
                                               verification: ProjectVerification(profile: "repository-v1"), execution_enabled: true, peers: [], links: links)]
-            projects.selected = "sparshur-service-claude"; projects.chooseProject(); projects.peers = ["mbp"]; projects.peerLabels = ["mbp": "Sparsh’s MBP"]
+            projects.peers = ["mbp"]; projects.peerLabels = ["mbp": "Sparsh’s MBP"]; projects.loaded = true
+            projects.edit(projects.groups[0].key); projects.agentErrors = ["codex": "Codex isn’t installed on this Mac, or AABridge can’t find it. Choose its location in Settings."]
             exit(renderOwnView(ProjectSettingsView(model: projects), output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-done"), CommandLine.arguments.count > index + 2 {
@@ -422,6 +418,10 @@ struct AABridgeDesktop: App {
                 exit(renderOwnView(panel, output: CommandLine.arguments[index + 1]) ? 0 : 1)
             }
             exit(renderOwnView(TeamRoomView(model: team, active: false, preview: true), output: CommandLine.arguments[index + 1]) ? 0 : 1)
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--preview-workspace"), CommandLine.arguments.count > index + 2 {
+            // The project sidebar with sessions from both Macs: --preview-workspace <png> project|new|remote|single
+            exit(renderOwnView(workspacePreview(resources: Bundle.main.resourceURL!, screen: CommandLine.arguments[index + 2]), output: CommandLine.arguments[index + 1]) ? 0 : 1)
         }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-devices"), CommandLine.arguments.count > index + 1 {
             let activity = TaskBrowserModel(resources: Bundle.main.resourceURL!)
@@ -511,4 +511,73 @@ struct AABridgeDesktop: App {
             .defaultSize(width: 1160, height: 820)
             .commands { CommandGroup(replacing: .newItem) {} }
     }
+}
+
+/// Fixture data for the project sidebar; nothing is read from or sent to a bridge.
+func workspacePreview(resources: URL, screen: String) -> some View {
+    let domain = "local.aabridge.workspace-preview." + UUID().uuidString
+    let preferences = UserDefaults(suiteName: domain)!
+    defer { preferences.removePersistentDomain(forName: domain) }
+    let activity = TaskBrowserModel(resources: resources)
+    let projects = ProjectSettingsModel(activity: activity)
+    let team = TeamRoomModel(activity: activity, preferences: preferences)
+    let devices = DeviceStatusModel(activity: activity)
+    devices.report = DeviceReport(service: true, listening: true, service_error: nil, devices: [PairedDevice(id: "mbp", label: "Sparsh’s MBP", host: "Sparsh-MBP.local", online: true)])
+    let verify = ProjectVerification(profile: "repository-v1")
+    projects.projects = [LocalProject(id: "project-sparshur-service-claude", repository: "/Volumes/Work/Sparshur-Service", adapter: "claude", scope: ["*"], verification: verify, execution_enabled: true, peers: ["mbp"]),
+                         LocalProject(id: "project-aabridge-claude", repository: "/Volumes/Work/AABridge", adapter: "claude", scope: ["*"], verification: verify, execution_enabled: true, peers: [], name: "AABridge"),
+                         LocalProject(id: "project-aabridge-codex", repository: "/Volumes/Work/AABridge", adapter: "codex", scope: ["*"], verification: verify, execution_enabled: true, peers: [], name: "AABridge")]
+    projects.peers = ["mbp"]; projects.peerLabels = ["mbp": "Sparsh’s MBP"]; projects.loaded = true
+    team.deviceLabels = ["local": "This Mac", "mbp": "Sparsh’s MBP"]
+    let mineClaude = TeamMember(target: "local", project: "project-sparshur-service-claude", agent: "claude")
+    let theirCodex = TeamMember(target: "mbp", project: "project-sparshur-service-codex", agent: "codex")
+    team.choices = [TeamChoice(id: "local/project-sparshur-service-claude", label: "Claude · This Mac · sparshur-service", member: mineClaude, projectName: "sparshur-service"),
+                    TeamChoice(id: "mbp/project-sparshur-service-codex", label: "Codex · Sparsh’s MBP · sparshur-service", member: theirCodex, projectName: "sparshur-service"),
+                    TeamChoice(id: "local/project-aabridge-claude", label: "Claude · This Mac · AABridge", member: TeamMember(target: "local", project: "project-aabridge-claude", agent: "claude"), projectName: "AABridge"),
+                    TeamChoice(id: "local/project-aabridge-codex", label: "Codex · This Mac · AABridge", member: TeamMember(target: "local", project: "project-aabridge-codex", agent: "codex"), projectName: "AABridge")]
+    let now = Date().timeIntervalSince1970
+    func room(_ id: String, _ title: String, _ status: String, _ stage: String, _ lead: TeamMember, _ work: TeamMember, _ age: Double) -> TeamRoom {
+        var room = TeamRoom(id: id, objective: title, status: status, stage: stage, leader: lead, follower: work,
+                            messages: [TeamEntry(id: id + "-1", speaker: "You · admin", text: title, time: now - age - 60),
+                                       TeamEntry(id: id + "-2", speaker: lead.agent + " · leader", text: "Plan: read the relay handlers, add the retry with backoff, and cover it with a test.", time: now - age)],
+                            error: nil, result: nil)
+        room.title = title; room.updated_at = now - age; room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true)
+        return room
+    }
+    team.rooms = [room("team-a", "Retry failed relay deliveries", "running", "work", mineClaude, theirCodex, 30),
+                  room("team-b", "Add weight entry endpoint", "awaiting_admin", "plan", mineClaude, theirCodex, 400),
+                  room("team-c", "Markdown preview in chats", "completed", "review", TeamMember(target: "local", project: "project-aabridge-codex", agent: "codex"), TeamMember(target: "local", project: "project-aabridge-claude", agent: "claude"), 9000)]
+    team.rooms[2].verdict = "approved"
+    team.room = team.rooms[0]; team.selected = "team-a"
+    let workspace = WorkspaceModel(team: team, projects: projects, activity: activity, preferences: preferences)
+    // A session the MacBook runs, in which this Mac's Claude is the worker.
+    var remote = room("team-r", "Fix sign-in from settings page", "running", "work", TeamMember(target: "mbp", project: "project-sparshur-service-codex", agent: "codex"), mineClaude, 120)
+    remote.host = "mbp"; remote.read_only = true
+    workspace.remoteRooms = ["mbp": [remote]]
+    switch screen {
+    case "new":
+        workspace.selection = .newSession("sparshur-service"); team.projectScope = "sparshur-service"; team.showAssignment = true; team.pickPair()
+        team.draft = "Retry failed relay deliveries with backoff, and show the retry count in the admin page."
+    case "remote":
+        let viewer = TeamRoomModel(activity: activity, preferences: preferences, host: "mbp")
+        viewer.deviceLabels = team.deviceLabels; viewer.room = remote; viewer.rooms = [remote]; viewer.selected = remote.id
+        workspace.remote = viewer; workspace.selection = .session(host: "mbp", id: remote.id)
+    case "single":
+        workspace.selection = .newSession("aabridge"); team.projectScope = "aabridge"; team.showAssignment = true
+        projects.projects.removeLast(); team.choices.removeLast(); team.pickPair()
+    default:
+        workspace.selection = .project("sparshur-service")
+    }
+    let detail: AnyView
+    switch workspace.selection {
+    case .newSession(let key):
+        detail = AnyView(TeamRoomView(model: team, active: false, preview: true, missingAgents: workspace.missingAgents(key), addAgent: { _ in }))
+    case .session: detail = AnyView(TeamRoomView(model: workspace.remote!, active: false, preview: true))
+    default: detail = AnyView(ProjectHomeView(workspace: workspace, key: "sparshur-service"))
+    }
+    return HStack(spacing: 0) {
+        WorkspaceSidebar(workspace: workspace, devices: devices).frame(width: 270)
+        Divider()
+        detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }.frame(width: 1200, height: 820)
 }

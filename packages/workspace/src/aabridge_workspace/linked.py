@@ -88,6 +88,11 @@ def describe(state: Path, task: dict, project: dict) -> str:
     links = paths(state, task, project)
     if not links:
         return ""
+    if task.get("mode", "work") != "work":
+        # Planning and review never edit; this Mac's access says nothing about what the follower may change.
+        lines = [f"- {path} ({link['name']}): read it for this step." for link, path in links]
+        return ("Linked projects are part of this task. Read them to keep the projects consistent with each other. "
+                "You don't edit in this step; what the follower may change in each is listed in the task context.\n" + "\n".join(lines) + "\n")
     lines = [f"- {path} ({link['name']}): " + ("you may edit it; your changes are kept on this task branch." if link["access"] == "edit"
              else "read only. Do not edit it; changes there are discarded.") for link, path in links]
     return ("Linked projects are part of this task. Use them to keep the projects consistent with each other; "

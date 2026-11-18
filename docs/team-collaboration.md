@@ -6,15 +6,15 @@ AABridge now treats every Mac as a peer. A room has a human admin, a leader chos
 
 1. Install the same AABridge Team build on both Macs. In Settings choose the installed agent and select **Set up this Mac**. Full coding setup does not require a demo or a special Claude token. Sign in to the agent CLI on its own Mac.
 2. In **Devices**, create and copy each Mac’s public connection card to the other Mac, then connect it. Exchange both cards. New cards pin each app’s TLS certificate and enable its direct listener; Remote Login is not required. Private keys and agent logins are never included. Keep both Macs reachable over a LAN or VPN.
-3. In **Projects**, select the root folder of your Git project, choose the local agent, select the paired Mac, and save. Add separate projects if both Codex and Claude will work on the same Mac. Both copies need the same committed baseline. Refresh in Team chat after saving.
-4. In **Team chat**, select a leader and a worker, describe the task, and start. The leader plans, the worker implements, and the leader reviews the actual implementation diff. Swap roles when creating the next task. You can stop an active team or retry a blocked connection.
+3. In the sidebar, press **+** next to Projects, choose the root folder of your Git project, tick the agents on this Mac (Codex, Claude or both), allow the paired Mac, and add it. Do the same on the other Mac with the same project name. Both copies need the same committed baseline.
+4. Press the new-session button on the project, pick a leader and a worker among that project's agents, describe the task, and start. The leader plans, the worker implements, and the leader reviews the actual implementation diff. Swap roles when creating the next task. You can stop an active team or retry a blocked connection.
 5. Read the result, then send a follow-up in the same chat. Follow-ups revise the existing implementation checkout, preserving previous changes. Publishing remains a separate admin decision.
 
 ## Architecture
 
 - `aabridge_core.teams`: persistent room assignments, admin messages, stage checkpoints, deterministic task keys, stop/retry, and follow-up revisions.
 - `TeamRunner` runs alongside the existing supervisor and uses the same local/SSH protocol in either direction. The admin Mac holds the room; task history and workspaces stay on the Mac running each stage. Keep the admin supervisor running during orchestration.
-- Planning is read-only. The plan becomes the follower’s instruction. Review receives the exact implementation commit in an isolated checkout. Review can run checks using private scratch/cache directories, but must leave the checkout and HEAD unchanged; the bridge rejects source edits. The follower’s report and transferred Git evidence inform the review. The follower cannot reassign the room, create another delegation, or override its leader through task output. Remote identities cannot invoke room-admin operations.
+- Planning is read-only. The plan becomes the follower’s instruction. Review receives the exact implementation commit in an isolated checkout. Review can run checks using private scratch/cache directories, but must leave the checkout and HEAD unchanged; the bridge rejects source edits. The follower’s report and transferred Git evidence inform the review. The follower cannot reassign the room, create another delegation, or override its leader through task output. Remote identities cannot invoke room-admin operations; a member Mac can only read its sessions (see "Projects and sessions").
 - `NativeWorker` starts the installed Codex or Claude coding CLI in a separate cloned checkout on `codex/task-…`. The CLI can read the whole project, add/edit/delete files and run project commands. Codex uses its workspace-write sandbox; Claude uses normal acceptEdits permissions with explicitly allowed coding tools. No bypass-permissions flags are used. The worker runs under the local signed-in user: this mode does not provide the old proposal sandbox’s OS-level isolation. Use it for projects and paired Macs you trust.
 - Native coding removes the old 16-file/16-KiB restrictions and arithmetic-only verification requirement. It uses a one-hour task budget with up to 100 turns/revisions. Application test results are agent-reported, not independently guaranteed by AABridge. Every coding result requires review.
 - Existing proposal projects, pinned agent binaries, restricted transport, task ownership, credential privacy and history remain supported. Saving a coding project revalidates the installed binary; an updated binary must be re-enabled locally.
@@ -667,3 +667,76 @@ revision" on every attempt, even after the project was saved again.
 259 deterministic tests pass. The signature rule was checked against the real
 Codex and Claude binaries on the Mac mini. Not run against the MacBook's
 failed step yet.
+
+## Projects and sessions · November 19, 2026
+
+The window is now a project sidebar, like a coding-agent app: each project is
+one Git folder, and its sessions (team rooms) are listed under it. Devices, All
+agent tasks (the old Task history) and Settings sit at the bottom. The Team and
+Projects tabs are gone; a new session is started from its project, so the
+leader and worker pickers only offer that project's agents ("Claude · This
+Mac", "Codex · Sparsh's MBP").
+
+- **One folder, any agents.** `project-save` accepts `{repository, agents,
+  peers, name?, links?}`. `save_project_agents` registers the folder once per
+  agent as before (each agent keeps its own pinned entry and ID, so grants and
+  history are unchanged), reuses an existing entry for the same folder and
+  agent, and reports an agent that can't be set up in `agent_errors` without
+  stopping the others. The old single-agent body still works. Project entries
+  gain a `name`.
+- **Matching across Macs.** `projects` advertises `name` and the capability
+  `team_view`. Entries saved before this have no name; `titles.project_name`
+  derives it from the default ID `project-<folder>-<agent>`, so the mini's
+  `project-sparshur-service-claude` and the MacBook's
+  `project-sparshur-service-codex` are both `sparshur-service`. The desktop
+  groups by `titles.project_slug(name)`. Use the same name on both Macs.
+- **The same session on both Macs.** Previously the admin Mac showed a room in
+  Team chat and the other Mac only saw its stage tasks in Task history.
+  `teams`, `team_status` and `team_activity` (`TEAM_READS`) are now allowed
+  from an enabled paired Mac, for rooms where it is the leader or follower
+  target. The reply is rewritten to the viewer's side: its own target becomes
+  `local`, the admin's becomes the admin's node ID, `host` and `read_only` are
+  set, worktree/publication paths are removed and `failure.retry` is false.
+  Every other team operation from a peer is still `permission_denied`. The
+  desktop polls each reachable paired Mac every 10 seconds and shows these
+  sessions under the matching project, with a read-only chat and live feed.
+  This relies on TLS pairing, where the peer and remote names are the same
+  node ID; legacy SSH aliases with different names won't match.
+- **Setting up Claude.** Settings no longer has a single "worker agent", and
+  Set up this Mac is no longer disabled for Claude without the small-proposal
+  token (full coding never needed it). Full-coding setup succeeds when either
+  agent is installed. This, plus each project being bound to one agent, is why
+  Claude couldn't be chosen on the MacBook.
+
+Validation: 265 deterministic tests (new: `test_project_sessions`, the
+Claude-only installer case; `test_direct` now expects an empty session list for
+a non-member peer). `make ui-check` passed 30 checks and 15 screens, including
+the project, new-session, shared-session and one-agent screens. Swift compiled
+for arm64 and type-checked for x86_64. Not run: `scripts/build_desktop.py`, a
+two-Mac session view, any model call. Both Macs need this build's service for
+the shared view; an older admin Mac simply shows no shared sessions.
+
+### Leaders now see what the worker can edit in linked projects
+
+In the room "Client streaming, one-tap sharing and Android UI" (plan task
+`task-e60814bff777f25fa70a7a29` on the mini), the admin asked the team to
+implement the next steps across Sparshur-Service and both client apps. The
+leader, Claude on the mini, answered with `NEXT: ANSWER_ONLY` and told the admin
+to start a separate task, because its prompt said both linked client projects
+were "read only … changes there are discarded". That prompt described the
+leader's own project on the mini, where both links are saved as **Can read**.
+Link access is per Mac and per project. The leader was never told what the
+worker could edit, and plan steps never edit anyway.
+
+- `teams.team_links` adds the worker's link names and access (already advertised
+  by `projects`) to every plan and review step. Editable links are to be planned
+  in the same task; read-only ones are named, with the setting to change.
+- `linked.describe` no longer calls a link read-only or discarded in plan and
+  review steps; it points to that context instead.
+- `NEXT_RULE` forbids `ANSWER_ONLY` when the admin asks for changes or to report
+  a blocker. The leader plans what the worker can do and names what is blocked.
+
+Edit access still has to be set on the Mac that runs the worker (project
+settings → Related projects → Can edit). The mini's Sparshur-Service project
+still has both links set to Can read. The MacBook's settings were not checked;
+it was offline.

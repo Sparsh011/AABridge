@@ -24,6 +24,7 @@ from aabridge_transport_local.client import call as local_call
 from aabridge_transport_ssh.client import call as remote_call
 from aabridge_workspace.git import git, relative_file, safe_source, scoped_source, validate_verifier
 from aabridge_preflight.runtimes import AGENTS, local_path, runtime_report
+from aabridge_protocol.titles import project_name, project_slug  # noqa: F401 (desktop backend imports project_name here)
 
 CLAUDE_TOKEN = "claude-oauth-token"
 
@@ -414,7 +415,40 @@ def _fetch_ssh_result(state, remote, review, project_id, task_id, commit):
     require(outcome.returncode == 0, "Authenticated Git result transfer failed; no active checkout was changed.", "git_transfer_failed")
 
 
-def configure_coding_project(state: Path, project_id: str, repository: Path, peers: list[str], agent: str = 'codex', links: list | None = None) -> dict:
+def save_project_agents(state: Path, repository: Path, agents: list, peers: list, links: list | None = None, name: str | None = None) -> dict:
+    """Register one Git folder for every chosen agent on this Mac, in one step.
+
+    Each agent keeps its own pinned project entry and ID, so existing grants and
+    history stay valid. An agent that can't be set up here is reported on its
+    own and does not stop the others.
+    """
+    require(isinstance(agents, list) and agents and all(agent in AGENTS for agent in agents) and len(set(agents)) == len(agents), 'Choose Codex, Claude, or both.')
+    require(isinstance(repository, Path), 'Choose a repository folder.')
+    repository = repository.expanduser().resolve(strict=True)
+    require(name is None or isinstance(name, str), 'Invalid project name.')
+    shown = (name or '').strip() or repository.name
+    require(len(shown) <= 80 and not any(ord(c) < 32 for c in shown), 'Use a project name of up to 80 characters on one line.')
+    saved, errors = [], {}
+    for agent in agents:
+        config = load_config(state)
+        existing = next((pid for pid, project in config['projects'].items()
+                         if project.get('repository') == str(repository) and project.get('adapter') == agent
+                         and project.get('permission_profile') == 'coding-v1'), None)
+        project_id = existing or f'project-{project_slug(shown)}-{agent}'
+        try:
+            require(existing is not None or project_id not in config['projects'],
+                    f'The project ID {project_id} already belongs to another folder or agent.', 'project_conflict')
+            configure_coding_project(state, project_id, repository, peers, agent, links, display=shown)
+            asyncio.run(enable_project(state, project_id))
+            saved.append(project_id)
+        except BridgeError as exc:
+            errors[agent] = exc.message
+        except (OSError, ValueError, asyncio.TimeoutError) as exc:
+            errors[agent] = f'{"Claude" if agent == "claude" else "Codex"} could not be checked on this Mac: {exc or type(exc).__name__}'
+    return {'saved': saved, 'agent_errors': errors, 'name': shown}
+
+
+def configure_coding_project(state: Path, project_id: str, repository: Path, peers: list[str], agent: str = 'codex', links: list | None = None, display: str | None = None) -> dict:
     """Local admin enables normal coding tools for a whole repository."""
     identifier(project_id)
     require(agent in AGENTS, 'Choose Codex or Claude.')
@@ -435,6 +469,9 @@ def configure_coding_project(state: Path, project_id: str, repository: Path, pee
                'base_commit': git(repository, 'rev-parse', 'HEAD'), 'verification': {'profile': 'repository-v1'},
                'permission_profile': 'coding-v1', 'execution_enabled': False,
                'limits': {'runtime_seconds': 3600, 'max_turns': 100, 'max_revisions': 100}, **runtime_binding(state, agent)}
+    shown = display or config['projects'].get(project_id, {}).get('name')
+    if shown:
+        project['name'] = shown
     config['projects'][project_id] = project
     for name, peer in config['peers'].items():
         if name == 'local' or '*' in peer['projects']:

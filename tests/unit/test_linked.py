@@ -111,6 +111,10 @@ class LinkedProjectTests(unittest.TestCase):
             description = linked.describe(self.state, task, project)
             self.assertIn('sparshur-android): you may edit it', description)
             self.assertIn('mac-app): read only', description)
+            # A plan or review step never edits, and its own access says nothing about the follower's.
+            planning = linked.describe(self.state, dict(task, mode='plan'), project)
+            self.assertNotIn('discarded', planning)
+            self.assertIn('listed in the task context', planning)
             store = Store(self.state)
             store.update(task['id'], 'cancelled', status='cancelled')  # Free the project for the next agent.
             store.close()

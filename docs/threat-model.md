@@ -105,6 +105,11 @@ tested macOS/CLI version, not a formal or comprehensive sandbox proof.
   same project grants and revocation checks. It does not expose provider
   credentials or internal model reasoning. Exported messages/context can contain
   user-supplied sensitive text and should be handled as project data.
+- A paired Mac that is the leader or worker of a team session can read that
+  session's chat, status and live activity on the admin Mac (`teams`,
+  `team_status`, `team_activity`), including the admin's messages and both
+  agents' replies. Admin-Mac paths are removed. It cannot start, steer, stop,
+  merge or retry a session, and sessions it is not a member of stay hidden.
 - No disk quota or rotating retention policy is implemented. Task count is
   capped at 256, payload/source/event sizes are bounded, but provider runtime
   files and Git metadata can consume disk. No automatic deletion is provided.

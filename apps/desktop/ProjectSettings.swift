@@ -10,37 +10,69 @@ struct LocalProject: Decodable, Identifiable {
     let execution_enabled: Bool
     let peers: [String]
     var links: [ProjectLink]? = nil
+    var name: String? = nil
+    var coding: Bool { verification.profile == "repository-v1" }
+    var shownName: String { name ?? ProjectKey.name(fromID: id) }
+}
+
+/// One project as you see it: a Git folder on this Mac, with every agent that may work on it.
+/// Underneath, each agent keeps its own pinned entry, so grants and history are unchanged.
+struct LocalProjectGroup: Identifiable {
+    let key: String
+    let name: String
+    let repository: String
+    var projects: [LocalProject]
+    var id: String { key }
+    var agents: [String] { projects.map(\.adapter).sorted() }
+    func project(_ agent: String) -> LocalProject? { projects.first { $0.adapter == agent } }
+    var peers: Set<String> { Set(projects.flatMap(\.peers)) }
+    var links: [ProjectLink] { projects.first { !($0.links ?? []).isEmpty }?.links ?? [] }
 }
 
 final class ProjectSettingsModel: ObservableObject {
+    static let agents = ["claude", "codex"]
     @Published var projects: [LocalProject] = []
     @Published var peers: [String] = []
     @Published var peerLabels: [String: String] = [:]
-    @Published var selected = ""
-    @Published var projectID = ""
+    /// The project being edited (its key), or empty for a new one.
+    @Published var editing = ""
+    @Published var name = ""
     @Published var repository = ""
-    @Published var scopeText = ""
+    @Published var agents: Set<String> = Set(ProjectSettingsModel.agents)
     @Published var selectedPeers: Set<String> = []
-    @Published var agent = "codex"
-    @Published var coding = true
-    @Published var claudeToken = ""
     /// Related projects agents may also open while working on this one.
     @Published var links: [ProjectLink] = []
-    @Published var claudeTokenStored = false
+    @Published var agentErrors: [String: String] = [:]
     @Published var busy = false
+    @Published var loaded = false
     @Published var notice = ""
+    /// Called after a save, so the sidebar and the team's agent list update.
+    var onSaved: (String) -> Void = { _ in }
     private let activity: TaskBrowserModel
     init(activity: TaskBrowserModel) { self.activity = activity }
-    var scope: [String] { scopeText.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
-    var canSave: Bool { !busy && !projectID.isEmpty && !repository.isEmpty && (coding || (!scope.isEmpty && scope.count <= 16 && scope.count == Set(scope).count))
-        && (coding || agent != "claude" || claudeTokenStored || !claudeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
-    var agentName: String { agent == "claude" ? "Claude Code" : "Codex" }
-    func chooseProject() {
-        guard let project = projects.first(where: { $0.id == selected }) else {
-            projectID = ""; repository = ""; scopeText = ""; selectedPeers = []; agent = "codex"; coding = true; selectedPeers = Set(peers); links = []; return
+
+    /// Coding projects on this Mac, one per folder. Older proposal-only projects stay in All agent tasks.
+    var groups: [LocalProjectGroup] {
+        var found: [String: LocalProjectGroup] = [:]
+        for project in projects where project.coding {
+            let key = ProjectKey.slug(project.shownName)
+            if found[key] == nil { found[key] = LocalProjectGroup(key: key, name: project.shownName, repository: project.repository, projects: []) }
+            found[key]!.projects.append(project)
         }
-        projectID = project.id; repository = project.repository; scopeText = project.scope.joined(separator: "\n"); selectedPeers = Set(project.peers); agent = project.adapter; coding = project.verification.profile == "repository-v1"
-        links = project.links ?? []
+        return found.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+    var group: LocalProjectGroup? { groups.first { $0.key == editing } }
+    /// Agents already working in the project being edited. They stay; saving updates their settings.
+    var existingAgents: Set<String> { Set(group?.agents ?? []) }
+    var canSave: Bool { !busy && !repository.isEmpty && !agents.union(existingAgents).isEmpty }
+
+    func startNew() {
+        editing = ""; name = ""; repository = ""; agents = Set(Self.agents); selectedPeers = Set(peers); links = []; agentErrors = [:]; notice = ""
+    }
+    func edit(_ key: String) {
+        guard let group = groups.first(where: { $0.key == key }) else { startNew(); return }
+        editing = key; name = group.name; repository = group.repository; agents = Set(group.agents)
+        selectedPeers = group.peers; links = group.links; agentErrors = [:]; notice = ""
     }
     /// Folder name as AABridge will name the link (matches the Python side).
     static func linkName(_ folder: URL) -> String {
@@ -62,66 +94,58 @@ final class ProjectSettingsModel: ObservableObject {
     }
     func chooseRepository() {
         let panel = NSOpenPanel()
-        panel.title = "Choose a committed Git repository on this receiving Mac"
+        panel.title = "Choose the root folder of a Git project on this Mac"
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url {
-            repository = url.path
-            // A second agent's project for the same folder usually needs the same links.
-            if links.isEmpty, let sibling = projects.first(where: { $0.repository == url.path && !($0.links ?? []).isEmpty }) {
-                links = sibling.links ?? []
-                notice = "Copied related projects from \(sibling.id). Change them below if this agent needs different access."
-            }
-            if projectID.isEmpty {
-                let slug = url.lastPathComponent.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : Character("-") }
-                projectID = "project-" + String(slug.prefix(45)) + "-" + agent
-            }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        repository = url.path
+        if let existing = groups.first(where: { $0.repository == url.path }) {
+            edit(existing.key)
+            notice = "This folder is already the project “\(existing.name)”. Its settings are shown below."
+            return
         }
+        if name.isEmpty { name = url.lastPathComponent }
     }
-    func chooseFiles() {
-        guard !repository.isEmpty else { notice = "Choose the repository first."; return }
-        let root = URL(fileURLWithPath: repository).standardizedFileURL
-        let panel = NSOpenPanel()
-        panel.title = "Choose existing files to allow"
-        panel.directoryURL = root; panel.canChooseDirectories = false; panel.canChooseFiles = true; panel.allowsMultipleSelection = true
-        if panel.runModal() == .OK {
-            var paths = scope
-            for url in panel.urls {
-                let path = url.standardizedFileURL.path
-                guard path.hasPrefix(root.path + "/") else { notice = "Choose files inside the selected repository."; return }
-                let relative = String(path.dropFirst(root.path.count + 1))
-                if !paths.contains(relative) { paths.append(relative) }
-            }
-            scopeText = paths.joined(separator: "\n")
-        }
-    }
-    func refresh() { perform("projects-local", body: nil) }
+    func refresh() { perform(nil) }
     func save() {
         guard canSave else { return }
         do {
-            var body: [String: Any] = ["id": projectID, "repository": repository, "scope": coding ? ["*"] : scope, "peers": selectedPeers.sorted(), "agent": agent, "coding": coding]
-            if coding { body["links"] = links.map { ["repository": $0.repository ?? "", "access": $0.access] } }
-            let token = claudeToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            if agent == "claude" && !token.isEmpty { body["claude_token"] = token }
-            let data = try JSONSerialization.data(withJSONObject: body)
-            perform("project-save", body: data)
+            var body: [String: Any] = ["repository": repository, "agents": Self.agents.filter { agents.union(existingAgents).contains($0) },
+                                       "peers": selectedPeers.sorted(), "links": links.map { ["repository": $0.repository ?? "", "access": $0.access] }]
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { body["name"] = trimmed }
+            perform(try JSONSerialization.data(withJSONObject: body))
         } catch { notice = error.localizedDescription }
     }
-    private func perform(_ action: String, body: Data?) {
+    /// Adds one agent to an existing project, keeping its sharing and related projects.
+    func addAgent(_ agent: String, to key: String) {
+        edit(key)
+        agents.insert(agent)
+        save()
+    }
+    private func perform(_ body: Data?) {
         guard !busy else { return }
         busy = true
-        notice = action == "project-save" ? "Saving your project and checking \(agentName)…" : "Loading projects on this Mac…"
-        let wanted = projectID
+        let saving = body != nil
+        let names = agents.union(existingAgents).map(agentName).sorted().joined(separator: " and ")
+        notice = saving ? "Saving and checking \(names) on this Mac. No model is started…" : "Loading projects on this Mac…"
+        let wanted = ProjectKey.slug(name.isEmpty ? URL(fileURLWithPath: repository).lastPathComponent : name)
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                struct Reply: Decodable { let projects: [LocalProject]; let peers: [String]; let claude_token_stored: Bool; let peer_labels: [String: String]? }
-                let reply = try JSONDecoder().decode(Reply.self, from: self.activity.call(action, target: "local", input: body))
+                struct Reply: Decodable { let projects: [LocalProject]; let peers: [String]; let peer_labels: [String: String]?; var agent_errors: [String: String]? = nil }
+                let reply = try JSONDecoder().decode(Reply.self, from: self.activity.call(saving ? "project-save" : "projects-local", target: "local", input: body))
                 DispatchQueue.main.async {
-                    self.projects = reply.projects; self.peers = reply.peers; self.busy = false
-                    if self.selected.isEmpty { self.selectedPeers = Set(reply.peers) }
+                    self.projects = reply.projects; self.peers = reply.peers; self.busy = false; self.loaded = true
                     self.peerLabels = reply.peer_labels ?? [:]
-                    self.claudeTokenStored = reply.claude_token_stored; self.claudeToken = ""
-                    if action == "project-save" { self.selected = wanted; self.notice = "Project ready. Open Team chat and refresh your team to select it." }
-                    else { self.notice = "Project permissions below belong to this Mac." }
+                    if saving {
+                        let errors = reply.agent_errors ?? [:]
+                        self.edit(self.groups.first(where: { $0.repository == self.repository })?.key ?? wanted)
+                        self.agentErrors = errors
+                        self.notice = errors.isEmpty ? "Saved. Start a session from the sidebar." : "Saved, but not every agent could be added. See below."
+                        self.onSaved(self.editing)
+                    } else {
+                        if self.editing.isEmpty && self.repository.isEmpty { self.selectedPeers = Set(reply.peers) }
+                        self.notice = ""
+                    }
                 }
             } catch {
                 DispatchQueue.main.async { self.busy = false; self.notice = error.localizedDescription }
@@ -130,92 +154,92 @@ final class ProjectSettingsModel: ObservableObject {
     }
 }
 
+/// Add a project, or change one: folder, agents on this Mac, sharing and related projects.
 struct ProjectSettingsView: View {
     @ObservedObject var model: ProjectSettingsModel
-    @State private var advanced = false
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
-            Text("Add your project").font(.bridge(.title).bold())
-            Text("Choose the folder this Mac will work on and the agent it will use. Add the same project on your other Mac, using the same committed version.").foregroundStyle(.secondary)
-            if model.projects.count < 2 {
-                Card(tint: .accentColor) {
-                    Label(model.projects.isEmpty ? "No projects yet" : "One more to make a team", systemImage: "folder.badge.plus").font(.bridge(.headline))
-                    Text(model.projects.isEmpty ? "A project tells AABridge which Git folder an agent may work on. A team needs two: one for the leader’s agent and one for the worker’s."
-                         : "You have one project. A team needs a second agent: add the same folder again with the other agent, or add it on a paired Mac.")
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("1.  Choose your Git folder below and pick Codex or Claude, then Save.")
-                        Text("2.  Choose “Add a new project”, pick the same folder with the other agent, and Save again.")
-                        Text("3.  Open Team and start a task. Both entries then appear as leader and worker choices.")
-                    }.font(.bridge(.callout)).foregroundStyle(.secondary)
-                }
-            }
-            HStack {
-                Picker("Project", selection: $model.selected) {
-                    Text("Add a new project").tag("")
-                    ForEach(model.projects) { Text($0.id + ($0.adapter == "claude" ? " · Claude" : " · Codex")).tag($0.id) }
-                }.onChange(of: model.selected) { _ in model.chooseProject() }
-                Button("Refresh") { model.refresh() }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.editing.isEmpty ? "Add a project" : "\(model.name) settings").font(.bridge(.title).bold())
+                Text(model.editing.isEmpty ? "A project is one Git folder. Codex and Claude can both work in it, on this Mac and on your paired Mac. Add it on each Mac once."
+                     : "These settings belong to this Mac. Your paired Mac keeps its own copy of the project.").foregroundStyle(.secondary)
             }
             GroupBox { VStack(alignment: .leading, spacing: 18) {
-                Text("1. Choose a folder").font(.bridge(.headline))
-                HStack { Text(model.repository.isEmpty ? "No project selected" : model.repository).foregroundStyle(.secondary).textSelection(.enabled); Spacer(); Button("Choose folder…") { model.chooseRepository() } }
-                Text("Use a Git project with at least one commit. Your team works in separate copies, so your current files stay safe.").font(.bridge(.caption)).foregroundStyle(.secondary)
-                Text("2. Choose this Mac’s agent").font(.bridge(.headline))
-                Picker("Agent", selection: $model.agent) { Text("Codex").tag("codex"); Text("Claude").tag("claude") }.pickerStyle(.segmented)
-                Text("Full coding lets the agent edit the project and run commands with its normal CLI permissions and login. Sign in to the selected agent on this Mac first.").font(.bridge(.callout)).foregroundStyle(.secondary)
+                Text("1. Folder").font(.bridge(.headline))
+                HStack {
+                    Text(model.repository.isEmpty ? "No folder chosen" : model.repository).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    if model.editing.isEmpty { Button("Choose folder…") { model.chooseRepository() } }
+                }
+                TextField("Name", text: $model.name).textFieldStyle(.roundedBorder).frame(maxWidth: 360).disabled(!model.editing.isEmpty)
+                Text("Use the root of a Git project with at least one commit. Agents work in separate copies, so your files stay as they are. Use the same name on your other Mac so the two are matched.")
+                    .font(.bridge(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+                Text("2. Agents on this Mac").font(.bridge(.headline))
+                HStack(spacing: 12) {
+                    ForEach(ProjectSettingsModel.agents, id: \.self) { agent in agentToggle(agent) }
+                }
+                Text("Each agent uses its own login on this Mac and can edit the project and run its commands. Saving checks that the agent is installed; no model is started.")
+                    .font(.bridge(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
                 Text("3. Share with your other Mac").font(.bridge(.headline))
-                Text("Allowed Macs can read the history of coding tasks created locally in this project. They can control only tasks they submitted; other peers’ task histories stay private.").font(.bridge(.caption)).foregroundStyle(.secondary)
-                if model.peers.isEmpty { Text("Connect the other Mac in Devices first. You can still save a project for local work.").foregroundStyle(.secondary) }
+                Text("A shared Mac can start sessions that use this Mac’s agents here, and both Macs show those sessions under this project.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                if model.peers.isEmpty { Text("No Mac is paired yet. Pair one in Devices; you can still work with both agents on this Mac.").foregroundStyle(.secondary) }
                 ForEach(model.peers, id: \.self) { peer in
                     Toggle(model.peerLabels[peer] ?? peer, isOn: Binding(get: { model.selectedPeers.contains(peer) }, set: { if $0 { model.selectedPeers.insert(peer) } else { model.selectedPeers.remove(peer) } }))
                 }
-                if model.coding {
-                    Text("4. Related projects (optional)").font(.bridge(.headline))
-                    Text("Does this project work with others, like a server with its Android and Mac apps? Link them so agents can look at them, and change them if you allow it, in the same task. Agents work on their own copies; your folders aren’t touched until you choose where results go.")
-                        .font(.bridge(.callout)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    ForEach($model.links) { $link in
-                        HStack(spacing: 12) {
-                            Image(systemName: "folder").foregroundStyle(.tint)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(link.name).font(.bridge(.headline))
-                                Text(link.repository ?? "").font(.bridge(.caption)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                            }
-                            Spacer()
-                            Picker("Access", selection: $link.access) { Text("Can read").tag("read"); Text("Can edit").tag("edit") }
-                                .pickerStyle(.segmented).labelsHidden().frame(width: 190)
-                            Button { model.links.removeAll { $0.id == link.id } } label: { Image(systemName: "minus.circle") }
-                                .buttonStyle(.borderless).help("Remove this related project")
-                        }.padding(10).background(Color.primary.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
-                    Button { model.addLink() } label: { Label("Add related project…", systemImage: "plus") }
-                    if !model.links.isEmpty {
-                        Text("Can read: agents may open it for context. Can edit: agents may change it, and the changes come back on the same branch name in that project, with its own pull request if you ask for one.")
-                            .font(.bridge(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
+
+                Text("4. Related projects (optional)").font(.bridge(.headline))
+                Text("Does this project work with others, like a server with its Android and Mac apps? Link them so agents can look at them, and change them if you allow it, in the same session.")
+                    .font(.bridge(.callout)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                ForEach($model.links) { $link in
+                    HStack(spacing: 12) {
+                        Image(systemName: "folder").foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(link.name).font(.bridge(.headline))
+                            Text(link.repository ?? "").font(.bridge(.caption)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        }
+                        Spacer()
+                        Picker("Access", selection: $link.access) { Text("Can read").tag("read"); Text("Can edit").tag("edit") }
+                            .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+                        Button { model.links.removeAll { $0.id == link.id } } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.borderless).help("Remove this related project")
+                    }.padding(10).background(Color.primary.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius: 10))
                 }
+                Button { model.addLink() } label: { Label("Add related project…", systemImage: "plus") }
             }.padding(18) }
-            DisclosureGroup("Advanced settings", isExpanded: $advanced) {
-                VStack(alignment: .leading, spacing: 14) {
-                    TextField("Project name", text: $model.projectID).disabled(!model.selected.isEmpty)
-                    Toggle("Full project coding", isOn: $model.coding)
-                    if !model.coding {
-                        Text("Small file proposals · agent tools and test commands are disabled.").foregroundStyle(.secondary)
-                        HStack { Text("Allowed files"); Spacer(); Button("Choose files…") { model.chooseFiles() } }
-                        TextEditor(text: $model.scopeText).font(.bridge(.body, design: .monospaced)).frame(height: 130)
-                    }
-                    if model.agent == "claude" {
-                        SecureField("Optional Claude subscription token", text: $model.claudeToken)
-                        Text("Full coding uses your normal Claude login. The small-proposal sandbox requires a token from claude setup-token.").font(.bridge(.caption)).foregroundStyle(.secondary)
-                    }
-                }.padding(.top, 12)
-            }
             HStack {
                 if model.busy { ProgressView().controlSize(.small) }
                 Text(model.notice).foregroundStyle(.secondary).textSelection(.enabled)
                 Spacer()
-                Button("Save project") { model.save() }.buttonStyle(.borderedProminent).disabled(!model.canSave)
+                Button(model.editing.isEmpty ? "Add project" : "Save") { model.save() }.buttonStyle(.borderedProminent).disabled(!model.canSave)
             }
         }.padding(32).frame(maxWidth: 950, alignment: .leading).disabled(model.busy) }
-            .onAppear { if model.projects.isEmpty && !model.busy { model.refresh() } }
+            .onAppear { if !model.loaded && !model.busy { model.refresh() } }
+    }
+
+    private func agentToggle(_ agent: String) -> some View {
+        let existing = model.existingAgents.contains(agent)
+        let chosen = existing || model.agents.contains(agent)
+        let problem = model.agentErrors[agent]
+        return Button { if !existing { if chosen { model.agents.remove(agent) } else { model.agents.insert(agent) } } } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: chosen ? "checkmark.square.fill" : "square").foregroundStyle(chosen ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(agentName(agent)).font(.bridge(.headline))
+                    if let problem = problem {
+                        Text(problem).font(.bridge(.caption)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    } else if existing {
+                        Text(model.group?.project(agent)?.execution_enabled == true ? "Ready" : "Added, but not checked yet. Save to check it again.").font(.bridge(.caption)).foregroundStyle(.secondary)
+                    } else {
+                        Text(chosen ? "Will be added" : "Not added").font(.bridge(.caption)).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }.padding(12).frame(maxWidth: 300, alignment: .leading)
+                .background(chosen ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.03))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(problem != nil ? Color.orange : chosen ? Color.accentColor.opacity(0.6) : Color.primary.opacity(0.12)))
+                .clipShape(RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
+        }.buttonStyle(.plain).help(existing ? "\(agentName(agent)) already works in this project." : "")
     }
 }

@@ -139,9 +139,11 @@ class DirectTransportTests(unittest.IsolatedAsyncioTestCase):
         result = await asyncio.to_thread(mcp_handle, self.book, {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
                                          'params': {'name': 'bridge_projects', 'arguments': {'body': {}, 'remote': self.mini_id}}})
         self.assertIn('demo', json.dumps(result))
-        for op in ('shutdown', 'teams'):
+        # A peer lists only the sessions it is a member of, and can't start or steer one.
+        self.assertEqual((await self.rpc('teams'))['teams'], [])
+        for op, body in (('shutdown', {}), ('team_cancel', {'team_id': 'team-x'})):
             with self.assertRaises(BridgeError) as error:
-                await self.rpc(op)
+                await self.rpc(op, body, 'peer-' + op.replace('_', '-'))
             self.assertEqual(error.exception.code, 'permission_denied')
 
     async def test_receiver_local_coding_history_is_visible_from_the_other_mac(self):

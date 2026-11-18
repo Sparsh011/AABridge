@@ -56,6 +56,9 @@ struct TeamRoom: Decodable, Identifiable {
     /// Why the task is paused, the role in the middle of a step, and a commit match in progress.
     var error_code: String? = nil; var busy_role: String? = nil; var align: String? = nil
     var title: String? = nil; var answered: Bool? = nil; var earlier_messages: Int? = nil; var stage_started: Double? = nil
+    var updated_at: Double? = nil
+    /// Set when another Mac runs this session and this Mac only takes part in it.
+    var host: String? = nil; var read_only: Bool? = nil
     /// The task keeps its first name; a follow-up message does not rename it.
     var displayTitle: String { title?.isEmpty == false ? title! : objective }
     var running: Bool { ["running", "stopping"].contains(status) }
@@ -67,6 +70,27 @@ struct TeamRoom: Decodable, Identifiable {
 struct TeamChoice: Identifiable {
     let id: String; let label: String; let member: TeamMember
     var links: [ProjectLink] = []
+    /// The project this agent works in, as the sidebar groups it (one folder, any agents, any Mac).
+    var projectName: String = ""
+    var projectKey: String { ProjectKey.slug(projectName.isEmpty ? ProjectKey.name(fromID: member.project) : projectName) }
+    /// "Claude · Mac mini": the project is already chosen in the sidebar.
+    var agentAndMac: String { label.components(separatedBy: " · ").prefix(2).joined(separator: " · ") }
+}
+
+/// How projects with the same folder are matched across agents and Macs (mirrors aabridge_protocol.titles).
+enum ProjectKey {
+    static func name(fromID id: String) -> String {
+        var name = id.hasPrefix("project-") ? String(id.dropFirst(8)) : id
+        for agent in ["codex", "claude"] where name.hasSuffix("-" + agent) && name.count > agent.count + 1 {
+            name = String(name.dropLast(agent.count + 1)); break
+        }
+        return name
+    }
+    static func slug(_ name: String) -> String {
+        let mapped = name.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? String($0) : "-" }.joined()
+        let joined = mapped.split(separator: "-").joined(separator: "-")
+        return joined.isEmpty ? "project" : String(joined.prefix(45))
+    }
 }
 
 /// Where the finished code goes, in the order the new-task form offers it.
@@ -115,14 +139,21 @@ final class TeamRoomModel: ObservableObject {
     var rediscover = false
     @Published var notice = ""
     @Published var showAssignment = false
+    /// Limits the new-session form to one project's agents. Empty offers every agent.
+    @Published var projectScope = ""
+    @Published var deviceLabels: [String: String] = [:]
+    /// The Mac that holds these sessions: `local`, or a paired Mac whose sessions this Mac takes part in (read-only).
+    let host: String
+    var readOnly: Bool { host != "local" }
     @Published var connectionCard = ""
     @Published var connectionHost = ""
     @Published var pastedCard = ""
     private let activity: TaskBrowserModel
     private let preferences: UserDefaults
-    init(activity: TaskBrowserModel, preferences: UserDefaults = .standard) {
+    init(activity: TaskBrowserModel, preferences: UserDefaults = .standard, host: String = "local") {
         self.activity = activity
         self.preferences = preferences
+        self.host = host
         approval = preferences.string(forKey: "teamApproval") ?? "ask"
         placement = preferences.string(forKey: "teamPlacement") ?? "sandbox"
         pullRequest = preferences.bool(forKey: "teamPullRequest")
@@ -134,6 +165,8 @@ final class TeamRoomModel: ObservableObject {
     var terminal: Bool { room == nil || ["completed", "failed", "cancelled"].contains(room!.status) }
     var waiting: Bool { room?.status == "awaiting_admin" }
     var working: Bool { ["running", "stopping", "blocked"].contains(room?.status ?? "") }
+    /// The agents offered for a new session: only the chosen project's, on any Mac.
+    var visibleChoices: [TeamChoice] { projectScope.isEmpty ? choices : choices.filter { $0.projectKey == projectScope } }
     var leaderChoice: TeamChoice? { choices.first(where: { $0.id == leader }) }
     var followerChoice: TeamChoice? { choices.first(where: { $0.id == follower }) }
     /// The result can only reach a project folder on this Mac.
@@ -155,38 +188,41 @@ final class TeamRoomModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 var found: [TeamChoice]? = nil
+                var labels: [String: String]? = nil
                 var issues: [String] = []
                 if discover {
                     struct Targets: Decodable { let targets: [ActivityTarget] }
                     struct Projects: Decodable { let projects: [BridgeProject] }
                     let targets = try JSONDecoder().decode(Targets.self, from: self.activity.call("targets", target: "local")).targets
+                    labels = Dictionary(targets.map { ($0.id, $0.label) }, uniquingKeysWith: { first, _ in first })
                     var options: [TeamChoice] = []
                     for target in targets {
                         do {
                             let projects = try JSONDecoder().decode(Projects.self, from: self.activity.call("projects", target: target.id)).projects
                             for project in projects where project.available && project.verification?.profile == "repository-v1" {
                                 let agent = project.adapter == "claude" ? "Claude" : "Codex"
-                                options.append(TeamChoice(id: target.id + "/" + project.id, label: "\(agent) · \(target.label) · \(project.id)",
-                                    member: TeamMember(target: target.id, project: project.id, agent: project.adapter), links: project.links ?? []))
+                                let name = project.name ?? ProjectKey.name(fromID: project.id)
+                                options.append(TeamChoice(id: target.id + "/" + project.id, label: "\(agent) · \(target.label) · \(name)",
+                                    member: TeamMember(target: target.id, project: project.id, agent: project.adapter), links: project.links ?? [], projectName: name))
                             }
                         } catch { issues.append("\(target.label): \(error.localizedDescription)") }
                     }
                     found = options
                 }
                 struct Reply: Decodable { let teams: [TeamRoom] }
-                let rooms = try JSONDecoder().decode(Reply.self, from: self.activity.call("teams", target: "local")).teams
+                let rooms = try JSONDecoder().decode(Reply.self, from: self.activity.call("teams", target: self.host)).teams
                 let wanted = rooms.contains(where: { $0.id == selection }) ? selection : rooms.first?.id ?? ""
                 var room: TeamRoom? = nil
                 var feed: [LiveActivityEntry] = []
                 var nextCursor = wanted == feedRoom ? feedCursor : 0
                 var feedNotice = ""
                 if !wanted.isEmpty {
-                    room = try JSONDecoder().decode(TeamRoom.self, from: self.activity.call("team_status", target: "local", input: self.envelope(["team_id": wanted])))
+                    room = try JSONDecoder().decode(TeamRoom.self, from: self.activity.call("team_status", target: self.host, input: self.envelope(["team_id": wanted])))
                 }
                 if !wanted.isEmpty {
                     do {
                         for _ in 0..<4 {
-                            let page = try JSONDecoder().decode(LiveActivityPage.self, from: self.activity.call("team_activity", target: "local", input: self.envelope(["team_id": wanted, "cursor": nextCursor])))
+                            let page = try JSONDecoder().decode(LiveActivityPage.self, from: self.activity.call("team_activity", target: self.host, input: self.envelope(["team_id": wanted, "cursor": nextCursor])))
                             feed.append(contentsOf: page.entries)
                             nextCursor = page.cursor
                             if !page.has_more { break }
@@ -209,10 +245,10 @@ final class TeamRoomModel: ObservableObject {
                         self.followerModel = room.follower.model_settings?.model ?? ""; self.followerEffort = room.follower.model_settings?.effort ?? ""
                     }
                     self.rooms = rooms; self.room = room; self.selected = wanted; self.refreshing = false
+                    if let labels = labels { self.deviceLabels = labels }
                     if let found = found {
                         self.choices = found
-                        if !found.contains(where: { $0.id == self.leader }) { self.leader = found.first?.id ?? "" }
-                        if !found.contains(where: { $0.id == self.follower }) { self.follower = found.first(where: { $0.id != self.leader })?.id ?? "" }
+                        self.pickPair()
                         self.notice = issues.joined(separator: "\n")
                     }
                 }
@@ -226,7 +262,7 @@ final class TeamRoomModel: ObservableObject {
         loadingEarlier = true
         let before = hiddenMessages, id = room.id
         DispatchQueue.global(qos: .userInitiated).async {
-            let page = try? JSONDecoder().decode(TeamRoom.self, from: self.activity.call("team_status", target: "local", input: self.envelope(["team_id": id, "before": before])))
+            let page = try? JSONDecoder().decode(TeamRoom.self, from: self.activity.call("team_status", target: self.host, input: self.envelope(["team_id": id, "before": before])))
             DispatchQueue.main.async {
                 self.loadingEarlier = false
                 guard self.earlierRoom == id else { return }
@@ -237,7 +273,7 @@ final class TeamRoomModel: ObservableObject {
     }
     /// A macOS notification when a task stops needing only the agents, while AABridge is in the background.
     private func announce(_ rooms: [TeamRoom]) {
-        guard Bundle.main.bundleIdentifier != nil else { return }
+        guard Bundle.main.bundleIdentifier != nil, !readOnly else { return }
         let first = seenStatus.isEmpty
         for room in rooms {
             let before = seenStatus[room.id]
@@ -262,8 +298,32 @@ final class TeamRoomModel: ObservableObject {
     }
     func deviceLabel(_ target: String) -> String {
         if target == "local" { return "This Mac" }
+        if let label = deviceLabels[target] { return label }
         let label = choices.first(where: { $0.member.target == target })?.label.components(separatedBy: " · ")
         return label?.count ?? 0 > 1 ? label![1] : target
+    }
+    /// Opens the new-session form for one project, with the last leader and worker used there.
+    func newSession(in project: String) {
+        projectScope = project
+        showAssignment = true
+        draft = ""
+        pickPair()
+        refresh(discover: true)
+    }
+    /// A valid leader and worker among the project's agents: the last pair used, else this Mac leads and a different agent builds.
+    func pickPair() {
+        let options = visibleChoices
+        if let saved = preferences.string(forKey: "teamPair." + projectScope)?.components(separatedBy: "|"), saved.count == 2,
+           options.contains(where: { $0.id == saved[0] }), options.contains(where: { $0.id == saved[1] }), saved[0] != saved[1] {
+            leader = saved[0]; follower = saved[1]; return
+        }
+        if !options.contains(where: { $0.id == leader }) {
+            leader = (options.first(where: { $0.member.target == "local" }) ?? options.first)?.id ?? ""
+        }
+        if !options.contains(where: { $0.id == follower }) || follower == leader {
+            let lead = options.first(where: { $0.id == leader })
+            follower = (options.first(where: { $0.id != leader && $0.member.agent != lead?.member.agent }) ?? options.first(where: { $0.id != leader }))?.id ?? ""
+        }
     }
     private func settings(_ model: String, _ effort: String) -> [String: String] {
         AgentModelSettings(model: model.trimmingCharacters(in: .whitespacesAndNewlines), effort: effort).dictionary
@@ -276,6 +336,7 @@ final class TeamRoomModel: ObservableObject {
             return
         }
         guard ready, let lead = leaderChoice, let follow = followerChoice else { return }
+        preferences.set(lead.id + "|" + follow.id, forKey: "teamPair." + (projectScope.isEmpty ? follow.projectKey : projectScope))
         func member(_ value: TeamMember, model: String, effort: String) -> [String: Any] {
             var body: [String: Any] = ["target": value.target, "project": value.project, "agent": value.agent]
             let selected = settings(model, effort)
@@ -313,7 +374,7 @@ final class TeamRoomModel: ObservableObject {
     /// A note being typed survives an action that is not about the note.
     private var keepDraft = false
     private func mutate(_ action: String, body: [String: Any]) {
-        guard !busy, !hasPending else { return }
+        guard !busy, !hasPending, !readOnly else { return }
         do {
             let payload = try envelope(body)
             // Durable send keys survive a dropped acknowledgement or app restart.
@@ -362,34 +423,37 @@ final class TeamRoomModel: ObservableObject {
     }
 }
 
+/// One session, or the form that starts one. The project sidebar lives in the window around it.
 struct TeamRoomView: View {
     @ObservedObject var model: TeamRoomModel
     let active: Bool
     var preview = false
     /// Switches the main window to another section (Projects, Devices, Settings).
     var navigate: (Int) -> Void = { _ in }
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    var missingAgents: [String] = []
+    var addAgent: ((String) -> Void)? = nil
+    var addingAgent = false
+    var cancel: (() -> Void)? = nil
 
     var body: some View {
-        HSplitView {
-            TeamSidebar(model: model).frame(minWidth: 250, idealWidth: 280, maxWidth: 330)
-            VStack(spacing: 0) {
-                if model.showAssignment || model.room == nil {
-                    NewTeamTaskView(model: model, navigate: navigate)
-                } else if let room = model.room {
-                    TeamChatView(model: model, room: room)
-                }
-                if !model.notice.isEmpty || model.hasPending {
-                    HStack(alignment: .top) {
-                        Image(systemName: "exclamationmark.bubble").foregroundStyle(.orange)
-                        Text(model.notice.isEmpty ? "A message didn’t reach the team yet. It’s saved; retry to send it with the same key." : model.notice).textSelection(.enabled)
-                        Spacer()
-                        if model.hasPending { Button("Retry saved send") { model.retry() }.disabled(model.busy) }
-                    }.padding(14).background(Color.orange.opacity(0.08))
-                }
-            }.frame(minWidth: 680)
-        }.onAppear { if !preview { model.refresh(discover: true) } }
-            .onReceive(timer) { _ in if active && !model.showAssignment { model.refresh() } }
+        VStack(spacing: 0) {
+            if model.readOnly {
+                if let room = model.room { TeamChatView(model: model, room: room) }
+                else { VStack(spacing: 10) { ProgressView(); Text("Loading the session from \(model.deviceLabel(model.host))…").foregroundStyle(.secondary) }.frame(maxWidth: .infinity, maxHeight: .infinity) }
+            } else if model.showAssignment || model.room == nil {
+                NewTeamTaskView(model: model, navigate: navigate, missingAgents: missingAgents, addAgent: addAgent, addingAgent: addingAgent, cancel: cancel)
+            } else if let room = model.room {
+                TeamChatView(model: model, room: room)
+            }
+            if !model.notice.isEmpty || model.hasPending && !model.readOnly {
+                HStack(alignment: .top) {
+                    Image(systemName: "exclamationmark.bubble").foregroundStyle(.orange)
+                    Text(model.notice.isEmpty ? "A message didn’t reach the team yet. It’s saved; retry to send it with the same key." : model.notice).textSelection(.enabled)
+                    Spacer()
+                    if model.hasPending && !model.readOnly { Button("Retry saved send") { model.retry() }.disabled(model.busy) }
+                }.padding(14).background(Color.orange.opacity(0.08))
+            }
+        }.frame(minWidth: 680)
     }
 }
 
