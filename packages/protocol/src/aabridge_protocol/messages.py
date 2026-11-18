@@ -17,6 +17,8 @@ TEAM_OPS = frozenset({"teams", "team_start", "team_status", "team_reply", "team_
                       "team_guide", "team_decide", "team_merge", "team_models", "team_align"})
 OPERATIONS = OPERATIONS | TEAM_OPS
 HISTORY_READS = frozenset({'tasks', 'status', 'conversation', 'events', 'activity', 'task_work'})
+# A paired Mac may read the sessions it is a member of, read-only.
+TEAM_READS = frozenset({"teams", "team_status", "team_activity"})
 MUTATIONS = frozenset({"submit", "answer", "revise", "cancel", "team_start", "team_reply", "team_cancel", "team_retry",
                        "team_guide", "team_decide", "team_merge", "team_models", "team_align", "task_rename", "task_forget"})
 APPROVALS = ("ask", "auto")

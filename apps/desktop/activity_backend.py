@@ -37,7 +37,7 @@ def main():
     from aabridge_core.config import load_config
     from aabridge_preflight.paths import default_state_directory
     from aabridge_protocol.messages import BridgeError, MAX_MESSAGE, decode, fields, identifier, require
-    from aabridge_protocol.messages import HISTORY_READS
+    from aabridge_protocol.messages import HISTORY_READS, TEAM_READS
     require(not args.shared or args.action in HISTORY_READS, 'Shared history is read-only.')
     state = args.state_dir or default_state_directory()
     if args.action in {"connection-card", "connect"}:
@@ -60,20 +60,35 @@ def main():
         print(json.dumps(device_status(state)))
         return
     if args.action.startswith("team"):
-        require(not args.remote, "Manage team roles on the admin Mac.")
+        # Another Mac's sessions this Mac takes part in can be read, never steered.
+        require(not args.remote or args.action in TEAM_READS, "Manage team roles on the admin Mac.")
+        if args.remote:
+            identifier(args.remote)
         if args.action == "teams":
             body, key = {}, None
         else:
             envelope = fields(decode(sys.stdin.buffer.read(MAX_MESSAGE + 1)), {"key", "body"})
             body, key = envelope["body"], envelope["key"]
-        print(json.dumps(send(state, request(args.action, dict(body), key))))
+        print(json.dumps(send(state, request(args.action, dict(body), key), args.remote)))
         return
     if args.action in {"projects-local", "project-save"}:
         require(not args.remote, "Project permissions must be edited locally on the receiving Mac.", "permission_denied")
+        agent_errors, body = {}, None
         if args.action == "project-save":
             import asyncio
             from aabridge_cli.actions import configure_file_project, enable_project, store_claude_token
-            body = fields(decode(sys.stdin.buffer.read(MAX_MESSAGE + 1)), {"id", "repository", "scope", "peers"}, {"agent", "claude_token", "coding", "links"})
+            body = decode(sys.stdin.buffer.read(MAX_MESSAGE + 1))
+            if isinstance(body, dict) and "agents" in body:
+                # One folder, every chosen agent: the project as the sidebar shows it.
+                from aabridge_cli.actions import save_project_agents
+                body = fields(body, {"repository", "agents", "peers"}, {"name", "links"})
+                require(isinstance(body["repository"], str), "Choose a repository folder.")
+                saved = save_project_agents(state, Path(body["repository"]), body["agents"], body["peers"], body.get("links", []), body.get("name"))
+                require(saved["saved"], "No agent could be set up for this project. " + " ".join(saved["agent_errors"].values()), "adapter_unavailable")
+                agent_errors, body = saved["agent_errors"], None
+            else:
+                body = fields(body, {"id", "repository", "scope", "peers"}, {"agent", "claude_token", "coding", "links"})
+        if body is not None:
             identifier(body["id"])
             require(isinstance(body["repository"], str), "Choose a repository folder.")
             agent = body.get("agent", "codex")
@@ -91,8 +106,9 @@ def main():
             except BridgeError as exc:
                 raise BridgeError(exc.code, "Project scope saved, but execution remains disabled: " + exc.message) from None
         config = load_config(state)
-        print(json.dumps({"peer_labels": {name: policy.get("label", name) for name, policy in config["peers"].items()}, "claude_token_stored": (state / "claude-oauth-token").exists(),
-              "projects": [{"id": name, **{key: value[key] for key in ("repository", "adapter", "scope", "verification", "execution_enabled")}, "links": value.get("links", []),
+        from aabridge_cli.actions import project_name
+        print(json.dumps({"agent_errors": agent_errors, "peer_labels": {name: policy.get("label", name) for name, policy in config["peers"].items()}, "claude_token_stored": (state / "claude-oauth-token").exists(),
+              "projects": [{"id": name, **{key: value[key] for key in ("repository", "adapter", "scope", "verification", "execution_enabled")}, "links": value.get("links", []), "name": project_name(name, value),
               "peers": [peer for peer, policy in config["peers"].items() if peer != "local" and policy["enabled"] and (name in policy["projects"] or "*" in policy["projects"])]}
               for name, value in config["projects"].items()],
               "peers": [name for name, policy in config["peers"].items() if name != "local" and policy["enabled"]]}))

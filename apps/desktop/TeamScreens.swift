@@ -89,55 +89,17 @@ struct FormStep<Content: View>: View {
     }
 }
 
-// MARK: - Sidebar
-
-struct TeamSidebar: View {
-    @ObservedObject var model: TeamRoomModel
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("Your AI team", systemImage: "person.3.fill").font(.bridge(.title2).bold())
-                Text("You’re the admin. You have the final say.").font(.bridge(.callout)).foregroundStyle(.secondary)
-            }
-            Button { model.showAssignment = true; model.draft = ""; model.refresh(discover: true) } label: {
-                Label("New task", systemImage: "plus").frame(maxWidth: .infinity)
-            }.buttonStyle(.borderedProminent).controlSize(.large).disabled(model.busy || model.hasPending)
-                .keyboardShortcut("n", modifiers: .command).help("New task (⌘N)")
-            Text("TASKS").font(.bridge(.caption).bold()).foregroundStyle(.secondary).padding(.top, 6)
-            ScrollView { VStack(spacing: 8) {
-                ForEach(model.rooms) { room in
-                    let status = TeamStatus(room: room)
-                    let chosen = model.selected == room.id && !model.showAssignment
-                    Button { model.selected = room.id; model.showAssignment = false; model.draft = ""; model.refresh() } label: {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text(room.displayTitle).lineLimit(2).font(.bridge(.headline)).multilineTextAlignment(.leading)
-                            HStack(spacing: 6) {
-                                Image(systemName: status.icon).foregroundStyle(status.color)
-                                Text(status.text).foregroundStyle(status.color)
-                                Text("·").foregroundStyle(.secondary)
-                                Text("\(agentName(room.leader.agent)) → \(agentName(room.follower.agent))").foregroundStyle(.secondary)
-                            }.font(.bridge(.caption))
-                        }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
-                            .background(chosen ? Color.accentColor.opacity(0.13) : Color.primary.opacity(0.035)).clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(chosen ? Color.accentColor.opacity(0.5) : Color.clear))
-                    }.buttonStyle(.plain).accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(room.displayTitle). \(status.text). \(agentName(room.leader.agent)) leads, \(agentName(room.follower.agent)) builds.")
-                        .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
-                }
-                if model.rooms.isEmpty {
-                    Text("No tasks yet. Choose New task to give your team its first job.").font(.bridge(.callout)).foregroundStyle(.secondary).padding(.vertical, 8)
-                }
-            } }
-            Button { model.refresh(discover: true) } label: { Label("Refresh agents and Macs", systemImage: "arrow.clockwise") }.buttonStyle(.borderless).disabled(model.busy)
-        }.padding(20)
-    }
-}
-
 // MARK: - New task
 
 struct NewTeamTaskView: View {
     @ObservedObject var model: TeamRoomModel
     var navigate: (Int) -> Void
+    /// Agents this Mac could still add to the project, and how to add one.
+    var missingAgents: [String] = []
+    var addAgent: ((String) -> Void)? = nil
+    var addingAgent = false
+    var cancel: (() -> Void)? = nil
+    private var projectName: String? { model.projectScope.isEmpty ? nil : model.visibleChoices.first?.projectName ?? model.projectScope }
     private let examples = [("Weight entry screen", "Add a screen where people enter their weight, save it, and see their last 7 entries."),
                             ("Fix a bug", "Fix the error people see when they sign in from the settings page."),
                             ("Add tests", "Write tests for the checkout flow and fix anything they catch.")]
@@ -146,23 +108,26 @@ struct NewTeamTaskView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("New task").font(.bridge(.largeTitle).bold())
+                    Text(projectName.map { "New session in \($0)" } ?? "New session").font(.bridge(.largeTitle).bold())
                     Text("Tell your team what you want. The leader plans and reviews, the worker writes the code, and you stay in charge.").foregroundStyle(.secondary)
                 }
                 Spacer()
-                if model.room != nil { Button("Cancel") { model.showAssignment = false; model.draft = "" }.keyboardShortcut(.cancelAction) }
+                if model.room != nil, let cancel = cancel { Button("Cancel") { model.showAssignment = false; model.draft = ""; cancel() }.keyboardShortcut(.cancelAction) }
             }.padding(.horizontal, 32).padding(.vertical, 24)
             Divider()
             ScrollView { VStack(alignment: .leading, spacing: 30) {
                 HowItWorks()
-                if model.choices.count < 2 { GettingStarted(count: model.choices.count, navigate: navigate) }
-                FormStep(number: 1, title: "Pick your team", subtitle: "Any agent on any connected Mac can lead or do the work.") {
+                if model.visibleChoices.count < 2 {
+                    if model.projectScope.isEmpty { GettingStarted(count: model.choices.count, navigate: navigate) }
+                    else { ProjectNeedsAgents(count: model.visibleChoices.count, missing: missingAgents, adding: addingAgent, add: addAgent, navigate: navigate) }
+                }
+                FormStep(number: 1, title: "Pick your team", subtitle: model.projectScope.isEmpty ? "Any agent on any connected Mac can lead or do the work." : "Every agent that has this project, on this Mac or a paired one. Either can lead or do the work.") {
                     HStack(alignment: .top, spacing: 12) {
-                        RolePicker(title: "Leader", detail: "Plans the work and reviews it", icon: "crown.fill", choices: model.choices, selection: $model.leader,
+                        RolePicker(title: "Leader", detail: "Plans the work and reviews it", icon: "crown.fill", choices: model.visibleChoices, scoped: !model.projectScope.isEmpty, selection: $model.leader,
                                    agent: model.leaderChoice?.member.agent ?? "codex", modelID: $model.leaderModel, effort: $model.leaderEffort)
                         Button { let lead = model.leader; model.leader = model.follower; model.follower = lead } label: { Image(systemName: "arrow.left.arrow.right") }
                             .help("Swap leader and worker").accessibilityLabel("Swap leader and worker").padding(.top, 44)
-                        RolePicker(title: "Worker", detail: "Writes the code and runs checks", icon: "hammer.fill", choices: model.choices, selection: $model.follower,
+                        RolePicker(title: "Worker", detail: "Writes the code and runs checks", icon: "hammer.fill", choices: model.visibleChoices, scoped: !model.projectScope.isEmpty, selection: $model.follower,
                                    agent: model.followerChoice?.member.agent ?? "claude", modelID: $model.followerModel, effort: $model.followerEffort)
                     }
                     if !model.leader.isEmpty && model.leader == model.follower {
@@ -206,7 +171,7 @@ struct NewTeamTaskView: View {
                                        enabled: model.placementAllowed(option.id)) { model.placement = option.id }
                         }
                     }
-                    if !model.hasLocalMember && !model.choices.isEmpty {
+                    if !model.hasLocalMember && !model.visibleChoices.isEmpty {
                         Label("To put code in your project, the leader or the worker has to run on this Mac.", systemImage: "info.circle").font(.bridge(.callout)).foregroundStyle(.secondary)
                     }
                     if model.placement == "branch" || model.placement == "worktree" {
@@ -232,7 +197,7 @@ struct NewTeamTaskView: View {
                     Text("Uses the selected agents’ own accounts.").font(.bridge(.caption)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { model.send() } label: { Label("Start task", systemImage: "play.fill") }
+                Button { model.send() } label: { Label("Start session", systemImage: "play.fill") }
                     .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.return, modifiers: .command)
                     .disabled(!model.ready || model.hasPending)
             }.padding(.horizontal, 32).padding(.vertical, 16)
@@ -250,6 +215,8 @@ struct NewTeamTaskView: View {
 struct RolePicker: View {
     let title: String; let detail: String; let icon: String
     let choices: [TeamChoice]
+    /// Inside a project the picker names only the agent and the Mac.
+    var scoped = false
     @Binding var selection: String
     let agent: String
     @Binding var modelID: String
@@ -265,7 +232,7 @@ struct RolePicker: View {
             }
             Picker(title, selection: $selection) {
                 Text("Choose an agent").tag("")
-                ForEach(choices) { Text($0.label).tag($0.id) }
+                ForEach(choices) { Text(scoped ? $0.agentAndMac : $0.label).tag($0.id) }
             }.labelsHidden()
             if let links = choices.first(where: { $0.id == selection })?.links, !links.isEmpty {
                 Label("Also works with " + links.map { "\($0.name) (\($0.accessLabel))" }.joined(separator: ", "), systemImage: "link")
@@ -340,11 +307,35 @@ struct GettingStarted: View {
     }
 }
 
+/// A project that has fewer than two agents can't make a team yet. Adding the other agent on this Mac is one click.
+struct ProjectNeedsAgents: View {
+    let count: Int
+    let missing: [String]
+    let adding: Bool
+    let add: ((String) -> Void)?
+    var navigate: (Int) -> Void
+    var body: some View {
+        Card(tint: .orange) {
+            Label(count == 0 ? "No agent has this project yet" : "This project has one agent. A team needs two.", systemImage: "person.2.badge.plus").font(.bridge(.headline))
+            Text("Add another agent on this Mac, or open the project on a paired Mac and add it there. The same folder can be worked on by Codex and Claude together.")
+            HStack(spacing: 10) {
+                ForEach(missing, id: \.self) { agent in
+                    Button { add?(agent) } label: { Label("Add \(agentName(agent)) on this Mac", systemImage: "plus") }.disabled(adding || add == nil)
+                }
+                if adding { ProgressView().controlSize(.small); Text("Checking the agent…").foregroundStyle(.secondary) }
+                Spacer()
+                Button("Pair a Mac") { navigate(1) }
+            }
+        }
+    }
+}
+
 // MARK: - Team chat
 
 struct TeamChatView: View {
     @ObservedObject var model: TeamRoomModel
     let room: TeamRoom
+    private var readOnly: Bool { model.readOnly }
     @State private var confirmMerge = false
     @State private var activityOpen = false
 
@@ -353,6 +344,11 @@ struct TeamChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if readOnly {
+                Label("This session is run from \(model.deviceLabel(model.host)). You can follow it here; reply, approve and stop it on that Mac.", systemImage: "eye")
+                    .font(.bridge(.callout)).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading).background(Color.accentColor.opacity(0.06))
+            }
             WorkLocationBar(model: model, room: room)
             Divider()
             ScrollViewReader { proxy in ScrollView {
@@ -365,7 +361,7 @@ struct TeamChatView: View {
                     }
                     ForEach(model.earlier + (room.messages ?? [])) { entry in TeamMessageRow(entry: entry).id(entry.id) }
                     if room.running { WorkingRow(model: model, room: room).id("working") }
-                    actionPanel.id("action")
+                    if !readOnly { actionPanel.id("action") }
                 }.padding(24)
             }.onChange(of: room.messages?.last?.id) { id in if let id = id { withAnimation { proxy.scrollTo(room.running ? "working" : id, anchor: .bottom) } } }
                 .onChange(of: room.status) { _ in withAnimation { proxy.scrollTo("action", anchor: .bottom) } } }
@@ -373,8 +369,10 @@ struct TeamChatView: View {
                 Divider()
                 LiveActivityView(model: model)
             }
-            Divider()
-            composer
+            if !readOnly {
+                Divider()
+                composer
+            }
         }.confirmationDialog("Merge this pull request on GitHub?", isPresented: $confirmMerge) {
             Button("Merge pull request") { model.control("team_merge") }
             Button("Cancel", role: .cancel) {}
@@ -759,12 +757,12 @@ struct WorkLocationBar: View {
                         Image(systemName: "shippingbox").foregroundStyle(.tint)
                         Text("Kept in AABridge").font(.bridge(.callout).bold())
                         Text(result.branch).font(.bridge(.callout, design: .monospaced)).textSelection(.enabled).lineLimit(1)
-                        if room.follower.target == "local" {
+                        if room.follower.target == "local" && !result.worktree.isEmpty {
                             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: result.worktree)]) }.buttonStyle(.borderless)
                         }
                         Spacer(minLength: 0)
                     }
-                    note(room.follower.target == "local" ? "Your project folder is unchanged. The work is a Git checkout at \(result.worktree)"
+                    note(room.follower.target == "local" && !result.worktree.isEmpty ? "Your project folder is unchanged. The work is a Git checkout at \(result.worktree)"
                          : "Your project folder is unchanged. The work is saved on \(model.deviceLabel(room.follower.target)).")
                 } else {
                     row("shippingbox", "Result stays in AABridge")

@@ -24,7 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PREVIEWS = [("running", ["--preview-live"], []), ("done", ["--preview-done"], ["done"]), ("plan-gate", ["--preview-done"], ["gate"]),
             ("question", ["--preview-done"], ["question"]), ("unapproved", ["--preview-done"], ["unapproved"]), ("blocked", ["--preview-done"], ["fail"]), ("mismatch", ["--preview-done"], ["mismatch"]),
             ("new-task", ["--preview-team"], []), ("projects", ["--preview-projects"], []), ("devices", ["--preview-devices"], []),
-            ("connections", ["--preview-connections"], ["--outdated"])]
+            ("connections", ["--preview-connections"], ["--outdated"]),
+            ("project", ["--preview-workspace"], ["project"]), ("new-session", ["--preview-workspace"], ["new"]),
+            ("shared-session", ["--preview-workspace"], ["remote"]), ("one-agent", ["--preview-workspace"], ["single"])]
 
 
 def service_fixture(folder: Path) -> Path:

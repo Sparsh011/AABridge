@@ -118,6 +118,28 @@ class InstallerTests(unittest.TestCase):
         self.configure_claude(state, None)
         self.assertEqual(load_config(state)["peers"]["macbook"]["projects"], ["demo", "claude-demo"])
 
+    def test_full_coding_setup_accepts_whichever_agent_is_installed_without_a_token(self):
+        # The app passes --worker codex by default; a Mac with only Claude must still set up.
+        state = self.root / "state"
+        inventory = lambda found: {agent: {"status": "found", "executable": "/fixture/" + agent} if agent in found else {"status": "unavailable", "message": "Not found."}
+                                   for agent in ("codex", "claude")}
+        for found, passes in ((("claude",), True), ((), False)):
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(patch("aabridge_preflight.paths.default_state_directory", return_value=state))
+                stack.enter_context(patch.object(installer, "runtime_settings", return_value={}))
+                stack.enter_context(patch("aabridge_cli.actions.runtime_inventory", return_value=inventory(found)))
+                started = stack.enter_context(patch("aabridge_cli.actions.start_daemon", return_value={}))
+                output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                if passes:
+                    installer.configure(self.root, self.root, self.root / "key.pub", {}, "codex", None, coding=True)
+                    self.assertIn("AABRIDGE MINI READY", output.getvalue())
+                    started.assert_called_once()
+                else:
+                    with self.assertRaisesRegex(BridgeError, "Neither Codex nor Claude Code"):
+                        installer.configure(self.root, self.root, self.root / "key.pub", {}, "codex", None, coding=True)
+                    started.assert_not_called()
+            self.assertFalse((state / "claude-oauth-token").exists())
+
     def test_upgrade_refuses_active_or_closing_task_before_stopping_receiver(self):
         from aabridge_core.config import initialize
         from aabridge_core.store import Store

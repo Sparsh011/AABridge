@@ -182,7 +182,12 @@ def configure(bundle: Path, install: Path, public: Path, manifest: dict, worker:
         # or a preselected remote. Pairing is an explicit Devices action later.
         if claude_token:
             store_claude_token(state, claude_token)
-        require(runtime_inventory(state)[worker]["status"] == "found", "Choose an installed agent, then retry setup.")
+        # Every agent found here can work on any project; none has to be picked first.
+        inventory = runtime_inventory(state)
+        for agent in DEMOS:
+            print(f"{agent}: {inventory[agent]['status']}; {inventory[agent].get('executable') or inventory[agent].get('message')}", flush=True)
+        require(any(inventory[agent]["status"] == "found" for agent in DEMOS),
+                "Neither Codex nor Claude Code was found on this Mac. Install one, or choose its location, then retry setup.")
         start_daemon(state)
         print("AABRIDGE MINI READY")  # Compatibility with older desktop wrappers.
         print("This Mac is ready. Connect the other Mac in Devices, then add a project.")
@@ -275,6 +280,10 @@ def main() -> int:
         report = isolation_report()
         print(json.dumps(report, indent=2), flush=True)
         name = "Claude Code" if args.worker == "claude" else "Codex"
+        if args.coding and runtimes[args.worker]["status"] != "found":
+            # Full coding uses whichever agents are installed.
+            found = [agent for agent in ("codex", "claude") if runtimes[agent]["status"] == "found"]
+            args.worker, name = (found[0], "Claude Code" if found[0] == "claude" else "Codex") if found else (args.worker, name)
         if report["passed"] and runtimes[args.worker]["status"] == "found":
             print(f"DIAGNOSTICS PASSED: {name} found and all isolation canaries passed. Account and remote connection are not checked.", flush=True)
             return 0

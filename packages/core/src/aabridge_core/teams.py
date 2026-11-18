@@ -24,7 +24,7 @@ import re
 import time
 from pathlib import Path
 
-from aabridge_protocol.messages import BridgeError, canonical, fields, integer, model_settings, require, text
+from aabridge_protocol.messages import TEAM_READS, BridgeError, canonical, fields, integer, model_settings, require, text
 from .store import new_id
 
 STAGES = ('plan', 'work', 'review')
@@ -50,7 +50,30 @@ REREVIEW_RULE = (' This is a re-review. For each blocking point you raised earli
                  'Raise a new blocking point only for a defect the fix introduced or one you could not have seen before; do not turn new suggestions into blockers. '
                  'Where the follower disputed a point with evidence, accept it or end with VERDICT: NEEDS_ADMIN; do not repeat the same request.')
 NEXT_RULE = ('\nIf the admin\u2019s message is only a question, or needs no change to the project, answer it directly instead of writing a plan, '
-             'and end with the single line "NEXT: ANSWER_ONLY". The follower is then not started. Otherwise end your plan with the single line "NEXT: BUILD".')
+             'and end with the single line "NEXT: ANSWER_ONLY". The follower is then not started. Otherwise end your plan with the single line "NEXT: BUILD". '
+             'Never use ANSWER_ONLY when the admin asks for changes or for the next steps to be implemented, and never to report that you think part of the work is blocked: '
+             'plan everything the follower can do, say clearly what is blocked and what the admin must do about it, and end with NEXT: BUILD.')
+
+
+def team_links(room):
+    """What the follower may change in linked projects, for the leader's plan and review.
+
+    Each Mac sets its own link access, and the leader's own copies are read-only
+    while it plans or reviews, so it can't infer the follower's access itself.
+    """
+    links = (room.get('follower_project') or {}).get('links') or []
+    if not links:
+        return []
+    edit = [link['name'] for link in links if link.get('access') == 'edit']
+    read = [link['name'] for link in links if link.get('access') != 'edit']
+    lines = ['Linked projects in this team. Your own copies of them are only for reading while you plan or review; that does not limit the follower.']
+    if edit:
+        lines.append('The follower can edit ' + ', '.join(edit) + ' in this same task, on the same branch name. Plan the changes these projects need as part of this task, '
+                     'with instructions per project, and do not ask the admin to start a separate task for them.')
+    if read:
+        lines.append('The follower can only read ' + ', '.join(read) + '. Changes there would be discarded. If the task needs them, plan the rest and tell the admin to set '
+                     'those projects to “Can edit” in the worker Mac\u2019s project settings (Related projects).')
+    return ['\n'.join(lines)]
 
 
 def setup(db):
@@ -170,13 +193,72 @@ def shown_title(room):
     return room.get('title') or compact_title(room.get('assignment', {}).get('objective') or room['objective'])
 
 
-def handle(store, request, identity):
-    require(identity == 'local', 'Only the admin on this Mac can assign team roles or steer this room.', 'permission_denied')
+def summary(room):
+    """One row of the session list."""
+    return {**{k: room[k] for k in ('id', 'objective', 'status', 'stage', 'leader', 'follower', 'updated_at')},
+            'title': shown_title(room), 'verdict': room.get('verdict'), 'approval': room.get('approval'), 'answered': room.get('answered')}
+
+
+def activity_page(store, room, cursor):
+    rows = store.db.execute('SELECT seq,document FROM team_activity WHERE team_id=? AND seq>? ORDER BY seq LIMIT 32', (room['id'], cursor)).fetchall()
+    entries, size = [], 0
+    for seq, document in rows:
+        if size + len(document.encode()) > 180000:
+            break
+        entries.append({**json.loads(document), 'cursor': seq})
+        size += len(document.encode())
+    next_cursor = entries[-1]['cursor'] if entries else cursor
+    more = store.db.execute('SELECT 1 FROM team_activity WHERE team_id=? AND seq>?', (room['id'], next_cursor)).fetchone() is not None
+    return {'entries': entries, 'cursor': next_cursor, 'has_more': more}
+
+
+def member_of(room, identity):
+    return identity in (room['leader']['target'], room['follower']['target'])
+
+
+def as_seen_by(result, identity, node_id):
+    """A session as a member Mac sees it, read-only.
+
+    Targets are names on the admin Mac. The viewer's own name becomes `local`
+    and the admin Mac's `local` becomes its node ID, which is what the viewer
+    calls it. Paths on the admin Mac are left out, as for every peer read.
+    """
+    def seen(member):
+        target = member['target']
+        return {**member, 'target': 'local' if target == identity else node_id if target == 'local' else target}
+    result = {**result, 'leader': seen(result['leader']), 'follower': seen(result['follower']), 'host': node_id, 'read_only': True}
+    if result.get('result'):
+        result['result'] = {**result['result'], 'worktree': ''}
+    if result.get('publication'):
+        publication = {k: v for k, v in result['publication'].items() if k not in {'path', 'repository'}}
+        publication['linked'] = [{k: v for k, v in entry.items() if k not in {'path', 'repository'}} for entry in publication.get('linked', [])]
+        result['publication'] = publication
+    if result.get('failure'):
+        result['failure'] = {**result['failure'], 'retry': False}
+    return result
+
+
+def handle(store, request, identity, config=None):
     body, op = request.body, request.op
+    if identity != 'local':
+        # A paired Mac reads the sessions it works in, so the same session shows
+        # on both Macs. Only the admin Mac can start or steer one.
+        require(op in TEAM_READS, 'Only the admin on this Mac can assign team roles or steer this room.', 'permission_denied')
+        peer = (config or {}).get('peers', {}).get(identity, {})
+        require(peer.get('enabled') is True, 'Coordinator access is revoked.', 'permission_denied')
+        node_id = (config or {}).get('node_id', 'admin')
+        if op == 'teams':
+            rows = store.db.execute('SELECT document FROM teams ORDER BY rowid DESC LIMIT 400')
+            rooms = [r for r in (json.loads(row[0]) for row in rows) if member_of(r, identity)][:100]
+            return {'teams': [as_seen_by(summary(r), identity, node_id) for r in rooms]}
+        room = get(store, body['team_id'])
+        require(member_of(room, identity), 'Team chat not found.', 'not_found')
+        if op == 'team_status':
+            return as_seen_by(public(room, body.get('before')), identity, node_id)
+        return activity_page(store, room, body['cursor'])
     if op == 'teams':
         rooms = [json.loads(row[0]) for row in store.db.execute('SELECT document FROM teams ORDER BY rowid DESC LIMIT 100')]
-        return {'teams': [{**{k: r[k] for k in ('id', 'objective', 'status', 'stage', 'leader', 'follower', 'updated_at')},
-                           'title': shown_title(r), 'verdict': r.get('verdict'), 'approval': r.get('approval'), 'answered': r.get('answered')} for r in rooms]}
+        return {'teams': [summary(r) for r in rooms]}
     if op == 'team_start':
         prior = store.db.execute('SELECT document FROM teams WHERE request_key=?', (request.key,)).fetchone()
         if prior:
@@ -205,17 +287,7 @@ def handle(store, request, identity):
         return public(room)
     room = get(store, body['team_id'])
     if op == 'team_activity':
-        cursor = body['cursor']
-        rows = store.db.execute('SELECT seq,document FROM team_activity WHERE team_id=? AND seq>? ORDER BY seq LIMIT 32', (room['id'], cursor)).fetchall()
-        entries, size = [], 0
-        for seq, document in rows:
-            if size + len(document.encode()) > 180000:
-                break
-            entries.append({**json.loads(document), 'cursor': seq})
-            size += len(document.encode())
-        next_cursor = entries[-1]['cursor'] if entries else cursor
-        more = store.db.execute('SELECT 1 FROM team_activity WHERE team_id=? AND seq>?', (room['id'], next_cursor)).fetchone() is not None
-        return {'entries': entries, 'cursor': next_cursor, 'has_more': more}
+        return activity_page(store, room, body['cursor'])
     if op == 'team_status':
         return public(room, body.get('before'))
     digest = request.digest
@@ -423,6 +495,8 @@ class TeamRunner:
             context = ['Your plan:\n' + room['outputs']['plan']['summary'][:12000],
                        'Follower report:\n' + room['outputs']['work']['summary'][:24000],
                        'Follower diff:\n' + room.get('diff', '')[:64000]] + history(room, 5000) + noted
+        if stage != 'work':
+            context = context + team_links(room)
         if stage == 'review' and pull_requests(room.get('publication') or {}):
             objective += ('\nYour review is posted on the pull request. For a finding about one specific line that this change added or modified, also write a line '
                           '"INLINE: path/to/file:LINE: comment", using the line number in the new version of the file. Each becomes an inline comment on that line.')

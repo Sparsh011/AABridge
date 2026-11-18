@@ -219,15 +219,17 @@ class Store:
     def handle(self, request: Request, identity: str, config: dict) -> dict:
         if request.op.startswith("team"):
             from .teams import handle
-            return handle(self, request, identity)
+            return handle(self, request, identity, config)
         if request.op == "ping":
             return {"version": 1, "node_id": config["node_id"], "profile": "proposal-v1", "direct_transport": True, "shared_task_history": True, "pid": os.getpid(), "release": RELEASE}
         if request.op == "projects":
+            from aabridge_protocol.titles import project_name
             peer = config["peers"][identity]
             allowed = {name: project for name, project in config["projects"].items()
                        if "*" in peer["projects"] or name in peer["projects"]}
             # Peers see linked project names and access, never their local paths.
-            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "review_snapshot_parts": True, "baseline_refresh": True, "revise_after_setup_failure": True, "task_titles": True, "model_settings": project.get("permission_profile") == "coding-v1"},
+            return {name: {"capabilities": {"activity": True, "shared_task_history": True, "review_snapshot": True, "review_snapshot_parts": True, "baseline_refresh": True, "revise_after_setup_failure": True, "task_titles": True, "team_view": True, "model_settings": project.get("permission_profile") == "coding-v1"},
+                           "name": project_name(name, project),
                            "links": [{"name": link["name"], "access": link["access"]} for link in project.get("links", [])],
                            **{key: project[key] for key in ("worker", "adapter", "scope", "base_commit", "limits", "verification", "execution_enabled")}}
                     for name, project in allowed.items()}
