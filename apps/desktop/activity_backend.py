@@ -17,7 +17,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--state-dir", type=Path)
-    parser.add_argument("--action", choices=("connection-card", "connect", "devices", "teams", "team_start", "team_status", "team_activity", "team_reply", "team_cancel", "team_retry", "team_guide", "team_decide", "team_merge", "team_models", "team_align", "targets", "projects", "projects-local", "project-save", "tasks", "conversation", "status", "events", "submit", "answer", "revise", "cancel", "task_rename", "task_forget", "task_work"), required=True)
+    parser.add_argument("--action", choices=("connection-card", "connect", "devices", "teams", "team_start", "team_status", "team_activity", "team_reply", "team_cancel", "team_retry", "team_guide", "team_decide", "team_merge", "team_models", "team_align", "targets", "ping", "projects", "projects-local", "project-save", "tasks", "conversation", "status", "events", "submit", "answer", "revise", "cancel", "task_rename", "task_forget", "task_work"), required=True)
     parser.add_argument("--remote")
     parser.add_argument("--task-id")
     parser.add_argument("--cursor", type=int, default=0)
@@ -117,7 +117,9 @@ def main():
         targets = [{"id": "local", "label": "This Mac"}]
         if (state / "config.json").exists():
             config = load_config(state)
-            targets.extend({"id": name, "label": remote.get("label", name)} for name, remote in config["remotes"].items())
+            # Direct connections first: an older SSH alias can reach the same Mac, and the app keeps the first one it sees.
+            remotes = sorted(config["remotes"].items(), key=lambda item: item[1].get("transport") != "tls")
+            targets.extend({"id": name, "label": remote.get("label", name), "transport": remote.get("transport", "ssh")} for name, remote in remotes)
         print(json.dumps({"targets": targets}))
         return
     if args.remote:
@@ -132,7 +134,7 @@ def main():
             body["origin"] = {"kind": "human", "name": "You"}
     else:
         body = {"cursor": args.cursor} if args.action in {"tasks", "conversation", "events"} else {}
-        if args.action not in {"tasks", "projects"}:
+        if args.action not in {"tasks", "projects", "ping"}:
             body["task_id"] = identifier(args.task_id)
     if args.shared:
         body['shared'] = True

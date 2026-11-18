@@ -196,7 +196,15 @@ final class TeamRoomModel: ObservableObject {
                     let targets = try JSONDecoder().decode(Targets.self, from: self.activity.call("targets", target: "local")).targets
                     labels = Dictionary(targets.map { ($0.id, $0.label) }, uniquingKeysWith: { first, _ in first })
                     var options: [TeamChoice] = []
+                    // One Mac can be paired twice (an older SSH alias and a direct connection).
+                    // Its node ID tells them apart; the direct connection, listed first, is kept.
+                    struct Ping: Decodable { let node_id: String }
+                    var seen: Set<String> = []
                     for target in targets {
+                        if let node = try? JSONDecoder().decode(Ping.self, from: self.activity.call("ping", target: target.id)).node_id {
+                            if seen.contains(node) { continue }
+                            seen.insert(node)
+                        }
                         do {
                             let projects = try JSONDecoder().decode(Projects.self, from: self.activity.call("projects", target: target.id)).projects
                             for project in projects where project.available && project.verification?.profile == "repository-v1" {

@@ -74,6 +74,23 @@ class ActivityBackendTests(unittest.TestCase):
                     backend.main()
                 send.assert_not_called()
 
+    def test_direct_connections_are_listed_before_an_older_alias_and_can_be_pinged(self):
+        # The app pings each Mac and keeps the first target per node ID, so the direct one must come first.
+        config = {'remotes': {'mini': {'label': 'mini', 'transport': 'ssh'}, 'node-a': {'label': 'Mac mini', 'transport': 'tls'}}}
+        args = ['activity_backend.py', '--bundle', str(self.bundle), '--action', 'targets', '--state-dir', str(self.bundle)]
+        with patch.object(sys, 'argv', args), patch.object(sys, 'path', sys.path.copy()), \
+             patch('pathlib.Path.exists', return_value=True), patch('aabridge_core.config.load_config', return_value=config), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            backend.main()
+        self.assertEqual([t['id'] for t in json.loads(output.getvalue())['targets']], ['local', 'node-a', 'mini'])
+        args = ['activity_backend.py', '--bundle', str(self.bundle), '--action', 'ping', '--remote', 'mini']
+        with patch.object(sys, 'argv', args), patch.object(sys, 'path', sys.path.copy()), \
+             patch('aabridge_cli.actions.send', return_value={'node_id': 'node-a'}) as send, contextlib.redirect_stdout(io.StringIO()) as output:
+            backend.main()
+        self.assertEqual(send.call_args.args[1].op, 'ping')
+        self.assertEqual(send.call_args.args[1].body, {})
+        self.assertEqual(json.loads(output.getvalue())['node_id'], 'node-a')
+
     def test_old_shared_receiver_falls_back_to_owned_history_with_a_notice(self):
         args = ['activity_backend.py', '--bundle', str(self.bundle), '--action', 'tasks', '--remote', 'mini', '--shared', '--all']
         pages = [BridgeError('invalid_request', 'Missing or unknown fields.'),
