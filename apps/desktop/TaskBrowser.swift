@@ -65,6 +65,7 @@ struct PendingChatAction: Codable {
 struct ActivityTarget: Decodable, Identifiable {
     let id: String
     let label: String
+    var transport: String? = nil
 }
 
 struct BridgeTask: Decodable, Identifiable {

@@ -740,3 +740,17 @@ Edit access still has to be set on the Mac that runs the worker (project
 settings → Related projects → Can edit). The mini's Sparshur-Service project
 still has both links set to Can read. The MacBook's settings were not checked;
 it was offline.
+
+### One entry per Mac, and GPT-6.2 presets
+
+The MacBook listed the Mac mini twice in the agent pickers ("Claude · mini" and
+"Claude · Sparsh's Mac mini"). They were its older SSH alias `mini` and its
+direct connection to the same Mac. `targets` now lists direct connections first
+and includes `transport`. The desktop pings each Mac during discovery (`ping` is
+now a desktop backend action) and keeps only the first target per `node_id`.
+The alias stays in the configuration and in All agent tasks. A Mac that doesn't
+answer a ping is still listed.
+
+Codex presets add GPT-6.2 Sol (`gpt-6.2-sol`) and GPT-6.2 Astra
+(`gpt-6.2-astra`). As with every preset, the account and the CLI version decide
+whether a model actually runs.
