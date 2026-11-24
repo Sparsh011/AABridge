@@ -76,6 +76,45 @@ def team_links(room):
     return ['\n'.join(lines)]
 
 
+REVIEW_DIFF = 64000  # Inline diff evidence kept for the leader; the review itself reads the exact commit.
+LINKED_EVIDENCE = 24000  # Linked diffs travel inline beside the review instructions in one request.
+
+
+def linked_summary(link, note):
+    paths = link.get('changed_paths') or []
+    listed = '\n'.join(paths[:300]) + (f'\n… and {len(paths) - 300} more' if len(paths) > 300 else '')
+    return (f'{note} Branch {link.get("branch", "")}, baseline {link.get("base_commit", "")}, implementation {link.get("result_commit", "")}. '
+            f'{len(paths)} changed file(s):\n' + listed)
+
+
+def bounded_linked(linked, budget):
+    """Each linked diff in full when it fits, otherwise a file list. Never stops the team."""
+    parts, left = [], max(budget, 0)
+    for link in linked:
+        if not (link.get('diff') or link.get('changed_paths')):
+            continue
+        header = f'# Linked project {link["name"]} ({"can edit" if link.get("access") == "edit" else "read only"})\n'
+        diff = link.get('diff') or ''
+        if diff and not link.get('diff_truncated') and len((header + diff).encode()) <= left:
+            body = diff
+        else:
+            body = linked_summary(link, 'The full diff is too large for inline context. This is a summary, not a complete review; '
+                                        'read each changed file on the linked branch or pull request.')
+        entry = (header + body).encode()[:max(left, 0)].decode(errors='ignore')
+        if not entry:
+            break
+        parts.append(entry)
+        left -= len(entry.encode()) + 2
+    return '\n\n'.join(parts)
+
+
+def review_evidence(diff, linked):
+    """The work diff plus linked diffs, bounded instead of refused when the change is large."""
+    main = diff if len(diff.encode()) <= REVIEW_DIFF // 2 or not linked else diff.encode()[:REVIEW_DIFF // 2].decode(errors='ignore') + '\n… (diff cut; review the implementation checkout)'
+    extra = bounded_linked(linked, REVIEW_DIFF - len(main.encode()) - 4)
+    return (main + ('\n\n' + extra if extra else '')).encode()[:REVIEW_DIFF].decode(errors='ignore')
+
+
 def setup(db):
     db.execute('CREATE TABLE IF NOT EXISTS teams (id TEXT PRIMARY KEY, request_key TEXT UNIQUE NOT NULL, document TEXT NOT NULL)')
 
@@ -529,20 +568,25 @@ class TeamRunner:
             context.append('The bridge supplies the exact implementation commit ' + snapshot['commit'] +
                            '. Review that checkout against baseline ' + work['base_commit'] +
                            '. Branch placement and PR publishing are bridge operations, not missing agent permissions.')
-            linked_evidence = ['Linked project ' + link['name'] + ' (diff evidence only; its checkout is not transferred):\n' + link['diff']
-                               for link in work.get('linked', []) if link.get('diff')]
-            if linked_evidence:
-                context.append('\n\n'.join(linked_evidence))
         member = room['follower' if stage == 'work' else 'leader']
         selected = member.get('model_settings', {})
         from aabridge_protocol.titles import compact_title
         title = room.get('title') or compact_title(room['objective'])
-        return {**({'title': title} if project.get('capabilities', {}).get('task_titles') else {}), **({'review_snapshot': snapshot} if snapshot else {}), **({'model_settings': selected} if selected else {}), 'project_id': member['project'],
+        body = {**({'title': title} if project.get('capabilities', {}).get('task_titles') else {}), **({'review_snapshot': snapshot} if snapshot else {}), **({'model_settings': selected} if selected else {}), 'project_id': member['project'],
                 'recipient': project['worker'], 'base_commit': project['base_commit'],
                 'objective': objective, 'scope': ['*'], 'acceptance': ['Follow the admin task and assigned team role.'],
                 'context': context, 'limits': project['limits'], 'permission_profile': 'coding-v1',
                 'mode': stage if stage != 'work' else 'work',
                 'origin': {'kind': 'human' if stage == 'plan' else 'agent', 'name': 'You' if stage == 'plan' else lead}}
+        if stage == 'review':
+            # Linked diffs get whatever the request has left after the snapshot and instructions.
+            from aabridge_protocol.messages import MAX_MESSAGE
+            room_left = MAX_MESSAGE - 8192 - len(canonical({'version': 1, 'op': 'submit', 'key': 'k' * 200, 'body': body}).encode())
+            label = 'Linked projects (diff evidence only; their checkouts are not transferred):\n'
+            linked_evidence = bounded_linked(room['outputs']['work'].get('linked', []), min(LINKED_EVIDENCE, room_left // 2) - len(label))
+            if linked_evidence:
+                context.append(label + linked_evidence)
+        return body
 
     async def relay_activity(self, room, task, member):
         role = 'follower' if room['stage'] == 'work' else 'leader'
@@ -1025,12 +1069,9 @@ class TeamRunner:
                         fetched = await asyncio.to_thread(fetch_result, self.state, target, task['id'])
                         room['review_source'] = fetched['review_repository']
                         room['diff'] = fetched['diff']
-                    for link in result.get('linked', []):
-                        require(not link.get('diff_truncated'), f'This change needs manual review: the {link["name"]} diff exceeds the team review context.', 'review_too_large')
-                        if link.get('diff'):
-                            room['diff'] += f'\n\n# Linked project {link["name"]} ({"can edit" if link["access"] == "edit" else "read only"})\n' + link['diff']
-                    # The review stage must receive a bounded, explicit diff.
-                    require(len(room['diff'].encode()) <= 64000, 'This change needs manual review: the diff exceeds the team review context.', 'review_too_large')
+                    # The review stage must receive a bounded, explicit diff. A large change is
+                    # summarized, not refused: the leader reviews the exact commit it is sent.
+                    room['diff'] = review_evidence(room['diff'], result.get('linked', []))
                     room['last_diff'] = room['diff']
                     if room.get('placement', {}).get('mode', 'sandbox') != 'sandbox':
                         await self.deliver(room, task)

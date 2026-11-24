@@ -437,7 +437,8 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
             room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
             done = await self.run_until(room['id'])
             review = [b for op, b, _, _ in self.requests if op == 'submit' and b['mode'] == 'review'][0]
-            self.assertIn('Linked project android (diff evidence only', '\n'.join(review['context']))
+            self.assertIn('Linked projects (diff evidence only', '\n'.join(review['context']))
+            self.assertIn('# Linked project android (can edit)\n', '\n'.join(review['context']))
             entry = done['publication']['linked'][0]
             self.assertEqual(entry['branch'], done['publication']['branch'])  # Same branch name in every repository.
             self.assertEqual(git(android, 'rev-parse', 'refs/heads/' + entry['branch']), git(android, 'rev-parse', entry['branch']))
@@ -450,6 +451,43 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
             await self.runner.step(room['id'])
             self.assertEqual(sorted(merged), ['https://github.com/o/android/pull/1', 'https://github.com/o/source/pull/1'])
             self.assertEqual(get(self.store, room['id'])['publication']['merge'], 'merged')
+
+    async def test_oversized_linked_diff_is_summarized_instead_of_pausing_the_team(self):
+        android = self.root / 'android'
+        android.mkdir()
+        (android / 'Api.kt').write_text('v1\n')
+        git(android, 'init', '--initial-branch=main', '--template='); git(android, 'add', '--all'); git(android, 'commit', '-m', 'Base')
+        android_base = git(android, 'rev-parse', 'HEAD')
+        original = self.call
+        async def with_link(op, body, target, key=None):
+            task = await original(op, body, target, key)
+            if task.get('mode') == 'work' and op in {'submit', 'revise'}:
+                clone = self.state / 'workspaces' / (task['id'] + '.linked') / 'android'
+                if not clone.exists():
+                    clone.parent.mkdir(parents=True, exist_ok=True)
+                    git(clone.parent, 'clone', '--no-local', '--template=', str(android), str(clone))
+                (clone / 'Api.kt').write_text(''.join(f'line {n} revision {task["revision"]}\n' for n in range(8000)))
+                git(clone, 'add', '--all'); git(clone, 'commit', '-q', '-m', 'Large Android change')
+                head = git(clone, 'rev-parse', 'HEAD')
+                diff = git(clone, 'diff', android_base, head)
+                self.assertGreater(len(diff), 64000)
+                task['result']['linked'] = [{'name': 'android', 'access': 'edit', 'repository': str(android), 'worktree': str(clone), 'branch': 'x',
+                                             'base_commit': android_base, 'result_commit': head, 'changed_paths': ['Api.kt'],
+                                             'diff': diff[:64000], 'diff_truncated': True}]
+            return task
+        self.runner.call = with_link
+        self.reviews = ['VERDICT: APPROVED']
+        with patch('aabridge_workspace.publish.pull_request', return_value={'url': 'https://github.com/o/r/pull/1', 'base': 'main'}), \
+             patch('aabridge_workspace.publish.review', return_value='review'):
+            room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
+            done = await self.run_until(room['id'])
+        self.assertNotEqual(done.get('error_code'), 'review_too_large')
+        self.assertEqual(done['status'], 'completed')
+        self.assertLessEqual(len(get(self.store, room['id'])['last_diff'].encode()), 64000)
+        review = [b for op, b, _, _ in self.requests if op == 'submit' and b['mode'] == 'review'][0]
+        evidence = '\n'.join(review['context'])
+        self.assertIn('The full diff is too large for inline context', evidence)
+        self.assertIn('Api.kt', evidence)
 
     async def test_updated_agent_names_the_mac_and_project_and_retry_starts_fresh(self):
         config = load_config(self.state)
