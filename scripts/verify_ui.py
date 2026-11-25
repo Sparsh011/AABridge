@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEWS = [("running", ["--preview-live"], []), ("done", ["--preview-done"], ["done"]), ("plan-gate", ["--preview-done"], ["gate"]),
-            ("question", ["--preview-done"], ["question"]), ("unapproved", ["--preview-done"], ["unapproved"]), ("blocked", ["--preview-done"], ["fail"]), ("mismatch", ["--preview-done"], ["mismatch"]),
+            ("question", ["--preview-done"], ["question"]), ("unapproved", ["--preview-done"], ["unapproved"]), ("session-info", ["--preview-done"], ["done", "--info"]), ("blocked", ["--preview-done"], ["fail"]), ("mismatch", ["--preview-done"], ["mismatch"]),
             ("new-task", ["--preview-team"], []), ("projects", ["--preview-projects"], []), ("devices", ["--preview-devices"], []),
             ("connections", ["--preview-connections"], ["--outdated"]),
             ("project", ["--preview-workspace"], ["project"]), ("new-session", ["--preview-workspace"], ["new"]),

@@ -113,7 +113,7 @@ struct NearbyMacsView: View {
         paired.contains { $0.label == mac.name || (mac.host != nil && $0.host.caseInsensitiveCompare(mac.host!) == .orderedSame) }
     }
     var body: some View {
-        GroupBox { VStack(alignment: .leading, spacing: 10) {
+        Panel {
             Label("AABridge on this network", systemImage: "dot.radiowaves.left.and.right").font(.bridge(.headline))
             if !nearby.problem.isEmpty { Text(nearby.problem).font(.bridge(.callout)).foregroundStyle(.orange) }
             if nearby.found.isEmpty {
@@ -134,7 +134,7 @@ struct NearbyMacsView: View {
             if nearby.found.contains(where: { !isPaired($0) }) {
                 Text("A Mac listed as not paired is reachable, so pairing will work: exchange connection cards with it below.").font(.bridge(.caption)).foregroundStyle(.secondary)
             }
-        }.padding(16).frame(maxWidth: .infinity, alignment: .leading) }.onAppear { nearby.start() }
+        }.onAppear { nearby.start() }
     }
 }
 
@@ -145,13 +145,14 @@ struct DeviceRow: View {
     private var state: String { device.online == nil ? "Saved · checked when used" : device.online! ? "Connected" : "Not reachable" }
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "laptopcomputer").foregroundStyle(.secondary)
+            Image(systemName: "laptopcomputer").font(.system(size: 13)).foregroundStyle(.secondary)
+                .frame(width: 30, height: 30).background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.fillStrong))
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.label).font(.bridge(.callout).weight(.medium))
                 Text(device.host).font(.bridge(.caption)).foregroundStyle(.secondary).textSelection(.enabled)
             }
             Spacer()
-            Circle().fill(mismatch ? Color.orange : color).frame(width: 8, height: 8)
+            StatusDot(color: mismatch ? Color.orange : color, pulsing: device.online == true && !mismatch, size: 7)
             Text(mismatch ? "Different version (\(device.release == "older" ? "older" : device.release ?? "?"))" : state).font(.bridge(.caption)).foregroundStyle(.secondary)
         }
     }

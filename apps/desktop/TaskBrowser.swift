@@ -662,7 +662,7 @@ struct TaskBrowserView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Tasks & conversations").font(.bridge(.title2).bold())
+                Text("Tasks & conversations").font(.bridge(.title2).weight(.semibold))
                 Spacer()
                 Button { model.showNewTask = true } label: { Label("New task", systemImage: "square.and.pencil") }.disabled(!model.canAct)
                 Picker("Receiver", selection: $model.target) {
@@ -701,8 +701,7 @@ struct TaskBrowserView: View {
                                             .font(.bridge(.caption)).foregroundStyle(.secondary)
                                         Text(Date(timeIntervalSince1970: task.updated_at), style: .date).font(.bridge(.caption2)).foregroundStyle(.secondary)
                                     }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
-                                        .background(model.selection == task.id ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.025))
-                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .background(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous).fill(model.selection == task.id ? Theme.selected : Theme.fill))
                                 }.buttonStyle(.plain).contextMenu { taskActions(task) }
                             }
                         }
@@ -720,6 +719,9 @@ struct TaskBrowserView: View {
                             HStack(alignment: .top) {
                                 Text(task.displayTitle).font(.bridge(.title3).bold()).lineLimit(2).textSelection(.enabled)
                                 Spacer()
+                                IconButton(symbol: "info.circle", help: "Task info", size: 26) {
+                                    if model.taskState?.id != task.id { model.loadDetail() }; infoTask = task
+                                }.keyboardShortcut("i", modifiers: .command)
                                 Menu { taskActions(task) } label: { Image(systemName: "ellipsis.circle") }
                                     .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Task options")
                             }
@@ -819,7 +821,10 @@ func renderTaskBrowser(model: TaskBrowserModel, output: String) -> Bool {
 }
 
 func renderOwnView<Content: View>(_ content: Content, output: String) -> Bool {
-    let view = NSHostingView(rootView: content.font(.bridge(.body)).environment(\.colorScheme, .light))
+    // `--dark` renders the same screen in dark mode, to check both appearances.
+    let dark = CommandLine.arguments.contains("--dark")
+    let view = NSHostingView(rootView: content.font(.bridge(.body)).environment(\.colorScheme, dark ? .dark : .light))
+    view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820), styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = view
     view.frame = NSRect(x: 0, y: 0, width: 1200, height: 820)
@@ -832,7 +837,7 @@ func renderOwnView<Content: View>(_ content: Content, output: String) -> Bool {
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
     let bounds = NSRect(x: 0, y: 0, width: original.pixelsWide, height: original.pixelsHigh)
-    NSColor.white.setFill()
+    (dark ? NSColor(white: 0.12, alpha: 1) : NSColor.white).setFill()
     bounds.fill()
     let image = NSImage(size: bounds.size)
     image.addRepresentation(original)
