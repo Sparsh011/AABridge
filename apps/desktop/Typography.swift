@@ -3,6 +3,7 @@ import SwiftUI
 
 extension Font {
     /// One scale for the entire product, including captions and monospace text.
+    /// Slightly above the system size: comfortable for long chats, still native in density.
     static func bridge(_ style: Font.TextStyle, design: Font.Design = .default) -> Font {
         let native: NSFont.TextStyle
         switch style {
@@ -18,7 +19,7 @@ extension Font {
         case .footnote: native = .footnote
         default: native = .body
         }
-        let font = Font.system(size: NSFont.preferredFont(forTextStyle: native).pointSize * 1.2, design: design)
+        let font = Font.system(size: NSFont.preferredFont(forTextStyle: native).pointSize * 1.08, design: design)
         return style == .headline ? font.weight(.semibold) : font
     }
 }

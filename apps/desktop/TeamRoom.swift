@@ -459,9 +459,9 @@ struct TeamRoomView: View {
                     Text(model.notice.isEmpty ? "A message didn’t reach the team yet. It’s saved; retry to send it with the same key." : model.notice).textSelection(.enabled)
                     Spacer()
                     if model.hasPending && !model.readOnly { Button("Retry saved send") { model.retry() }.disabled(model.busy) }
-                }.padding(14).background(Color.orange.opacity(0.08))
+                }.font(.bridge(.callout)).padding(.horizontal, 20).padding(.vertical, 12).background(Color.orange.opacity(0.08)).overlay(alignment: .top) { Hairline() }
             }
-        }.frame(minWidth: 680)
+        }.frame(minWidth: 600).background(Theme.canvas)
     }
 }
 
@@ -471,8 +471,8 @@ struct DevicesView: View {
     @StateObject private var nearby = NearbyMacs()
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
-            Text("Connect your Macs").font(.bridge(.title).bold())
-            Text("Optional. Skip this if both agents run on this Mac. To use a second Mac, exchange a connection card once in each direction. Either Mac can then lead or do the work.").foregroundStyle(.secondary)
+            PageHeader(eyebrow: "Devices", title: "Connect your Macs",
+                       subtitle: "Optional. Skip this if both agents run on this Mac. To use a second Mac, exchange a connection card once in each direction. Either Mac can then lead or do the work.")
             if devices.report != nil && devices.devices.isEmpty {
                 Card(tint: .accentColor) {
                     Label("No Macs paired, and you may not need one", systemImage: "laptopcomputer.and.arrow.down").font(.bridge(.headline))
@@ -482,14 +482,14 @@ struct DevicesView: View {
             }
             NearbyMacsView(nearby: nearby, paired: devices.devices)
             if !devices.devices.isEmpty {
-                GroupBox { VStack(alignment: .leading, spacing: 12) {
+                Panel {
                     Text("Paired Macs").font(.bridge(.headline))
-                    Text("Pairing is saved. When AABridge or either Mac restarts, they reconnect by themselves on the same network, so you don’t need to exchange cards again.").foregroundStyle(.secondary)
+                    Text("Pairing is saved. When AABridge or either Mac restarts, they reconnect by themselves on the same network, so you don’t need to exchange cards again.").font(.bridge(.callout)).foregroundStyle(.secondary)
                     DeviceList(model: devices)
-                }.padding(16).frame(maxWidth: .infinity, alignment: .leading) }
+                }
             }
-            GroupBox { VStack(alignment: .leading, spacing: 14) {
-                Text("1. Send this Mac’s card").font(.bridge(.headline))
+            Panel {
+                stepTitle(1, "Send this Mac’s card")
                 Text("Set up AABridge on this Mac using the app’s Settings, then create its card. AABridge accepts an encrypted connection directly.")
                 TextField("LAN or VPN address (optional; defaults to this Mac’s local hostname)", text: $model.connectionHost).textFieldStyle(.roundedBorder)
                 Button("Create connection card") { model.createCard() }.disabled(model.busy)
@@ -497,16 +497,23 @@ struct DevicesView: View {
                     Text(model.connectionCard).font(.bridge(.caption, design: .monospaced)).lineLimit(4).textSelection(.enabled)
                     Button("Copy card") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.connectionCard, forType: .string) }
                 }
-            }.padding(16).frame(maxWidth: .infinity, alignment: .leading) }
-            GroupBox { VStack(alignment: .leading, spacing: 14) {
-                Text("2. Connect the other Mac").font(.bridge(.headline))
+            }
+            Panel {
+                stepTitle(2, "Connect the other Mac")
                 Text("Paste the card copied directly from your other Mac. Connecting trusts that Mac’s app certificate. Your agent logins stay on their own Macs.")
-                TextEditor(text: $model.pastedCard).font(.bridge(.callout, design: .monospaced)).frame(height: 120).padding(8).overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.15)))
+                TextEditor(text: $model.pastedCard).font(.bridge(.callout, design: .monospaced)).scrollContentBackground(.hidden).frame(height: 120).padding(8)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.fill)).overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.stroke))
                 Button("Connect this Mac") { model.connect() }.buttonStyle(.borderedProminent).disabled(model.busy || model.pastedCard.isEmpty)
-            }.padding(16).frame(maxWidth: .infinity, alignment: .leading) }
-            Text("Repeat on the other Mac. Then add the same Git project on both Macs in Projects, choose each agent, and allow the paired Mac. Use the same committed version of the project on both.").foregroundStyle(.secondary)
-            Text("Keep both Macs reachable on your LAN or VPN. If macOS asks, allow AABridge’s local network connection. Pairing does not create a connection across separate networks.").foregroundStyle(.secondary)
+            }
+            Text("Repeat on the other Mac. Then add the same Git project on both Macs in Projects, choose each agent, and allow the paired Mac. Use the same committed version of the project on both.").font(.bridge(.callout)).foregroundStyle(.secondary)
+            Text("Keep both Macs reachable on your LAN or VPN. If macOS asks, allow AABridge’s local network connection. Pairing does not create a connection across separate networks.").font(.bridge(.callout)).foregroundStyle(.secondary)
             if !model.notice.isEmpty { Text(model.notice).foregroundStyle(.orange).textSelection(.enabled) }
-        }.padding(32).frame(maxWidth: 900, alignment: .leading) }
+        }.padding(.horizontal, 40).padding(.vertical, 32).frame(maxWidth: 880, alignment: .leading).frame(maxWidth: .infinity) }.background(Theme.canvas)
+    }
+    private func stepTitle(_ number: Int, _ title: String) -> some View {
+        HStack(spacing: 10) {
+            Text("\(number)").font(.bridge(.caption).weight(.bold)).foregroundStyle(.secondary).frame(width: 20, height: 20).background(Circle().fill(Theme.fillStrong))
+            Text(title).font(.bridge(.headline))
+        }
     }
 }

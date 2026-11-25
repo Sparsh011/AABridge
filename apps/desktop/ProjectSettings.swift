@@ -159,15 +159,14 @@ struct ProjectSettingsView: View {
     @ObservedObject var model: ProjectSettingsModel
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(model.editing.isEmpty ? "Add a project" : "\(model.name) settings").font(.bridge(.title).bold())
-                Text(model.editing.isEmpty ? "A project is one Git folder. Codex and Claude can both work in it, on this Mac and on your paired Mac. Add it on each Mac once."
-                     : "These settings belong to this Mac. Your paired Mac keeps its own copy of the project.").foregroundStyle(.secondary)
-            }
-            GroupBox { VStack(alignment: .leading, spacing: 18) {
-                Text("1. Folder").font(.bridge(.headline))
+            PageHeader(eyebrow: model.editing.isEmpty ? "New project" : "Project settings", title: model.editing.isEmpty ? "Add a project" : model.name,
+                       subtitle: model.editing.isEmpty ? "A project is one Git folder. Codex and Claude can both work in it, on this Mac and on your paired Mac. Add it on each Mac once."
+                       : "These settings belong to this Mac. Your paired Mac keeps its own copy of the project.")
+            Panel {
+                step(1, "Folder")
                 HStack {
-                    Text(model.repository.isEmpty ? "No folder chosen" : model.repository).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                    Image(systemName: "folder").foregroundStyle(.secondary)
+                    Text(model.repository.isEmpty ? "No folder chosen" : model.repository).font(.bridge(.callout, design: model.repository.isEmpty ? .default : .monospaced)).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                     Spacer()
                     if model.editing.isEmpty { Button("Choose folder…") { model.chooseRepository() } }
                 }
@@ -175,21 +174,27 @@ struct ProjectSettingsView: View {
                 Text("Use the root of a Git project with at least one commit. Agents work in separate copies, so your files stay as they are. Use the same name on your other Mac so the two are matched.")
                     .font(.bridge(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
-                Text("2. Agents on this Mac").font(.bridge(.headline))
+            }
+            Panel {
+                step(2, "Agents on this Mac")
                 HStack(spacing: 12) {
                     ForEach(ProjectSettingsModel.agents, id: \.self) { agent in agentToggle(agent) }
                 }
                 Text("Each agent uses its own login on this Mac and can edit the project and run its commands. Saving checks that the agent is installed; no model is started.")
                     .font(.bridge(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
-                Text("3. Share with your other Mac").font(.bridge(.headline))
+            }
+            Panel {
+                step(3, "Share with your other Mac")
                 Text("A shared Mac can start sessions that use this Mac’s agents here, and both Macs show those sessions under this project.").font(.bridge(.caption)).foregroundStyle(.secondary)
                 if model.peers.isEmpty { Text("No Mac is paired yet. Pair one in Devices; you can still work with both agents on this Mac.").foregroundStyle(.secondary) }
                 ForEach(model.peers, id: \.self) { peer in
                     Toggle(model.peerLabels[peer] ?? peer, isOn: Binding(get: { model.selectedPeers.contains(peer) }, set: { if $0 { model.selectedPeers.insert(peer) } else { model.selectedPeers.remove(peer) } }))
                 }
 
-                Text("4. Related projects (optional)").font(.bridge(.headline))
+            }
+            Panel {
+                step(4, "Related projects", optional: true)
                 Text("Does this project work with others, like a server with its Android and Mac apps? Link them so agents can look at them, and change them if you allow it, in the same session.")
                     .font(.bridge(.callout)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 ForEach($model.links) { $link in
@@ -204,18 +209,27 @@ struct ProjectSettingsView: View {
                             .pickerStyle(.segmented).labelsHidden().frame(width: 190)
                         Button { model.links.removeAll { $0.id == link.id } } label: { Image(systemName: "minus.circle") }
                             .buttonStyle(.borderless).help("Remove this related project")
-                    }.padding(10).background(Color.primary.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius: 10))
+                    }.padding(10).background(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous).fill(Theme.fill))
                 }
                 Button { model.addLink() } label: { Label("Add related project…", systemImage: "plus") }
-            }.padding(18) }
+            }
             HStack {
                 if model.busy { ProgressView().controlSize(.small) }
                 Text(model.notice).foregroundStyle(.secondary).textSelection(.enabled)
                 Spacer()
-                Button(model.editing.isEmpty ? "Add project" : "Save") { model.save() }.buttonStyle(.borderedProminent).disabled(!model.canSave)
+                Button(model.editing.isEmpty ? "Add project" : "Save") { model.save() }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!model.canSave)
             }
-        }.padding(32).frame(maxWidth: 950, alignment: .leading).disabled(model.busy) }
+        }.padding(.horizontal, 40).padding(.vertical, 32).frame(maxWidth: 880, alignment: .leading).frame(maxWidth: .infinity).disabled(model.busy) }
+            .background(Theme.canvas)
             .onAppear { if !model.loaded && !model.busy { model.refresh() } }
+    }
+
+    private func step(_ number: Int, _ title: String, optional: Bool = false) -> some View {
+        HStack(spacing: 10) {
+            Text("\(number)").font(.bridge(.caption).weight(.bold)).foregroundStyle(.secondary).frame(width: 20, height: 20).background(Circle().fill(Theme.fillStrong))
+            Text(title).font(.bridge(.headline))
+            if optional { Chip(text: "Optional") }
+        }
     }
 
     private func agentToggle(_ agent: String) -> some View {
@@ -224,9 +238,13 @@ struct ProjectSettingsView: View {
         let problem = model.agentErrors[agent]
         return Button { if !existing { if chosen { model.agents.remove(agent) } else { model.agents.insert(agent) } } } label: {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: chosen ? "checkmark.square.fill" : "square").foregroundStyle(chosen ? Color.accentColor : Color.secondary)
+                AgentGlyph(agent: agent, size: 26).opacity(chosen ? 1 : 0.5)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(agentName(agent)).font(.bridge(.headline))
+                    HStack(spacing: 6) {
+                        Text(agentName(agent)).font(.bridge(.callout).weight(.semibold))
+                        Spacer(minLength: 0)
+                        Image(systemName: chosen ? "checkmark.circle.fill" : "circle").foregroundStyle(chosen ? Color.accentColor : Color.secondary.opacity(0.5))
+                    }
                     if let problem = problem {
                         Text(problem).font(.bridge(.caption)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                     } else if existing {
@@ -237,9 +255,9 @@ struct ProjectSettingsView: View {
                 }
                 Spacer(minLength: 0)
             }.padding(12).frame(maxWidth: 300, alignment: .leading)
-                .background(chosen ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.03))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(problem != nil ? Color.orange : chosen ? Color.accentColor.opacity(0.6) : Color.primary.opacity(0.12)))
-                .clipShape(RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(chosen ? Color.accentColor.opacity(0.07) : Theme.fill))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(problem != nil ? Color.orange.opacity(0.7) : chosen ? Color.accentColor.opacity(0.6) : Theme.stroke, lineWidth: chosen ? 1.5 : 1))
+                .contentShape(Rectangle())
         }.buttonStyle(.plain).help(existing ? "\(agentName(agent)) already works in this project." : "")
     }
 }

@@ -218,17 +218,19 @@ struct SetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 14) {
-                Image(systemName: "desktopcomputer.and.arrow.down").font(.system(size: 43.2)).foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("AABridge").font(.bridge(.largeTitle).bold())
-                    Text("Set up this Mac").foregroundStyle(.secondary)
+            HStack(spacing: 16) {
+                Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 24, weight: .medium)).foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(LinearGradient(colors: [Theme.leader, Theme.worker], startPoint: .topLeading, endPoint: .bottomTrailing)))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("AABridge").font(.bridge(.title).weight(.semibold))
+                    Text("Set up this Mac").font(.bridge(.callout)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("DEVELOPMENT PREVIEW").font(.bridge(.caption)).foregroundStyle(.secondary)
+                Chip(text: "Development preview")
             }
-            Text("Install the bridge on this Mac. Agents are found automatically; choose a location below if needed. Add your real projects in Projects after setup.")
-            GroupBox {
+            Text("Install the bridge on this Mac. Agents are found automatically; choose a location below if needed. Add your real projects in Projects after setup.").font(.bridge(.callout)).foregroundStyle(.secondary)
+            Panel {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("AABridge uses every agent it finds on this Mac: Codex, Claude Code, or both, each with its own login. Choose which ones work on a project when you add it.")
                         .font(.bridge(.callout)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -247,7 +249,7 @@ struct SetupView: View {
                     location("Claude Code · optional executable", agent: "claude", value: $model.claude)
                     Text("You can add more Codex or Claude Code projects later in Projects & scope.")
                         .font(.bridge(.callout)).foregroundStyle(.secondary)
-                }.padding(10)
+                }
             }.disabled(model.busy)
             HStack(alignment: .top, spacing: 12) {
                 if model.busy { ProgressView().controlSize(.small) }
@@ -290,7 +292,7 @@ struct SetupView: View {
             }
             Text("Use All agent tasks in the sidebar to browse saved messages, supplied context and task events. Viewing does not start a model turn.")
                 .font(.bridge(.caption)).foregroundStyle(.secondary)
-        }.padding(28).frame(minWidth: 820, idealWidth: 880, minHeight: 700)
+        }.padding(.horizontal, 40).padding(.vertical, 32).frame(minWidth: 640, idealWidth: 860, minHeight: 640)
     }
 }
 
@@ -413,6 +415,11 @@ struct AABridgeDesktop: App {
                 room.approval = "auto"; room.placement = TeamPlacement(mode: "branch", pull_request: true); room.error_code = "baseline_mismatch"
             }
             team.room = room; team.rooms = [room]; team.selected = room.id
+            if CommandLine.arguments.contains("--info") {
+                room.usage = ["leader": TeamUsage(input: 48_200, output: 6_100, cached: 31_000), "follower": TeamUsage(input: 120_400, output: 22_900, cached: 88_000)]
+                room.updated_at = now - 60
+                exit(renderOwnView(SessionInfoSheet(room: room, deviceLabel: team.deviceLabel).frame(width: 1200, height: 820), output: CommandLine.arguments[index + 1]) ? 0 : 1)
+            }
             if CommandLine.arguments.contains("--card-only") {
                 let panel = VStack(spacing: 16) { DeliveryCard(model: team, room: room, confirmMerge: .constant(false)); TeamMessageRow(entry: room.messages!.last!) }.padding(30).frame(width: 1200, height: 820, alignment: .top)
                 exit(renderOwnView(panel, output: CommandLine.arguments[index + 1]) ? 0 : 1)
@@ -508,7 +515,8 @@ struct AABridgeDesktop: App {
 
     var body: some Scene {
         Window("AABridge", id: "setup") { DesktopView(setup: model, resources: Bundle.main.resourceURL!) }
-            .defaultSize(width: 1160, height: 820)
+            .defaultSize(width: 1200, height: 820)
+            .windowToolbarStyle(.unified(showsTitle: false))
             .commands { CommandGroup(replacing: .newItem) {} }
     }
 }
@@ -576,8 +584,8 @@ func workspacePreview(resources: URL, screen: String) -> some View {
     default: detail = AnyView(ProjectHomeView(workspace: workspace, key: "sparshur-service"))
     }
     return HStack(spacing: 0) {
-        WorkspaceSidebar(workspace: workspace, devices: devices).frame(width: 270)
-        Divider()
-        detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+        WorkspaceSidebar(workspace: workspace, devices: devices).frame(width: 264).background(Theme.sidebar)
+        Hairline(vertical: true)
+        detail.frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.canvas)
     }.frame(width: 1200, height: 820)
 }

@@ -754,3 +754,13 @@ answer a ping is still listed.
 Codex presets add GPT-6.2 Sol (`gpt-6.2-sol`) and GPT-6.2 Astra
 (`gpt-6.2-astra`). As with every preset, the account and the CLI version decide
 whether a model actually runs.
+
+## Desktop design system
+
+The desktop UI shares one design system in `apps/desktop/Theme.swift`: colour tokens that adapt to light and dark mode, a radius scale, and shared pieces (`Panel`, `Card`, `Chip`, `AgentGlyph`, `StatusDot`, `IconButton`, `PageHeader`, `GroupedList`, `InfoRow`). Use these instead of ad-hoc `Color.primary.opacity(…)` fills so screens stay consistent. The type scale in `Typography.swift` is 1.08× the system size.
+
+- **Colour means the agent.** Claude is terracotta and Codex is indigo everywhere. A role (leader or worker) is written as text (`RoleTag`), never only coloured.
+- **Window.** The main window uses `NavigationSplitView` with a unified toolbar. The sidebar groups sessions under projects, with a status dot (it pulses while running), relative time and an info button on hover.
+- **Session info.** `SessionInfoSheet` (`SessionInfo.swift`) shows a session's ID, team and models, autonomy, placement, branch, pull request, commits, token use and full request. Open it with the ⓘ button in the session header (⌘I), on a sidebar or project-page row, or from their context menus. Task history also has a visible ⓘ button (⌘I) next to the task options.
+- **Chat.** Agent messages are typographic, without bubbles. Your messages are right-aligned bubbles. The composer is one floating field: the send button and **Stop** (⌘.) are inside it, and models are chosen in a popover.
+- **Checks.** `make ui-check` (`scripts/verify_ui.py`) also renders `session-info`. Add `--dark` to any `--preview-*` flag to render that screen in dark mode.
