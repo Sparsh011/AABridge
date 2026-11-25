@@ -790,10 +790,12 @@ class TeamRunner:
                 publication.setdefault('merged', []).append(url)
                 message(room, 'AABridge', f'Merged {url} on GitHub.')
             except Exception as exc:
-                failed.append(f'{label}: ' + getattr(exc, 'message', 'GitHub did not merge the pull request.'))
+                entry = publication if publication.get('pull_request') == url else next((item for item in publication.get('linked', []) if item.get('pull_request') == url), {})
+                where = Path(repository).name + (f' · branch `{entry["branch"]}`' if entry.get('branch') else '') + f' · {url}'
+                failed.append(f'{where}\n' + getattr(exc, 'message', 'GitHub did not merge the pull request.'))
         if failed:
-            publication.update(merge='failed', merge_error='\n'.join(failed))
-            message(room, 'AABridge', 'Not everything merged:\n' + publication['merge_error'])
+            publication.update(merge='failed', merge_error='\n\n'.join(failed))
+            message(room, 'AABridge', 'Not everything merged:\n\n' + publication['merge_error'])
         else:
             publication['merge'] = 'merged'
         save_runtime(self.store, room)

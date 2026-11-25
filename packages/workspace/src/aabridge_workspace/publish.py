@@ -280,6 +280,65 @@ def review(repo: Path, url: str, body: str, verdict: str | None, commit: str, co
     return "comment"
 
 
+PR_FIELDS = "state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefName,headRefOid,baseRefName,number"
+
+
+def pr_state(repo: Path, url: str) -> dict | None:
+    try:
+        return json.loads(_gh(repo, "pr", "view", url, "--json", PR_FIELDS, failure="Could not read the pull request."))
+    except (BridgeError, ValueError):
+        return None
+
+
+def merge_blocker(info: dict, url: str, commit: str) -> tuple[str, list[str]] | None:
+    """Why GitHub won't merge this pull request, and what the admin can do. None if nothing is wrong."""
+    branch, base, number = info.get("headRefName", "?"), info.get("baseRefName", "?"), info.get("number", "")
+    head = info.get("headRefOid") or ""
+    followup = "Send the team a follow-up asking it to "
+    if info.get("state") == "CLOSED":
+        return (f"The pull request was closed without merging.",
+                [f"Reopen it with `gh pr reopen {url}`, then press Merge again.",
+                 followup + "publish the work again; it reopens or replaces the pull request."])
+    if head and head != commit:
+        return (f"`{branch}` now points to {head[:7]}, not the commit the leader approved ({commit[:7]}). Someone pushed to it after the review.",
+                [followup + f"review the new commits on `{branch}`; once approved, press Merge again.",
+                 f"If those commits shouldn't be there, put the branch back with `git push --force-with-lease origin {commit}:refs/heads/{branch}`, then press Merge again."])
+    if info.get("isDraft"):
+        return ("The pull request is still a draft.", [f"Mark it ready with `gh pr ready {url}`, then press Merge again."])
+    status, mergeable = info.get("mergeStateStatus"), info.get("mergeable")
+    if mergeable == "CONFLICTING" or status == "DIRTY":
+        return (f"`{branch}` conflicts with `{base}`: `{base}` changed the same lines after this task started, so GitHub can't merge it automatically.",
+                [followup + f"merge `{base}` into `{branch}` and resolve the conflicts. The leader reviews the result, then press Merge again.",
+                 f"Or resolve it yourself: `gh pr checkout {number} && git fetch origin {base} && git merge origin/{base}`, fix the conflicts, commit and push. "
+                 "Then send a follow-up so the leader reviews that commit, because AABridge only merges the commit the leader approved."])
+    if status == "BEHIND":
+        return (f"`{branch}` is behind `{base}`, and this repository requires branches to be up to date before merging.",
+                [followup + f"update `{branch}` from `{base}`; the leader reviews it, then press Merge again.",
+                 f"Or run `gh pr update-branch {url}`, then send a follow-up so the leader reviews the updated commit."])
+    if status == "BLOCKED":
+        if info.get("reviewDecision") in {"REVIEW_REQUIRED", "CHANGES_REQUESTED"}:
+            return ("Branch protection on `" + base + "` requires an approving review from someone other than the pull request's author" +
+                    (", and a reviewer requested changes." if info.get("reviewDecision") == "CHANGES_REQUESTED" else "."),
+                    [f"Have a collaborator approve {url}, then press Merge again.",
+                     f"Or, if you're the only maintainer, relax the review rule for `{base}` in the repository's Settings → Branches (or Rules)."])
+        return (f"Branch protection on `{base}` is blocking the merge, usually a required status check that hasn't passed yet.",
+                [f"See which check is failing with `gh pr checks {url}`.",
+                 followup + "fix the failing check; the leader reviews it, then press Merge again.",
+                 "If the checks are still running, wait for them, then press Merge again."])
+    if mergeable == "UNKNOWN" or status == "UNKNOWN":
+        return ("GitHub is still working out whether the pull request can be merged.", ["Wait a minute, then press Merge again."])
+    return None
+
+
 def merge(repo: Path, url: str, commit: str) -> None:
-    _gh(repo, "pr", "merge", url, "--merge", "--match-head-commit", commit,
-        failure="GitHub did not merge the pull request. If its head changed, review and publish that revision before retrying.")
+    try:
+        _gh(repo, "pr", "merge", url, "--merge", "--match-head-commit", commit, failure="GitHub did not merge the pull request.")
+    except BridgeError as exc:
+        info = pr_state(repo, url)
+        if info and info.get("state") == "MERGED" and info.get("headRefOid") == commit:
+            return  # Already merged, e.g. by hand or by an earlier attempt.
+        found = merge_blocker(info, url, commit) if info else None
+        if not found:
+            raise
+        reason, fixes = found
+        raise BridgeError("merge_blocked", reason + "\nHow to fix:\n" + "\n".join(f"{n}. {fix}" for n, fix in enumerate(fixes, 1))) from None

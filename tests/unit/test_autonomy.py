@@ -405,6 +405,21 @@ class AutonomyTests(unittest.IsolatedAsyncioTestCase):
                 publish.pull_request(self.repo, 'main', 'x', 'y')
         self.assertEqual(log.read_text().count('pr create'), 1)
 
+    async def test_failed_merge_names_the_repository_branch_and_pull_request(self):
+        from aabridge_protocol.messages import BridgeError
+        self.reviews = ['VERDICT: APPROVED']
+        blocked = BridgeError('merge_blocked', '`x` conflicts with `main`.\nHow to fix:\n1. Merge main.')
+        with patch('aabridge_workspace.publish.pull_request', return_value={'url': 'https://github.com/o/r/pull/7', 'base': 'main'}), \
+             patch('aabridge_workspace.publish.review', return_value='review'), patch('aabridge_workspace.publish.merge', side_effect=blocked):
+            room = self.start(approval='auto', placement={'mode': 'branch', 'pull_request': True})
+            done = await self.run_until(room['id'])
+            self.admin('team_merge', {'team_id': room['id']})
+            await self.runner.step(room['id'])
+        publication = get(self.store, room['id'])['publication']
+        self.assertEqual(publication['merge'], 'failed')
+        self.assertTrue(publication['merge_error'].startswith(f'{self.repo.name} · branch `{done["publication"]["branch"]}` · https://github.com/o/r/pull/7\n'))
+        self.assertIn('How to fix:\n1. Merge main.', publication['merge_error'])
+
     async def test_linked_project_changes_are_reviewed_delivered_and_merged_together(self):
         android = self.root / 'android'
         android.mkdir()
